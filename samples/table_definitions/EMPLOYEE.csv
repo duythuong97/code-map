@@ -1,0 +1,7 @@
+column_code,column_name_ja,column_name_en,column_description
+EMP_ID,従業員ID,Employee ID,Primary key used by payroll jobs
+DEPT_ID,部門ID,Department ID,Department foreign key
+BASIC_SALARY,基本給,Basic salary,Base monthly salary
+ALLOWANCE,手当,Allowance,Monthly allowance
+STATUS,ステータス,Status,Employment status
+COUNTRY_CODE,国コード,Country code,Tax country code

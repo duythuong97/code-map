@@ -1,0 +1,5 @@
+column_code,column_name_ja,column_name_en,column_description
+EMP_ID,従業員ID,Employee ID,Employee foreign key
+PAY_PERIOD,給与期間,Pay period,YYYYMM payroll period
+BONUS_AMOUNT,賞与金額,Bonus amount,Calculated bonus
+REASON,理由,Reason,Bonus reason

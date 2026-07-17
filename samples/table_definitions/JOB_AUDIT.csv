@@ -1,0 +1,5 @@
+column_code,column_name_ja,column_name_en,column_description
+JOB_NAME,ジョブ名,Job name,Executed job name
+BATCH_ID,バッチID,Batch ID,Related payroll batch
+STATUS,ステータス,Status,Execution status
+CREATED_AT,作成日時,Created at,Audit timestamp

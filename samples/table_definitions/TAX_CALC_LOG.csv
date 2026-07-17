@@ -1,0 +1,5 @@
+column_code,column_name_ja,column_name_en,column_description
+EMP_ID,従業員ID,Employee ID,Employee foreign key
+INCOME_AMOUNT,所得金額,Income amount,Taxable income
+TAX_RATE,税率,Tax rate,Applied tax rate
+CREATED_AT,作成日時,Created at,Calculation timestamp

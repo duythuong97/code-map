@@ -1,0 +1,3 @@
+column_code,column_name_ja,column_name_en,column_description
+DEPT_ID,部門ID,Department ID,Primary key
+DEPT_NAME,部門名,Department name,Display name

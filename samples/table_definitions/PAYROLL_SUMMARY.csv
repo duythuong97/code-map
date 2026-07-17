@@ -1,0 +1,8 @@
+column_code,column_name_ja,column_name_en,column_description
+DEPT_ID,部門ID,Department ID,Summary department
+PAY_PERIOD,給与期間,Pay period,YYYYMM payroll period
+EMP_COUNT,従業員数,Employee count,Number of employees
+TOTAL_NET,手取り合計,Total net,Total net salary
+BONUS_TOTAL,賞与合計,Bonus total,Total bonus amount
+CREATED_AT,作成日時,Created at,Insert timestamp
+UPDATED_AT,更新日時,Updated at,Update timestamp

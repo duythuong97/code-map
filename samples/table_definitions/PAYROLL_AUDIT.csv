@@ -1,0 +1,7 @@
+column_code,column_name_ja,column_name_en,column_description
+EMP_ID,従業員ID,Employee ID,Audited employee
+PAY_PERIOD,給与期間,Pay period,Audited period
+OLD_NET_SALARY,旧手取り給与,Old net salary,Previous net salary
+NEW_NET_SALARY,新手取り給与,New net salary,New net salary
+ACTION_NAME,操作名,Action name,INSERT UPDATE DELETE
+CREATED_AT,作成日時,Created at,Audit timestamp

@@ -1,0 +1,28 @@
+{
+  "db": "code_map.db",
+  "api": {
+    "url_prefix": "/code-map",
+    "host": "127.0.0.1",
+    "port": 8000,
+    "pm2_name": "code-map",
+    "python": "python3",
+    "python_no_site": true,
+    "venv_python": "python3.13"
+  },
+  "extractors": {
+    "reset": true,
+    "db_name": "OracleHRDB",
+    "table_definition": {
+      "db_name": "OracleHRDB",
+      "schema": "HR"
+    },
+    "table_definitions_path": "samples/table_definitions",
+    "sources": [
+      {
+        "path": "samples",
+        "repo": "samples",
+        "schema": "HR"
+      }
+    ]
+  }
+}
