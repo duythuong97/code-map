@@ -268,6 +268,12 @@ def table_impact():
 @app.get("/api/flow")
 def flow():
     qn = request.args.get("qname", "")
+    direction = request.args.get("direction", "both").lower()
+    requested_types = {
+        item.strip().upper()
+        for item in request.args.get("types", "").split(",")
+        if item.strip()
+    }
     with conn() as db:
         if not db_ready(db):
             return jsonify({"node": None, "flows": [], "evidence": []})
@@ -276,6 +282,15 @@ def flow():
             (qn,),
         ).fetchone()
         hidden_labels = tuple(label for label, style in NODE_STYLES.items() if not style["visible"])
+        if direction == "in":
+            qname_clause = "e.to_qname=?"
+            qname_params = (qn,)
+        elif direction == "out":
+            qname_clause = "e.from_qname=?"
+            qname_params = (qn,)
+        else:
+            qname_clause = "(e.from_qname=? OR e.to_qname=?)"
+            qname_params = (qn, qn)
         rows = db.execute(
             """
             SELECT e.from_qname,e.to_qname,e.rel_type,e.source_file,e.line,e.properties_json,
@@ -283,18 +298,21 @@ def flow():
             FROM edges e
             LEFT JOIN nodes nf ON nf.qualified_name=e.from_qname
             LEFT JOIN nodes nt ON nt.qualified_name=e.to_qname
-                        WHERE (e.from_qname=? OR e.to_qname=?)
+                        WHERE {qname_clause}
                             AND e.rel_type NOT IN ('CONTAINS','BELONGS_TO')
                             AND COALESCE(nf.label, '') NOT IN ({hidden})
                             AND COALESCE(nt.label, '') NOT IN ({hidden})
             ORDER BY e.line LIMIT 240
-            """.format(hidden=','.join('?' for _ in hidden_labels)),
-            (qn, qn, *hidden_labels, *hidden_labels),
+            """.format(qname_clause=qname_clause, hidden=','.join('?' for _ in hidden_labels)),
+            (*qname_params, *hidden_labels, *hidden_labels),
         ).fetchall()
         flows = []
         for row in rows:
             item = flow_dict(row, qn)
             if not item["visible"]:
+                continue
+            item_type = item["flow_type"].upper()
+            if requested_types and item_type not in requested_types and not (item_type == "REMOTE_READS" and "READS" in requested_types):
                 continue
             item["from_name"] = table_display_name(db, item["from_qname"], item.get("from_name") or item["from_qname"])
             item["to_name"] = table_display_name(db, item["to_qname"], item.get("to_name") or item["to_qname"])

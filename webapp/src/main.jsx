@@ -49,10 +49,10 @@ const flowColors = {
 };
 
 const DETAIL_WIDTH_KEY = "code-map.detailWidth";
-const AUTO_LOAD_KEY = "code-map.autoLoadRelationships";
 const DEFAULT_DETAIL_WIDTH = 620;
 const MIN_DETAIL_WIDTH = 360;
 const MAX_DETAIL_WIDTH = 980;
+const EDGE_TYPE_DEFAULTS = ["CALLS", "READS", "WRITES", "DERIVES", "TRIGGERS", "USES"];
 
 const icons = {
   box: Box,
@@ -113,9 +113,6 @@ function App() {
   const [selection, setSelection] = useState(null);
   const [detail, setDetail] = useState(null);
   const [contract, setContract] = useState({ nodes: nodeTypes, edges: {} });
-  const [autoLoadRelationships, setAutoLoadRelationships] = useState(() =>
-    localStorage.getItem(AUTO_LOAD_KEY) === "true",
-  );
   const [detailWidth, setDetailWidth] = useState(() => {
     const stored = Number(localStorage.getItem(DETAIL_WIDTH_KEY));
     if (!Number.isFinite(stored)) return DEFAULT_DETAIL_WIDTH;
@@ -125,10 +122,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(DETAIL_WIDTH_KEY, String(detailWidth));
   }, [detailWidth]);
-
-  useEffect(() => {
-    localStorage.setItem(AUTO_LOAD_KEY, String(autoLoadRelationships));
-  }, [autoLoadRelationships]);
 
   useEffect(() => {
     const onPointerMove = (event) => {
@@ -197,7 +190,7 @@ function App() {
           qualified_name: root.qname,
           name: root.name,
         },
-        data.flows || [],
+        [],
         data.contract || contract,
       );
       const layouted = applyStableLayout(graph, root.qname);
@@ -325,8 +318,6 @@ function App() {
             setSelection={setSelection}
             setDetail={setDetail}
             contract={contract}
-            autoLoadRelationships={autoLoadRelationships}
-            setAutoLoadRelationships={setAutoLoadRelationships}
           />
         </section>
       </main>
@@ -459,6 +450,33 @@ function expandInPlace(flow, center, flows, contract) {
     nodes: [...nodes.values()],
     edges: spaceEdgeLabels([...edges.values()]),
   };
+}
+
+function unloadRelationGroup(flow, loadKey, keepNodeId) {
+  const edges = flow.edges
+    .map((edge) => {
+      const loadKeys = edge.data?.loadKeys;
+      if (!loadKeys?.includes(loadKey)) return edge;
+      const nextKeys = loadKeys.filter((key) => key !== loadKey);
+      return nextKeys.length
+        ? { ...edge, data: { ...edge.data, loadKeys: nextKeys } }
+        : null;
+    })
+    .filter(Boolean);
+  const connectedNodeIds = new Set([keepNodeId]);
+  edges.forEach((edge) => {
+    connectedNodeIds.add(edge.source);
+    connectedNodeIds.add(edge.target);
+  });
+  const nodes = flow.nodes
+    .map((node) => {
+      const loadKeys = node.data?.loadKeys;
+      if (!loadKeys?.includes(loadKey)) return node;
+      const nextKeys = loadKeys.filter((key) => key !== loadKey);
+      return { ...node, data: { ...node.data, loadKeys: nextKeys } };
+    })
+    .filter((node) => node && (!node.data?.loadKeys || node.data.loadKeys.length || connectedNodeIds.has(node.id)));
+  return { nodes, edges: spaceEdgeLabels(edges) };
 }
 
 function findFreeSlot(preferred, occupied) {
@@ -669,13 +687,123 @@ function GraphCard({
   setSelection,
   setDetail,
   contract,
-  autoLoadRelationships,
-  setAutoLoadRelationships,
 }) {
+  const [loadedRelationKeys, setLoadedRelationKeys] = useState(() => new Set());
+  const loadRelations = (node, direction, edgeTypes) => {
+    const selectedTypes = Array.isArray(edgeTypes) ? edgeTypes : EDGE_TYPE_DEFAULTS;
+    if (!selectedTypes.length) return;
+    const types = selectedTypes.join(",");
+    const loadKey = `${node.id}|${direction}|${[...selectedTypes].sort().join(",")}`;
+    if (loadedRelationKeys.has(loadKey)) {
+      setFlow((current) => unloadRelationGroup(current, loadKey, node.id));
+      setLoadedRelationKeys((current) => {
+        const next = new Set(current);
+        next.delete(loadKey);
+        return next;
+      });
+      setFocusNodeId(node.id);
+      return;
+    }
+    const path = `/api/flow?qname=${encodeURIComponent(node.id)}&direction=${direction}&types=${encodeURIComponent(types)}`;
+    api(path).then((data) => {
+      const loadedEdgeIds = new Set((data.flows || []).map(edgeId));
+      let nextSelection = null;
+      setFlow((current) => {
+        const existingNodeIds = new Set(current.nodes.map((item) => item.id));
+        const existingEdgeIds = new Set(current.edges.map((item) => item.id));
+        const graph = expandInPlace(
+          current,
+          data.node || {
+            label: node.data.type,
+            qualified_name: node.id,
+            name: node.data.label,
+          },
+          data.flows || [],
+          data.contract || contract,
+        );
+        const taggedGraph = {
+          nodes: graph.nodes.map((item) =>
+            existingNodeIds.has(item.id)
+              ? item
+              : {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    loadKeys: [...(item.data.loadKeys || []), loadKey],
+                  },
+                },
+          ),
+          edges: graph.edges.map((item) =>
+            loadedEdgeIds.has(item.id) && !existingEdgeIds.has(item.id)
+              ? {
+                  ...item,
+                  data: {
+                    ...item.data,
+                    loadKeys: [...new Set([...(item.data.loadKeys || []), loadKey])],
+                  },
+                }
+              : item,
+          ),
+        };
+        nextSelection = taggedGraph.nodes.find((item) => item.id === node.id) || taggedGraph.nodes[0];
+        return taggedGraph;
+      });
+      if (nextSelection) {
+        setSelection({ type: "node", item: nextSelection });
+      }
+      setLoadedRelationKeys((current) => new Set(current).add(loadKey));
+      setFocusNodeId(node.id);
+      api(`/api/node-detail?qname=${encodeURIComponent(node.id)}`).then(setDetail);
+    });
+  };
+  const changeNodeEdgeTypes = (nodeId, edgeTypes, changedDirection) => {
+    const changedDirections = changedDirection ? [changedDirection] : ["in", "out"];
+    const keysToUnload = [...loadedRelationKeys].filter((key) =>
+      changedDirections.some((direction) => key.startsWith(`${nodeId}|${direction}|`)),
+    );
+    if (keysToUnload.length) {
+      setFlow((current) =>
+        keysToUnload.reduce(
+          (nextFlow, key) => unloadRelationGroup(nextFlow, key, nodeId),
+          current,
+        ),
+      );
+      setLoadedRelationKeys((current) => {
+        const next = new Set(current);
+        keysToUnload.forEach((key) => next.delete(key));
+        return next;
+      });
+    }
+    setFlow((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, edgeFilters: edgeTypes } }
+          : node,
+      ),
+    }));
+  };
+  const graphNodes = useMemo(
+    () =>
+      flow.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          edgeFilters: node.data.edgeFilters || {
+            in: EDGE_TYPE_DEFAULTS,
+            out: EDGE_TYPE_DEFAULTS,
+          },
+          onLoadRelations: loadRelations,
+          onChangeEdgeTypes: changeNodeEdgeTypes,
+          loadedRelationKeys,
+        },
+      })),
+    [flow.nodes, flow, contract, loadedRelationKeys],
+  );
   return (
     <ReactFlowProvider>
       <article className="card graph-card full">
-        <FlowViewportController focusNodeId={focusNodeId} nodes={flow.nodes} />
+        <FlowViewportController focusNodeId={focusNodeId} nodes={graphNodes} />
         <div className="card-title-row">
           <h3>Table Relationship</h3>
           <GraphTools
@@ -683,14 +811,12 @@ function GraphCard({
             setFlow={setFlow}
             selection={selection}
             setFocusNodeId={setFocusNodeId}
-            autoLoadRelationships={autoLoadRelationships}
-            setAutoLoadRelationships={setAutoLoadRelationships}
           />
         </div>
         <div className="graph-body">
           <div className="flow-wrap">
             <ReactFlow
-              nodes={flow.nodes}
+              nodes={graphNodes}
               edges={flow.edges}
               nodeTypes={rfNodeTypes}
               edgeTypes={edgeTypes}
@@ -709,29 +835,6 @@ function GraphCard({
                 api(
                   `/api/node-detail?qname=${encodeURIComponent(node.id)}`,
                 ).then(setDetail);
-                if (!autoLoadRelationships) return;
-                api(`/api/flow?qname=${encodeURIComponent(node.id)}`).then(
-                  (data) => {
-                    const graph = expandInPlace(
-                      flow,
-                      data.node || {
-                        label: node.data.type,
-                        qualified_name: node.id,
-                        name: node.data.label,
-                      },
-                      data.flows || [],
-                      data.contract || contract,
-                    );
-                    setSelection({
-                      type: "node",
-                      item:
-                        graph.nodes.find((item) => item.id === node.id) ||
-                        graph.nodes[0],
-                    });
-                    setFlow(graph);
-                    setFocusNodeId(node.id);
-                  },
-                );
               }}
               onEdgeClick={(_, edge) =>
                 setSelection({ type: "edge", item: edge })
@@ -784,8 +887,6 @@ function GraphTools({
   setFlow,
   selection,
   setFocusNodeId,
-  autoLoadRelationships,
-  setAutoLoadRelationships,
 }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const autoLayout = () => {
@@ -800,15 +901,6 @@ function GraphTools({
     <div className="tool-buttons" aria-label="Graph tools">
       <button onClick={autoLayout} aria-label="Auto layout" title="Auto layout">
         Auto layout
-      </button>
-      <button
-        className={autoLoadRelationships ? "active" : ""}
-        onClick={() => setAutoLoadRelationships((value) => !value)}
-        aria-pressed={autoLoadRelationships}
-        aria-label="Auto load relationships"
-        title="Auto load relationships when clicking nodes"
-      >
-        Auto load {autoLoadRelationships ? "On" : "Off"}
       </button>
       <button onClick={() => zoomIn()} aria-label="Zoom in">
         <Plus size={15} />
@@ -1162,16 +1254,109 @@ function LaneEdge({
 }
 
 function FlowNode({ data }) {
+  const [openDirection, setOpenDirection] = useState(null);
+  const nodeRef = useRef(null);
   const meta = data.style || nodeTypes[data.type] || nodeTypes.Table;
   const Icon = icons[meta.icon] || nodeTypes[data.type]?.icon || Box;
   const id = objectName(data.qname);
   const schema = schemaName(data.qname);
   const isTable = data.type === "Table";
   const tableParts = isTable ? tableDisplayParts(data.label, data.qname) : null;
+  const edgeFilters = data.edgeFilters || {
+    in: EDGE_TYPE_DEFAULTS,
+    out: EDGE_TYPE_DEFAULTS,
+  };
+  const relationKey = (direction) =>
+    `${data.qname}|${direction}|${[...(edgeFilters[direction] || EDGE_TYPE_DEFAULTS)].sort().join(",")}`;
+  const stop = (event) => event.stopPropagation();
+  const openFilter = (direction) => (event) => {
+    event.stopPropagation();
+    setOpenDirection((current) => (current === direction ? null : direction));
+  };
+  const load = (direction) => (event) => {
+    event.stopPropagation();
+    data.onLoadRelations?.(
+      { id: data.qname, data },
+      direction,
+      edgeFilters[direction] || EDGE_TYPE_DEFAULTS,
+    );
+    setOpenDirection(null);
+  };
+  const changeFilter = (direction, nextTypes) => {
+    data.onChangeEdgeTypes?.(data.qname, {
+      ...edgeFilters,
+      [direction]: nextTypes,
+    }, direction);
+    if (nextTypes.length) {
+      window.setTimeout(() => {
+        data.onLoadRelations?.({ id: data.qname, data }, direction, nextTypes);
+      }, 0);
+    }
+  };
+  const toggleType = (direction, type) => (event) => {
+    event.stopPropagation();
+    const current = edgeFilters[direction] || EDGE_TYPE_DEFAULTS;
+    const next = current.includes(type)
+      ? current.filter((item) => item !== type)
+      : [...current, type];
+    changeFilter(direction, next);
+  };
+  const toggleAll = (direction) => (event) => {
+    event.stopPropagation();
+    const current = edgeFilters[direction] || EDGE_TYPE_DEFAULTS;
+    changeFilter(direction, current.length === EDGE_TYPE_DEFAULTS.length ? [] : EDGE_TYPE_DEFAULTS);
+  };
+  useEffect(() => {
+    if (!openDirection) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (nodeRef.current?.contains(event.target)) return;
+      setOpenDirection(null);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [openDirection]);
   return (
-    <div className={`flow-node ${meta.className}`} title={data.label}>
+    <div ref={nodeRef} className={`flow-node ${meta.className}`} title={data.label}>
       <Handle className="flow-handle" type="target" position={Position.Left} />
       <Handle className="flow-handle" type="source" position={Position.Right} />
+      <button
+        type="button"
+        className={`node-relation-btn incoming ${data.loadedRelationKeys?.has(relationKey("in")) ? "active" : ""}`}
+        title="Filter incoming relationships"
+        onClick={openFilter("in")}
+      >
+        ←
+      </button>
+      <button
+        type="button"
+        className={`node-relation-btn outgoing ${data.loadedRelationKeys?.has(relationKey("out")) ? "active" : ""}`}
+        title="Filter outgoing relationships"
+        onClick={openFilter("out")}
+      >
+        →
+      </button>
+      {openDirection ? (
+        <div
+          className={`node-edge-popover ${openDirection}`}
+          onClick={stop}
+          onMouseDown={stop}
+        >
+          <EdgeDirectionFilter
+            title={openDirection === "in" ? "Incoming" : "Outgoing"}
+            direction={openDirection}
+            selected={edgeFilters[openDirection] || EDGE_TYPE_DEFAULTS}
+            onToggleAll={toggleAll}
+            onToggleType={toggleType}
+          />
+          <button
+            type="button"
+            className="edge-filter-load"
+            onClick={load(openDirection)}
+          >
+            {data.loadedRelationKeys?.has(relationKey(openDirection)) ? "Unload" : "Load"}
+          </button>
+        </div>
+      ) : null}
       <div className="node-head">
         <div className="node-icon">
           <Icon size={14} />
@@ -1188,6 +1373,31 @@ function FlowNode({ data }) {
       <div className="node-foot">
         <span>{schema || "-"}</span>
         <span>ID</span>
+      </div>
+    </div>
+  );
+}
+
+function EdgeDirectionFilter({ title, direction, selected, onToggleAll, onToggleType }) {
+  const allSelected = selected.length === EDGE_TYPE_DEFAULTS.length;
+  return (
+    <div className="edge-filter-group">
+      <div className="edge-filter-title">{title}</div>
+      <label className="edge-filter-all">
+        <input type="checkbox" checked={allSelected} onChange={onToggleAll(direction)} />
+        All
+      </label>
+      <div className="edge-filter-options">
+        {EDGE_TYPE_DEFAULTS.map((type) => (
+          <label key={`${direction}-${type}`}>
+            <input
+              type="checkbox"
+              checked={selected.includes(type)}
+              onChange={onToggleType(direction, type)}
+            />
+            {type}
+          </label>
+        ))}
       </div>
     </div>
   );

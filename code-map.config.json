@@ -5,7 +5,7 @@
     "host": "127.0.0.1",
     "port": 8000,
     "pm2_name": "code-map",
-    "python": "python3",
+    "python": "",
     "python_no_site": true,
     "venv_python": "python3.13"
   },

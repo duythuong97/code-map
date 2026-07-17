@@ -2,7 +2,7 @@
 
 :root {
   color: #d7deea;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: #080b12;
   font-size: 14px;
 }
@@ -275,17 +275,20 @@ body.resizing-detail {
     linear-gradient(180deg, #080b12 0%, #0b1020 100%);
 }
 .flow-node {
+  position: relative;
   width: 230px;
-  min-height: 118px;
+  min-height: 148px;
   display: grid;
   gap: 9px;
-  padding: 12px;
-  overflow: hidden;
-  contain: layout paint;
+  padding: 12px 36px;
+  overflow: visible;
+  contain: layout;
   border: 1px solid rgb(148 163 184 / 35%);
   border-radius: 16px;
   box-shadow: 0 18px 36px rgb(0 0 0 / 24%);
   color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: 0;
 }
 .flow-node.table { border-color: #dbe5f1; background: #fff; color: #0f172a; }
 .flow-node.code { border-color: #f97316; background: linear-gradient(180deg, #fff7ed, #ffedd5); color: #1f1307; }
@@ -306,8 +309,8 @@ body.resizing-detail {
   border-radius: 999px;
   background: rgb(15 23 42 / 9%);
   font-size: 10px;
-  font-weight: 850;
-  letter-spacing: .08em;
+  font-weight: 700;
+  letter-spacing: .025em;
   text-transform: uppercase;
 }
 .node-icon {
@@ -322,16 +325,18 @@ body.resizing-detail {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  font-weight: 850;
-  letter-spacing: -0.02em;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 .node-meta {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   color: #475569;
   font-size: 11px;
-  font-weight: 720;
+  font-weight: 500;
+  line-height: 1.25;
 }
 .node-meta span,
 .node-foot span {
@@ -344,22 +349,166 @@ body.resizing-detail {
   border-top: 1px solid rgb(15 23 42 / 10%);
   color: #64748b;
   font-size: 10px;
-  font-weight: 850;
-  letter-spacing: .06em;
+  font-weight: 650;
+  letter-spacing: .025em;
 }
 .flow-handle { width: 8px; height: 8px; border: 2px solid white; background: #64748b; }
+.node-relation-btn {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 28px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+  border: 1px solid rgb(15 23 42 / 18%);
+  border-radius: 999px;
+  background: rgb(15 23 42 / 82%);
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 900;
+  box-shadow: 0 10px 22px rgb(0 0 0 / 24%);
+}
+.node-relation-btn:hover { background: #2563eb; border-color: #60a5fa; }
+.node-relation-btn.active { background: #16a34a; border-color: #86efac; color: #ecfdf5; }
+.node-relation-btn.incoming { left: -14px; }
+.node-relation-btn.outgoing { right: -14px; }
+.node-edge-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  z-index: 20;
+  width: 170px;
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #0b1220;
+  color: #e5e7eb;
+  box-shadow: 0 20px 44px rgb(0 0 0 / 38%);
+}
+.node-edge-popover.in { left: -8px; }
+.node-edge-popover.out { right: -8px; }
+.node-edge-popover .edge-filter-group {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.edge-filter-load {
+  height: 30px;
+  border: 1px solid #2563eb;
+  border-radius: 10px;
+  background: rgb(37 99 235 / 24%);
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 800;
+}
+.edge-filter-load:hover { background: #2563eb; color: #fff; }
+.node-edge-filter {
+  position: relative;
+  z-index: 4;
+}
+.node-edge-filter summary {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 1px solid rgb(15 23 42 / 16%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 72%);
+  color: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+.node-edge-filter summary::-webkit-details-marker { display: none; }
+.node-edge-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 10;
+  width: 280px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px;
+  transform: translateX(-50%);
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0b1220;
+  color: #e5e7eb;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 34%);
+}
+.edge-filter-group {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgb(148 163 184 / 18%);
+  border-radius: 10px;
+  background: rgb(15 23 42 / 72%);
+}
+.edge-filter-title {
+  color: #bfdbfe;
+  font-size: 11px;
+  font-weight: 800;
+}
+.edge-filter-all {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgb(148 163 184 / 18%);
+  color: #f8fafc;
+}
+.edge-filter-options {
+  display: grid;
+  gap: 5px;
+}
+.node-edge-menu label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.edge-filter-group label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.node-edge-menu input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+.edge-filter-group input {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin: 0;
+  accent-color: #2563eb;
+}
 .react-flow__edge-path { filter: drop-shadow(0 1px 0 rgb(255 255 255 / 80%)); }
 .react-flow__edge-textbg { fill: #fff; stroke: #e2e8f0; stroke-width: 1px; }
 .react-flow__edge-text { font-weight: 850; }
 .edge-label {
   position: absolute;
-  padding: 4px 7px;
+  padding: 4px 8px;
   border: 1px solid #64748b;
-  border-radius: 5px;
+  border-radius: 999px;
   background: #0f172a;
   color: #e5e7eb;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1;
   pointer-events: none;
 }
 .react-flow__node.current .flow-node { outline: 3px solid rgb(22 163 74 / 18%); }
@@ -370,6 +519,7 @@ body.resizing-detail {
 .react-flow__nodes { z-index: 2; }
 .react-flow__node-default,
 .react-flow__node-flowNode { border: 0; background: transparent; padding: 0; }
+.react-flow__node-flowNode:has(.node-edge-popover) { z-index: 1000 !important; }
 .react-flow__controls { display: none; }
 .details-panel {
   flex: 1;
