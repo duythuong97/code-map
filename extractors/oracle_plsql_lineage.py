@@ -20,6 +20,7 @@ from pathlib import Path
 from db import schema as S
 from db.entities import ExtractionContext, ExtractionResult, GraphEdge, GraphNode
 from extractors.base import BaseExtractor
+from extractors.oracle_plsql import _routine_declarations, _routine_end
 
 _PLSQL_EXTENSIONS = {
     ".pks",
@@ -35,13 +36,16 @@ _PLSQL_EXTENSIONS = {
 _HAS_SQL = re.compile(
     r"\b(INSERT|UPDATE|MERGE|CURSOR|OPEN|SELECT|FOR)\b", re.IGNORECASE
 )
-_PROC_RE = re.compile(r"\bPROCEDURE\s+\"?([\w$#]+)\"?", re.IGNORECASE)
-_FUNC_RE = re.compile(
-    r"\bFUNCTION\s+\"?([\w$#]+)\"?\s*(?:\([^)]{0,300}\))?\s*RETURN\b",
-    re.IGNORECASE | re.DOTALL,
-)
 _PKG_RE = re.compile(
-    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+)?PACKAGE\s+(?:BODY\s+)?(?:\"?[\w$#]+\"?\s*\.\s*)?\"?([\w$#]+)\"?\s*(?:AS|IS)\b",
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+)?PACKAGE\s+(?:BODY\s+)?"
+    r'(?:"?(?P<schema>[\w$#]+)"?\s*\.\s*)?'
+    r'"?(?P<package>[\w$#]+)"?\s*(?:AS|IS)\b',
+    re.IGNORECASE,
+)
+_TRIGGER_RE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+)?TRIGGER\s+"
+    r'(?:"?(?P<schema>[\w$#]+)"?\s*\.\s*)?'
+    r'"?(?P<name>[\w$#]+)"?',
     re.IGNORECASE,
 )
 _CURSOR_RE = re.compile(
@@ -116,7 +120,8 @@ _LABEL_CURSOR = "Cursor"
 
 @dataclass
 class _Span:
-    line: int
+    start: int
+    end: int
     qname: str
     label: str
 
@@ -150,32 +155,68 @@ class OraclePlSqlLineageExtractor(BaseExtractor):
         )
         clean = _strip_comments_keep_strings(text)
         repository = context.repository
-        ctx_schema = str(context.extra_tags.get("schema", "") or "").upper()
-        pkg = _first_group(_PKG_RE, clean)
-        pkg = pkg.upper() if pkg else ""
-        spans = _procedure_spans(clean, repository, pkg)
-        fallback_qname = (
-            f"{S.LABEL_PROCEDURE}:{repository}:{Path(file_path).stem.upper()}"
+        ctx_schema = context.schema_name.upper()
+        pkg_match = _PKG_RE.search(clean)
+        pkg = pkg_match.group("package").upper() if pkg_match else ""
+        pkg_schema = (
+            (pkg_match.group("schema") or ctx_schema).upper()
+            if pkg_match
+            else ctx_schema
         )
-        fallback = _Span(0, fallback_qname, S.LABEL_PROCEDURE)
-        if not spans:
-            _add_node(
-                result,
-                _logic_node(
-                    fallback.label,
-                    fallback.qname,
-                    Path(file_path).stem.upper(),
-                    repository,
-                    file_path,
-                ),
+        spans = [
+            _Span(item.start, item.end, item.qname, item.label)
+            for item in _routine_declarations(clean, context, pkg, pkg_schema)
+        ]
+        spans.extend(_trigger_spans(clean, context))
+        if pkg_match:
+            spans.append(
+                _Span(
+                    pkg_match.start(),
+                    len(clean),
+                    context.logic_qname(S.LABEL_PLSQL_PACKAGE, pkg, pkg_schema),
+                    S.LABEL_PLSQL_PACKAGE,
+                )
             )
 
+        source_owner: _Span | None = None
+
+        def owner_at(pos: int) -> _Span:
+            nonlocal source_owner
+            owner = _resolve_owner(spans, pos)
+            if owner:
+                return owner
+            if source_owner is None:
+                source_path = context.relative_source_path or Path(file_path).name
+                source_owner = _Span(
+                    0,
+                    len(clean),
+                    context.source_file_qname(),
+                    S.LABEL_SOURCE_FILE,
+                )
+                _add_node(
+                    result,
+                    GraphNode(
+                        S.LABEL_SOURCE_FILE,
+                        "qualified_name",
+                        source_owner.qname,
+                        {
+                            "qualified_name": source_owner.qname,
+                            "name": Path(source_path).name,
+                            "repository": repository,
+                            "source_id": context.source_id,
+                            "source_path": Path(source_path).as_posix(),
+                            "layer": "logic",
+                        },
+                    ),
+                )
+            return source_owner
+
         variable_sources = _extract_variable_sources(
-            result, clean, spans, fallback, context, repository, ctx_schema, file_path
+            result, clean, spans, owner_at, context, repository, ctx_schema, file_path
         )
         statements = _split_sql_statements(clean)
         for stmt, start_pos in statements:
-            owner = _resolve_owner(spans, _line_of(clean, start_pos)) or fallback
+            owner = owner_at(start_pos)
             up = stmt.lstrip().upper()
             if up.startswith("INSERT"):
                 _extract_insert(
@@ -218,7 +259,7 @@ class OraclePlSqlLineageExtractor(BaseExtractor):
                 )
 
         _extract_cursors(
-            result, clean, spans, fallback, context, repository, ctx_schema, file_path
+            result, clean, owner_at, context, repository, ctx_schema, file_path
         )
         return result
 
@@ -448,8 +489,7 @@ def _extract_merge(
 def _extract_cursors(
     result: ExtractionResult,
     text: str,
-    spans: list[_Span],
-    fallback: _Span,
+    owner_at,
     context: ExtractionContext,
     repository: str,
     schema: str,
@@ -460,11 +500,14 @@ def _extract_cursors(
         (_OPEN_FOR_RE, "OPEN_FOR_SELECT"),
     ):
         for m in regex.finditer(text):
-            owner = _resolve_owner(spans, _line_of(text, m.start())) or fallback
+            owner = owner_at(m.start())
             cursor_name = m.group(1).upper()
             select_sql = m.group(2)
             line = _line_of(text, m.start()) + 1
-            cursor_qn = f"Cursor:{repository}:{owner.qname.rsplit(':', 1)[-1]}:{cursor_name}:{line}"
+            cursor_qn = context.logic_qname(
+                _LABEL_CURSOR,
+                f"{owner.qname.rsplit(':', 1)[-1]}.{cursor_name}",
+            )
             _add_node(
                 result,
                 GraphNode(
@@ -524,7 +567,7 @@ def _extract_variable_sources(
     result: ExtractionResult,
     text: str,
     spans: list[_Span],
-    fallback: _Span,
+    owner_at,
     context: ExtractionContext,
     repository: str,
     schema: str,
@@ -537,7 +580,7 @@ def _extract_variable_sources(
         into_list = m.group(2)
         from_sql = "FROM " + m.group(3)
         line = _line_of(text, m.start()) + 1
-        owner = _resolve_owner(spans, _line_of(text, m.start())) or fallback
+        owner = owner_at(m.start())
         alias_map = _alias_map_from_from_join(from_sql, schema)
         exprs = _split_csv(select_list)
         vars_ = [_clean_variable(v) for v in _split_csv(into_list)]
@@ -574,7 +617,7 @@ def _extract_variable_sources(
         rec = m.group(1).upper()
         select_sql = m.group(2)
         line = _line_of(text, m.start()) + 1
-        owner = _resolve_owner(spans, _line_of(text, m.start())) or fallback
+        owner = owner_at(m.start())
         sel = _parse_select(select_sql, keep_alias=True)
         for expr in sel.expressions:
             field = _select_output_name(expr)
@@ -1091,40 +1134,25 @@ def _find_keyword_top(text: str, keyword: str) -> int:
 # ── Generic helpers ──────────────────────────────────────────────────────────
 
 
-def _procedure_spans(text: str, repository: str, pkg: str) -> list[_Span]:
-    spans: list[_Span] = []
-    for m in _PROC_RE.finditer(text):
-        name = m.group(1).upper()
-        full = f"{pkg}.{name}" if pkg else name
-        spans.append(
-            _Span(
-                _line_of(text, m.start()),
-                f"{S.LABEL_PROCEDURE}:{repository}:{full}",
-                S.LABEL_PROCEDURE,
-            )
-        )
-    for m in _FUNC_RE.finditer(text):
-        name = m.group(1).upper()
-        full = f"{pkg}.{name}" if pkg else name
-        spans.append(
-            _Span(
-                _line_of(text, m.start()),
-                f"{S.LABEL_SQL_FUNCTION}:{repository}:{full}",
-                S.LABEL_SQL_FUNCTION,
-            )
-        )
-    spans.sort(key=lambda s: s.line)
-    return spans
 
+def _resolve_owner(spans: list[_Span], pos: int) -> _Span | None:
+    active = [span for span in spans if span.start <= pos <= span.end]
+    return max(active, key=lambda span: span.start) if active else None
 
-def _resolve_owner(spans: list[_Span], line: int) -> _Span | None:
-    owner = None
-    for span in spans:
-        if span.line <= line:
-            owner = span
-        else:
-            break
-    return owner
+def _trigger_spans(text: str, context: ExtractionContext) -> list[_Span]:
+    return [
+        _Span(
+            m.start(),
+            _routine_end(text, m.start()),
+            context.logic_qname(
+                S.LABEL_TRIGGER,
+                m.group("name"),
+                m.group("schema") or context.schema_name,
+            ),
+            S.LABEL_TRIGGER,
+        )
+        for m in _TRIGGER_RE.finditer(text)
+    ]
 
 
 def _strip_comments_keep_strings(text: str) -> str:
@@ -1135,8 +1163,14 @@ def _strip_comments_keep_strings(text: str) -> str:
 
 
 def _norm_table(name: str, default_schema: str) -> str:
-    raw = re.sub(r"\s+", "", name.strip().strip('"')).replace('"', "").upper()
-    if "." in raw:
+    parts = [part.strip() for part in re.split(r"\s*\.\s*", name.strip())]
+    normalized = [
+        part if part.startswith('"') and part.endswith('"') else part.upper()
+        for part in parts
+        if part
+    ]
+    raw = ".".join(normalized)
+    if len(normalized) > 1:
         return raw
     return f"{default_schema}.{raw}" if default_schema else raw
 

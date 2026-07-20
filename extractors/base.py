@@ -7,15 +7,11 @@ from db.entities import ExtractionContext, ExtractionResult
 
 
 class BaseExtractor(ABC):
-    """Contract for all graph extractors.
-
-    Extractors are stateless — extract() may be called concurrently.
-    They NEVER write to Neo4j directly; they return ExtractionResult.
-    """
+    """Stateless parser. Valid-empty returns empty; parser failures raise."""
 
     @abstractmethod
     def can_handle(self, file_path: str, text: str) -> bool:
-        """Return True if this extractor should process the given file."""
+        """Return whether decoded content is valid for this handler."""
 
     @abstractmethod
     def extract(
@@ -24,4 +20,4 @@ class BaseExtractor(ABC):
         text: str,
         context: ExtractionContext,
     ) -> ExtractionResult:
-        """Parse file and return graph nodes + edges.  Must not raise."""
+        """Parse one file without persistence side effects."""

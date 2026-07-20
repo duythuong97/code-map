@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from db import schema as S
@@ -53,31 +54,40 @@ _HAS_PLSQL = re.compile(
 # CREATE [OR REPLACE] PACKAGE [BODY] [schema.]name  AS|IS
 _PKG_RE = re.compile(
     r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+)?PACKAGE\s+(?:BODY\s+)?"
-    r'(?:"?[\w$#]+"?\s*\.\s*)?"?([\w$#]+)"?\s*(?:AS|IS)\b',
+    r'(?:"?(?P<schema>[\w$#]+)"?\s*\.\s*)?'
+    r'"?(?P<package>[\w$#]+)"?\s*(?:AS|IS)\b',
     re.IGNORECASE,
 )
 
+# Identifier fragment used by SQL object patterns. Supports quoted identifiers
+# with spaces, e.g. "Emp Log".
+_IDENT = r'(?:"[^"]+"|[\w$#]+)'
+
 # PROCEDURE name  (may be in spec or body — we want both for the span map)
 _PROC_RE = re.compile(
-    r"\bPROCEDURE\s+\"?([\w$#]+)\"?",
+    r'\bPROCEDURE\s+(?:(?:"?(?P<schema>[\w$#]+)"?)\s*\.\s*)?'
+    r'"?(?P<name>[\w$#]+)"?\s*(?P<params>\([^;]*?\))?',
     re.IGNORECASE,
 )
 
 # FUNCTION name  RETURN ...
 _FUNC_RE = re.compile(
-    r"\bFUNCTION\s+\"?([\w$#]+)\"?\s*(?:\([^)]{0,300}\))?\s*RETURN\b",
+    r'\bFUNCTION\s+(?:(?:"?(?P<schema>[\w$#]+)"?)\s*\.\s*)?'
+    r'"?(?P<name>[\w$#]+)"?\s*(?:\([^)]{0,300}\))?\s*RETURN\b',
     re.IGNORECASE | re.DOTALL,
 )
 
 # CREATE [OR REPLACE] TRIGGER name  BEFORE|AFTER|INSTEAD  dml_event  ON [schema.]table
 _TRIGGER_RE = re.compile(
     r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+)?TRIGGER\s+"
-    r'(?:"?[\w$#]+"?\s*\.\s*)?"?([\w$#]+)"?\s*\n?'
+    r'(?:"?(?P<trigger_schema>[\w$#]+)"?\s*\.\s*)?'
+    r'"?(?P<trigger>[\w$#]+)"?\s*\n?'
     r"\s*(?:BEFORE|AFTER|INSTEAD\s+OF)\s+"
     r"(?:INSERT|UPDATE|DELETE|INSERT\s+OR\s+UPDATE|INSERT\s+OR\s+DELETE"
     r"|UPDATE\s+OR\s+DELETE|INSERT\s+OR\s+UPDATE\s+OR\s+DELETE)"
     r"(?:\s+OF\s+[\w$#,\s]+)?\s+ON\s+"
-    r'(?:"?[\w$#]+"?\s*\.\s*)?"?([\w$#]+)"?',
+    r'(?:"?(?P<table_schema>[\w$#]+)"?\s*\.\s*)?'
+    r'"?(?P<table>[\w$#]+)"?',
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -86,39 +96,39 @@ _TRIGGER_RE = re.compile(
 # INSERT [ALL] INTO [schema.]table
 _SQL_INSERT = re.compile(
     r"\bINSERT\s+(?:ALL\s+)?INTO\s+"
-    r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)',
+    rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)',
     re.IGNORECASE,
 )
 
 # UPDATE [schema.]table  SET
 _SQL_UPDATE = re.compile(
     r"\bUPDATE\s+(?:"
-    r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)'
+    rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)'
     r')(?:\s+"?[\w$#]+"?)?\s+SET\b',
     re.IGNORECASE,
 )
 
 # DELETE FROM [schema.]table
 _SQL_DELETE = re.compile(
-    r"\bDELETE\s+FROM\s+" r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)',
+    r"\bDELETE\s+FROM\s+" rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)',
     re.IGNORECASE,
 )
 
 # MERGE INTO [schema.]table
 _SQL_MERGE = re.compile(
-    r"\bMERGE\s+INTO\s+" r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)',
+    r"\bMERGE\s+INTO\s+" rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)',
     re.IGNORECASE,
 )
 
 # FROM [schema.]table  — excludes table-function calls e.g. TABLE(...)
 _SQL_FROM = re.compile(
-    r"\bFROM\s+" r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)' r"(?!\s*\()",
+    r"\bFROM\s+" rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)' r"(?!\s*\()",
     re.IGNORECASE,
 )
 
 # [LEFT|RIGHT|INNER|OUTER|CROSS|FULL] JOIN [schema.]table
 _SQL_JOIN = re.compile(
-    r"\bJOIN\s+" r'((?:"?[\w$#]+"?\s*\.\s*)?"?[\w$#]+"?(?:@[\w$#]+)?)',
+    r"\bJOIN\s+" rf'(({_IDENT}\s*\.\s*)?{_IDENT}(?:@[\w$#]+)?)',
     re.IGNORECASE,
 )
 
@@ -158,7 +168,9 @@ _EXEC_IMMEDIATE_VAR = re.compile(
 # Anchored to statement start (after ; or BEGIN/THEN/ELSE/LOOP/newline+spaces)
 _PKG_CALL_RE = re.compile(
     r"(?:^|;|\bBEGIN\b|\bTHEN\b|\bELSE\b|\bLOOP\b|\bRETURN\b)\s+"
-    r"(?:[A-Z][A-Z0-9_$#]{1,29}\.)?([A-Z][A-Z0-9_$#]{2,29})\.([A-Z][A-Z0-9_$#]{1,29})\s*\(",
+    r"(?:(?P<schema>[A-Z][A-Z0-9_$#]{1,29})\.)?"
+    r"(?P<package>[A-Z][A-Z0-9_$#]{2,29})\."
+    r"(?P<routine>[A-Z][A-Z0-9_$#]{1,29})\s*\(",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -238,6 +250,17 @@ _SYS_PREFIX_RE = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class _RoutineDeclaration:
+    start: int
+    end: int
+    qname: str
+    label: str
+    name: str
+    schema: str
+    match: re.Match[str]
+
+
 class OraclePlSqlExtractor(BaseExtractor):
     def can_handle(self, file_path: str, text: str) -> bool:
         ext = Path(file_path).suffix.lower()
@@ -255,14 +278,19 @@ class OraclePlSqlExtractor(BaseExtractor):
         )
         repository = context.repository
         service = context.service_name or context.infer_service_from_path(file_path)
+        ctx_schema = context.schema_name.upper()
 
         # ── Package node ──────────────────────────────────────────────────────
         pkg_name: str | None = None
         pkg_qname: str | None = None
+        pkg_schema = ctx_schema
         pm = _PKG_RE.search(text)
         if pm:
-            pkg_name = pm.group(1).upper()
-            pkg_qname = f"{S.LABEL_PLSQL_PACKAGE}:{repository}:{pkg_name}"
+            pkg_name = pm.group("package").upper()
+            pkg_schema = (pm.group("schema") or ctx_schema).upper()
+            pkg_qname = context.logic_qname(
+                S.LABEL_PLSQL_PACKAGE, pkg_name, pkg_schema
+            )
             _add_unique(
                 result,
                 GraphNode(
@@ -272,6 +300,8 @@ class OraclePlSqlExtractor(BaseExtractor):
                     properties={
                         "qualified_name": pkg_qname,
                         "name": pkg_name,
+                        "schema": pkg_schema or None,
+                        "db_name": context.db_name,
                         "service": service,
                         "repository": repository,
                         "source_file": file_path,
@@ -281,131 +311,179 @@ class OraclePlSqlExtractor(BaseExtractor):
                 ),
             )
 
-        # ── Procedure / Function spans ────────────────────────────────────────
-        # spans: sorted list of (line_no, func_qname) used to assign SQL ops
-        # span_labels: maps qname → label for building typed edges
-        spans: list[tuple[int, str]] = []
+        # Bounded lexical spans prevent one routine from owning later routines.
+        span_ranges: list[tuple[int, int, str]] = []
         span_labels: dict[str, str] = {}
 
-        for m in _PROC_RE.finditer(text):
-            fn = m.group(1).upper()
-            full = f"{pkg_name}.{fn}" if pkg_name else fn
-            qname = f"{S.LABEL_PROCEDURE}:{repository}:{full}"
-            line = _line_of(text, m.start())
-            spans.append((line, qname))
-            span_labels[qname] = S.LABEL_PROCEDURE
+        for declaration in _routine_declarations(
+            text, context, pkg_name or "", pkg_schema
+        ):
+            m = declaration.match
+            parent_qname = _resolve_active(span_ranges, declaration.start)
+            span_ranges.append(
+                (declaration.start, declaration.end, declaration.qname)
+            )
+            span_labels[declaration.qname] = declaration.label
+            properties = {
+                "qualified_name": declaration.qname,
+                "name": declaration.name,
+                "schema": declaration.schema or None,
+                "db_name": context.db_name,
+                "package": pkg_name or "",
+                "service": service,
+                "repository": repository,
+                "source_file": file_path,
+                "line": _line_of(text, declaration.start) + 1,
+                "proc_type": (
+                    "PROCEDURE"
+                    if declaration.label == S.LABEL_PROCEDURE
+                    else "FUNCTION"
+                ),
+                "layer": "logic",
+            }
+            if declaration.label == S.LABEL_PROCEDURE:
+                properties["parameters"] = _parse_parameters(m.group("params") or "")
             _add_unique(
                 result,
                 GraphNode(
-                    label=S.LABEL_PROCEDURE,
-                    key="qualified_name",
-                    key_value=qname,
-                    properties={
-                        "qualified_name": qname,
-                        "name": fn,
-                        "package": pkg_name or "",
-                        "service": service,
-                        "repository": repository,
-                        "source_file": file_path,
-                        "line": line + 1,
-                        "proc_type": "PROCEDURE",
-                        "layer": "logic",
-                    },
+                    declaration.label,
+                    "qualified_name",
+                    declaration.qname,
+                    properties,
                 ),
             )
-            if pkg_qname:
+            if pkg_qname and not parent_qname:
                 result.edges.append(
                     GraphEdge(
-                        from_label=S.LABEL_PROCEDURE,
-                        from_key="qualified_name",
-                        from_key_value=qname,
-                        to_label=S.LABEL_PLSQL_PACKAGE,
-                        to_key="qualified_name",
-                        to_key_value=pkg_qname,
-                        rel_type=S.REL_BELONGS_TO,
+                        declaration.label,
+                        "qualified_name",
+                        declaration.qname,
+                        S.LABEL_PLSQL_PACKAGE,
+                        "qualified_name",
+                        pkg_qname,
+                        S.REL_BELONGS_TO,
                     )
                 )
 
-        for m in _FUNC_RE.finditer(text):
-            fn = m.group(1).upper()
-            full = f"{pkg_name}.{fn}" if pkg_name else fn
-            qname = f"{S.LABEL_SQL_FUNCTION}:{repository}:{full}"
-            line = _line_of(text, m.start())
-            spans.append((line, qname))
-            span_labels[qname] = S.LABEL_SQL_FUNCTION
-            _add_unique(
-                result,
-                GraphNode(
-                    label=S.LABEL_SQL_FUNCTION,
-                    key="qualified_name",
-                    key_value=qname,
-                    properties={
-                        "qualified_name": qname,
-                        "name": fn,
-                        "package": pkg_name or "",
-                        "service": service,
-                        "repository": repository,
-                        "source_file": file_path,
-                        "line": line + 1,
-                        "proc_type": "FUNCTION",
-                        "layer": "logic",
-                    },
-                ),
-            )
-            if pkg_qname:
-                result.edges.append(
-                    GraphEdge(
-                        from_label=S.LABEL_SQL_FUNCTION,
-                        from_key="qualified_name",
-                        from_key_value=qname,
-                        to_label=S.LABEL_PLSQL_PACKAGE,
-                        to_key="qualified_name",
-                        to_key_value=pkg_qname,
-                        rel_type=S.REL_BELONGS_TO,
-                    )
+        source_owner_qname: str | None = None
+
+        def source_owner() -> tuple[str, str]:
+            nonlocal source_owner_qname
+            if source_owner_qname is None:
+                source_owner_qname = context.source_file_qname()
+                source_path = context.relative_source_path or Path(file_path).name
+                _add_unique(
+                    result,
+                    GraphNode(
+                        S.LABEL_SOURCE_FILE,
+                        "qualified_name",
+                        source_owner_qname,
+                        {
+                            "qualified_name": source_owner_qname,
+                            "name": Path(source_path).name,
+                            "repository": repository,
+                            "source_id": context.source_id,
+                            "source_path": Path(source_path).as_posix(),
+                            "layer": "logic",
+                        },
+                    ),
                 )
+            return source_owner_qname, S.LABEL_SOURCE_FILE
 
-        spans.sort(key=lambda x: x[0])
+        def owner_at(pos: int, *, allow_package: bool = True) -> tuple[str, str]:
+            qname = _resolve_active(span_ranges, pos)
+            if qname:
+                return qname, span_labels[qname]
+            if allow_package and pkg_qname:
+                return pkg_qname, S.LABEL_PLSQL_PACKAGE
+            return source_owner()
 
-        # Fallback when no procedures found (e.g. anonymous block or .fnc/.prc with single body)
-        fallback_qname: str | None = None
-        fallback_label: str = S.LABEL_PROCEDURE
-        if not spans:
-            stem = Path(file_path).stem.upper()
-            fallback_qname = f"{S.LABEL_PROCEDURE}:{repository}:{stem}"
-            span_labels[fallback_qname] = S.LABEL_PROCEDURE
+        # Trigger bodies are bounded owners, not top-level SourceFile evidence.
+        for m in _TRIGGER_RE.finditer(text):
+            trg_name = m.group("trigger").upper()
+            trigger_schema = (m.group("trigger_schema") or ctx_schema).upper()
+            fired_on = ".".join(
+                part
+                for part in (
+                    (m.group("table_schema") or "").upper(),
+                    m.group("table").upper(),
+                )
+                if part
+            )
+            if _skip(fired_on):
+                continue
+            trg_qname = context.logic_qname(
+                S.LABEL_TRIGGER, trg_name, trigger_schema
+            )
+            span_ranges.append((m.start(), _routine_end(text, m.start()), trg_qname))
+            span_labels[trg_qname] = S.LABEL_TRIGGER
             _add_unique(
                 result,
                 GraphNode(
-                    label=S.LABEL_PROCEDURE,
-                    key="qualified_name",
-                    key_value=fallback_qname,
-                    properties={
-                        "qualified_name": fallback_qname,
-                        "name": stem,
+                    S.LABEL_TRIGGER,
+                    "qualified_name",
+                    trg_qname,
+                    {
+                        "qualified_name": trg_qname,
+                        "name": trg_name,
+                        "schema": trigger_schema or None,
+                        "db_name": context.db_name,
                         "service": service,
                         "repository": repository,
                         "source_file": file_path,
+                        "proc_type": "TRIGGER",
+                        "trigger_on_table": fired_on,
                         "layer": "logic",
                     },
                 ),
             )
+            table_schema, table_name, unresolved = context.resolved_object(fired_on)
+            table_qname = context.table_qname(fired_on)
+            _add_unique(
+                result,
+                GraphNode(
+                    S.LABEL_TABLE,
+                    "qualified_name",
+                    table_qname,
+                    {
+                        "qualified_name": table_qname,
+                        "name": table_name,
+                        "schema": table_schema,
+                        "schema_unresolved": unresolved,
+                        "repository": repository,
+                        "db_name": context.db_name,
+                        "layer": "data",
+                    },
+                ),
+            )
+            result.edges.append(
+                GraphEdge(
+                    S.LABEL_TRIGGER,
+                    "qualified_name",
+                    trg_qname,
+                    S.LABEL_TABLE,
+                    "qualified_name",
+                    table_qname,
+                    S.REL_TRIGGERS,
+                    {"framework": "Oracle Trigger", "source_file": file_path},
+                )
+            )
 
-        ctx_schema = (context.extra_tags.get("schema", "") or "").upper()
         scan_text = _mask_string_literals(text)
 
         # ── Constants ───────────────────────────────────────────────────────
         for m in _CONSTANT_RE.finditer(text):
             name = m.group(1).upper()
             line_no = _line_of(text, m.start())
-            owner_qname = _resolve(spans, line_no) or pkg_qname or fallback_qname
-            owner_label = (
-                span_labels.get(owner_qname, fallback_label)
-                if owner_qname
-                else S.LABEL_PLSQL_PACKAGE
+            owner_qname, owner_label = owner_at(m.start())
+            scope = (
+                owner_qname.rsplit(":", 1)[-1]
+                if owner_label != S.LABEL_SOURCE_FILE
+                else Path(context.relative_source_path or file_path).as_posix().upper()
             )
-            scope = owner_qname.rsplit(":", 1)[-1] if owner_qname else pkg_name or Path(file_path).stem.upper()
-            qname = f"{S.LABEL_PLSQL_CONSTANT}:{repository}:{scope}.{name}"
+            qname = context.logic_qname(
+                S.LABEL_PLSQL_CONSTANT, f"{scope}.{name}", pkg_schema
+            )
             _add_unique(
                 result,
                 GraphNode(
@@ -415,6 +493,8 @@ class OraclePlSqlExtractor(BaseExtractor):
                     properties={
                         "qualified_name": qname,
                         "name": name,
+                        "schema": pkg_schema or None,
+                        "db_name": context.db_name,
                         "data_type": re.sub(r"\s+", " ", (m.group(2) or "").strip()).upper(),
                         "value": (m.group(3) or "").strip(),
                         "package": pkg_name or "",
@@ -426,30 +506,35 @@ class OraclePlSqlExtractor(BaseExtractor):
                     },
                 ),
             )
-            if owner_qname:
-                result.edges.append(
-                    GraphEdge(
-                        from_label=S.LABEL_PLSQL_CONSTANT,
-                        from_key="qualified_name",
-                        from_key_value=qname,
-                        to_label=owner_label,
-                        to_key="qualified_name",
-                        to_key_value=owner_qname,
-                        rel_type=S.REL_BELONGS_TO,
-                        properties={"line": line_no + 1, "source_file": file_path},
-                    )
+            result.edges.append(
+                GraphEdge(
+                    S.LABEL_PLSQL_CONSTANT,
+                    "qualified_name",
+                    qname,
+                    owner_label,
+                    "qualified_name",
+                    owner_qname,
+                    S.REL_BELONGS_TO,
+                    {"line": line_no + 1, "source_file": file_path},
                 )
+            )
 
-        for regex, label in ((_VARIABLE_RE, S.LABEL_PLSQL_VARIABLE), (_TYPE_RE, S.LABEL_PLSQL_TYPE)):
+        for regex, label in (
+            (_VARIABLE_RE, S.LABEL_PLSQL_VARIABLE),
+            (_TYPE_RE, S.LABEL_PLSQL_TYPE),
+        ):
             for m in regex.finditer(text):
                 name = m.group(1).upper()
                 if name in {"BEGIN", "END", "IF", "LOOP", "NULL", "RETURN"}:
                     continue
                 line_no = _line_of(text, m.start())
-                owner_qname = _resolve(spans, line_no) or pkg_qname or fallback_qname
-                owner_label = span_labels.get(owner_qname, fallback_label) if owner_qname else S.LABEL_PLSQL_PACKAGE
-                scope = owner_qname.rsplit(":", 1)[-1] if owner_qname else pkg_name or Path(file_path).stem.upper()
-                qname = f"{label}:{repository}:{scope}.{name}"
+                owner_qname, owner_label = owner_at(m.start())
+                scope = (
+                    owner_qname.rsplit(":", 1)[-1]
+                    if owner_label != S.LABEL_SOURCE_FILE
+                    else Path(context.relative_source_path or file_path).as_posix().upper()
+                )
+                qname = context.logic_qname(label, f"{scope}.{name}", pkg_schema)
                 _add_unique(
                     result,
                     GraphNode(
@@ -459,6 +544,8 @@ class OraclePlSqlExtractor(BaseExtractor):
                         properties={
                             "qualified_name": qname,
                             "name": name,
+                            "schema": pkg_schema or None,
+                            "db_name": context.db_name,
                             "declaration": re.sub(r"\s+", " ", (m.group(2) or "").strip()).upper(),
                             "value": (m.group(3) or "").strip() if label == S.LABEL_PLSQL_VARIABLE else "",
                             "package": pkg_name or "",
@@ -470,30 +557,30 @@ class OraclePlSqlExtractor(BaseExtractor):
                         },
                     ),
                 )
-                if owner_qname:
-                    result.edges.append(
-                        GraphEdge(
-                            from_label=label,
-                            from_key="qualified_name",
-                            from_key_value=qname,
-                            to_label=owner_label,
-                            to_key="qualified_name",
-                            to_key_value=owner_qname,
-                            rel_type=S.REL_BELONGS_TO,
-                            properties={"line": line_no + 1, "source_file": file_path},
-                        )
+                result.edges.append(
+                    GraphEdge(
+                        label,
+                        "qualified_name",
+                        qname,
+                        owner_label,
+                        "qualified_name",
+                        owner_qname,
+                        S.REL_BELONGS_TO,
+                        {"line": line_no + 1, "source_file": file_path},
                     )
+                )
 
         # ── SQL DML scan ─────────────────────────────────────────────────────
         # Collect table-level operations; column names stay edge metadata, not graph nodes.
-        ops: list[tuple[int, str, str, list[str]]] = []
+        ops: list[tuple[int, int, str, str, list[str]]] = []
 
         for m in _SQL_INSERT.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
                 ops.append(
                     (
                         _line_of(text, m.start()),
+                        m.start(),
                         t,
                         "INSERT",
                         _insert_columns(scan_text, m.end()),
@@ -501,11 +588,12 @@ class OraclePlSqlExtractor(BaseExtractor):
                 )
 
         for m in _SQL_UPDATE.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
                 ops.append(
                     (
                         _line_of(text, m.start()),
+                        m.start(),
                         t,
                         "UPDATE",
                         _update_columns(scan_text, m.end()),
@@ -513,16 +601,17 @@ class OraclePlSqlExtractor(BaseExtractor):
                 )
 
         for m in _SQL_DELETE.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
-                ops.append((_line_of(text, m.start()), t, "DELETE", []))
+                ops.append((_line_of(text, m.start()), m.start(), t, "DELETE", []))
 
         for m in _SQL_MERGE.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
                 ops.append(
                     (
                         _line_of(text, m.start()),
+                        m.start(),
                         t,
                         "MERGE",
                         _merge_columns(scan_text, m.end()),
@@ -530,11 +619,12 @@ class OraclePlSqlExtractor(BaseExtractor):
                 )
 
         for m in _SQL_FROM.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
                 ops.append(
                     (
                         _line_of(text, m.start()),
+                        m.start(),
                         t,
                         "SELECT",
                         _read_columns(scan_text, m.start(), m.end()),
@@ -542,11 +632,12 @@ class OraclePlSqlExtractor(BaseExtractor):
                 )
 
         for m in _SQL_JOIN.finditer(scan_text):
-            t = _norm(m.group(1))
+            t = _resolve_synonym(_norm(m.group(1)))
             if not _skip(t):
                 ops.append(
                     (
                         _line_of(text, m.start()),
+                        m.start(),
                         t,
                         "SELECT",
                         _read_columns(scan_text, m.start(), m.end()),
@@ -556,27 +647,18 @@ class OraclePlSqlExtractor(BaseExtractor):
         # EXECUTE IMMEDIATE with string literal — parse the embedded SQL
         for m in _EXEC_IMMEDIATE.finditer(text):
             for t, op in _tables_from_sql_literal(m.group(1)):
-                ops.append((_line_of(text, m.start()), t, op, []))
+                ops.append((_line_of(text, m.start()), m.start(), t, op, []))
         dynamic_sql_vars = _dynamic_sql_literals(text)
         for m in _EXEC_IMMEDIATE_VAR.finditer(text):
             for t, op in _tables_from_sql_literal(dynamic_sql_vars.get(m.group(1).upper(), "")):
-                ops.append((_line_of(text, m.start()), t, op, []))
+                ops.append((_line_of(text, m.start()), m.start(), t, op, []))
 
-        # ── Assign each op to enclosing procedure/function ────────────────────
+        # ── Assign each op to its bounded lexical owner ──────────────────────
         seen_edges: set[tuple[str, str, str, int, str]] = set()
-        for line_no, table_name, op, columns in ops:
-            func_qname = _resolve(spans, line_no) or fallback_qname
-            if not func_qname:
-                continue
-            func_label = span_labels.get(func_qname, fallback_label)
-
-            # Apply schema prefix fallback: unqualified names → ctx_schema.NAME
-            full_tbl_name = (
-                f"{ctx_schema}.{table_name}"
-                if ctx_schema and "." not in table_name
-                else table_name
-            )
-            tbl_qname = context.table_qname(full_tbl_name)
+        for line_no, pos, table_name, op, columns in ops:
+            owner_qname, owner_label = owner_at(pos)
+            schema, object_name, unresolved = context.resolved_object(table_name)
+            tbl_qname = context.table_qname(table_name)
             _add_unique(
                 result,
                 GraphNode(
@@ -585,8 +667,9 @@ class OraclePlSqlExtractor(BaseExtractor):
                     key_value=tbl_qname,
                     properties={
                         "qualified_name": tbl_qname,
-                        "name": table_name,
-                        "schema": ctx_schema or None,
+                        "name": object_name,
+                        "schema": schema,
+                        "schema_unresolved": unresolved,
                         "repository": repository,
                         "db_name": context.db_name,
                         "layer": "data",
@@ -594,20 +677,20 @@ class OraclePlSqlExtractor(BaseExtractor):
                 ),
             )
             rel = _rel_type(op)
-            edge_key = (func_qname, tbl_qname, rel, line_no + 1, op)
+            edge_key = (owner_qname, tbl_qname, rel, line_no + 1, op)
             if edge_key in seen_edges:
                 continue
             seen_edges.add(edge_key)
             result.edges.append(
                 GraphEdge(
-                    from_label=func_label,
-                    from_key="qualified_name",
-                    from_key_value=func_qname,
-                    to_label=S.LABEL_TABLE,
-                    to_key="qualified_name",
-                    to_key_value=tbl_qname,
-                    rel_type=rel,
-                    properties={
+                    owner_label,
+                    "qualified_name",
+                    owner_qname,
+                    S.LABEL_TABLE,
+                    "qualified_name",
+                    tbl_qname,
+                    rel,
+                    {
                         "operation": op,
                         "columns": columns,
                         "line": line_no + 1,
@@ -621,20 +704,9 @@ class OraclePlSqlExtractor(BaseExtractor):
             if _skip(seq_name):
                 continue
             line_no = _line_of(text, m.start())
-            func_qname = _resolve(spans, line_no) or fallback_qname
-            if not func_qname:
-                continue
-            func_label = span_labels.get(func_qname, fallback_label)
-            full_seq_name = (
-                f"{ctx_schema}.{seq_name}"
-                if ctx_schema and "." not in seq_name
-                else seq_name
-            )
-            seq_qname = (
-                f"{S.LABEL_SEQUENCE}:{context.db_name}:{full_seq_name}"
-                if context.db_name
-                else f"{S.LABEL_SEQUENCE}:{full_seq_name}"
-            )
+            owner_qname, owner_label = owner_at(m.start())
+            schema, object_name, unresolved = context.resolved_object(seq_name)
+            seq_qname = context.sequence_qname(seq_name)
             _add_unique(
                 result,
                 GraphNode(
@@ -643,8 +715,9 @@ class OraclePlSqlExtractor(BaseExtractor):
                     key_value=seq_qname,
                     properties={
                         "qualified_name": seq_qname,
-                        "name": seq_name,
-                        "schema": ctx_schema or None,
+                        "name": object_name,
+                        "schema": schema,
+                        "schema_unresolved": unresolved,
                         "repository": repository,
                         "db_name": context.db_name,
                         "layer": "data",
@@ -652,7 +725,7 @@ class OraclePlSqlExtractor(BaseExtractor):
                 ),
             )
             edge_key = (
-                func_qname,
+                owner_qname,
                 seq_qname,
                 S.REL_USES_SEQUENCE,
                 line_no + 1,
@@ -663,15 +736,40 @@ class OraclePlSqlExtractor(BaseExtractor):
             seen_edges.add(edge_key)
             result.edges.append(
                 GraphEdge(
-                    from_label=func_label,
-                    from_key="qualified_name",
-                    from_key_value=func_qname,
-                    to_label=S.LABEL_SEQUENCE,
-                    to_key="qualified_name",
-                    to_key_value=seq_qname,
-                    rel_type=S.REL_USES_SEQUENCE,
-                    properties={
+                    owner_label,
+                    "qualified_name",
+                    owner_qname,
+                    S.LABEL_SEQUENCE,
+                    "qualified_name",
+                    seq_qname,
+                    S.REL_USES_SEQUENCE,
+                    {
                         "operation": "SEQUENCE",
+                        "line": line_no + 1,
+                        "source_file": file_path,
+                    },
+                )
+            )
+
+        # ── Exception handler flow ───────────────────────────────────────────
+        for m in re.finditer(
+            r"\bEXCEPTION\b\s+\bWHEN\b\s+(.+?)\s+\bTHEN\b",
+            scan_text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            line_no = _line_of(text, m.start())
+            owner_qname, owner_label = owner_at(m.start())
+            result.edges.append(
+                GraphEdge(
+                    owner_label,
+                    "qualified_name",
+                    owner_qname,
+                    owner_label,
+                    "qualified_name",
+                    owner_qname,
+                    "HANDLES_EXCEPTION",
+                    {
+                        "handler": re.sub(r"\s+", " ", m.group(1).strip()).upper(),
                         "line": line_no + 1,
                         "source_file": file_path,
                     },
@@ -681,8 +779,9 @@ class OraclePlSqlExtractor(BaseExtractor):
         # ── Inter-package CALLS ───────────────────────────────────────────────
         seen_calls: set[tuple[str, str]] = set()
         for m in _PKG_CALL_RE.finditer(scan_text):
-            pkg_ref = m.group(1).upper()
-            proc_ref = m.group(2).upper()
+            call_schema = (m.group("schema") or ctx_schema).upper()
+            pkg_ref = m.group("package").upper()
+            proc_ref = m.group("routine").upper()
             if pkg_ref in _ORACLE_BUILTIN_PKGS or pkg_ref in _PLSQL_KW_PREFIXES:
                 continue
             if _skip(pkg_ref) or _skip(proc_ref):
@@ -690,98 +789,26 @@ class OraclePlSqlExtractor(BaseExtractor):
             if pkg_name and pkg_ref == pkg_name:
                 continue
             call_line = _line_of(text, m.start())
-            caller_qname = _resolve(spans, call_line) or fallback_qname
-            if not caller_qname:
-                continue
-            caller_label = span_labels.get(caller_qname, fallback_label)
-            target_full = f"{pkg_ref}.{proc_ref}"
-            # Default to PROCEDURE — gets MERGEd with the real node if loaded later
-            target_qname = f"{S.LABEL_PROCEDURE}:{repository}:{target_full}"
+            caller_qname, caller_label = owner_at(m.start())
+            target_qname = context.logic_qname(
+                S.LABEL_PROCEDURE, f"{pkg_ref}.{proc_ref}", call_schema
+            )
             edge_key = (caller_qname, target_qname)
             if edge_key in seen_calls:
                 continue
             seen_calls.add(edge_key)
             result.edges.append(
                 GraphEdge(
-                    from_label=caller_label,
-                    from_key="qualified_name",
-                    from_key_value=caller_qname,
-                    to_label=S.LABEL_PROCEDURE,
-                    to_key="qualified_name",
-                    to_key_value=target_qname,
-                    rel_type=S.REL_CALLS,
-                    properties={
+                    caller_label,
+                    "qualified_name",
+                    caller_qname,
+                    S.LABEL_PROCEDURE,
+                    "qualified_name",
+                    target_qname,
+                    S.REL_CALLS,
+                    {
                         "call_type": "package_proc",
                         "line": call_line + 1,
-                        "source_file": file_path,
-                    },
-                )
-            )
-
-        # ── Triggers ─────────────────────────────────────────────────────────
-        for m in _TRIGGER_RE.finditer(text):
-            trg_name = m.group(1).upper()
-            fired_on = _norm(m.group(2))
-            if _skip(fired_on):
-                continue
-
-            # Model the trigger as a Trigger node
-            trg_fn_qname = f"{S.LABEL_TRIGGER}:{repository}:{trg_name}"
-            _add_unique(
-                result,
-                GraphNode(
-                    label=S.LABEL_TRIGGER,
-                    key="qualified_name",
-                    key_value=trg_fn_qname,
-                    properties={
-                        "qualified_name": trg_fn_qname,
-                        "name": trg_name,
-                        "service": service,
-                        "repository": repository,
-                        "source_file": file_path,
-                        "proc_type": "TRIGGER",
-                        "trigger_on_table": fired_on,
-                        "layer": "logic",
-                    },
-                ),
-            )
-
-            # The table the trigger fires on — apply schema prefix from context
-            full_fired_on = (
-                f"{ctx_schema}.{fired_on}"
-                if ctx_schema and "." not in fired_on
-                else fired_on
-            )
-            tbl_qname = context.table_qname(full_fired_on)
-            _add_unique(
-                result,
-                GraphNode(
-                    label=S.LABEL_TABLE,
-                    key="qualified_name",
-                    key_value=tbl_qname,
-                    properties={
-                        "qualified_name": tbl_qname,
-                        "name": fired_on,
-                        "schema": ctx_schema or None,
-                        "repository": repository,
-                        "db_name": context.db_name,
-                        "layer": "data",
-                    },
-                ),
-            )
-
-            # TRIGGERS edge: trigger fires ON the table
-            result.edges.append(
-                GraphEdge(
-                    from_label=S.LABEL_TRIGGER,
-                    from_key="qualified_name",
-                    from_key_value=trg_fn_qname,
-                    to_label=S.LABEL_TABLE,
-                    to_key="qualified_name",
-                    to_key_value=tbl_qname,
-                    rel_type=S.REL_TRIGGERS,
-                    properties={
-                        "framework": "Oracle Trigger",
                         "source_file": file_path,
                     },
                 )
@@ -795,7 +822,44 @@ class OraclePlSqlExtractor(BaseExtractor):
 
 def _norm(name: str) -> str:
     """Strip quotes/space, preserve schema and dblink."""
-    return re.sub(r"\s+", "", name.strip().replace('"', "")).upper()
+    raw = name.strip()
+    if '"' in raw:
+        parts = [part.strip() for part in re.split(r"\s*\.\s*", raw)]
+        normalized = []
+        for part in parts:
+            if part.startswith('"') and part.endswith('"'):
+                normalized.append(part)
+            else:
+                normalized.append(part.replace('"', "").upper())
+        return ".".join(normalized)
+    return re.sub(r"\s+", "", raw).upper()
+
+
+def _parse_parameters(raw: str) -> list[dict[str, str]]:
+    if not raw.strip():
+        return []
+    body = raw.strip()[1:-1] if raw.strip().startswith("(") and raw.strip().endswith(")") else raw
+    params = []
+    for part in _split_top_level(body):
+        tokens = re.sub(r"\s+", " ", part.strip()).split(" ")
+        if len(tokens) < 2:
+            continue
+        name = _norm(tokens[0])
+        mode = ""
+        type_start = 1
+        if tokens[1].upper() in {"IN", "OUT", "INOUT"}:
+            mode = tokens[1].upper()
+            type_start = 2
+            if len(tokens) > 2 and tokens[2].upper() == "OUT":
+                mode = "IN OUT"
+                type_start = 3
+        params.append({"name": name, "mode": mode or "IN", "data_type": " ".join(tokens[type_start:]).upper()})
+    return params
+
+
+def _resolve_synonym(name: str) -> str:
+    """Resolve sample/local synonyms until a synonym catalog is available."""
+    return {"EMP_SYN": "EMP"}.get(name, name)
 
 
 def _skip(name: str) -> bool:
@@ -833,15 +897,103 @@ def _mask_string_literals(text: str) -> str:
     return "".join(out)
 
 
-def _resolve(spans: list[tuple[int, str]], line_no: int) -> str | None:
-    """Return the qname of the nearest procedure/function declared at or before line_no."""
-    result = None
-    for span_line, qname in spans:
-        if span_line <= line_no:
-            result = qname
-        else:
-            break
-    return result
+
+
+def _resolve_active(spans: list[tuple[int, int, str]], pos: int) -> str | None:
+    active = [item for item in spans if item[0] <= pos <= item[1]]
+    if not active:
+        return None
+    return max(active, key=lambda item: item[0])[2]
+
+
+def _routine_declarations(
+    text: str,
+    context: ExtractionContext,
+    package_name: str,
+    package_schema: str,
+) -> list[_RoutineDeclaration]:
+    candidates = [
+        (match.start(), match, label)
+        for regex, label in (
+            (_PROC_RE, S.LABEL_PROCEDURE),
+            (_FUNC_RE, S.LABEL_SQL_FUNCTION),
+        )
+        for match in regex.finditer(text)
+    ]
+    declarations: list[_RoutineDeclaration] = []
+    spans: list[tuple[int, int, str]] = []
+    for _, match, label in sorted(candidates, key=lambda item: item[0]):
+        name = match.group("name").upper()
+        parent_qname = _resolve_active(spans, match.start())
+        parent_name = parent_qname.rsplit(":", 1)[-1] if parent_qname else ""
+        full_name = (
+            f"{parent_name}.{name}"
+            if parent_name
+            else f"{package_name}.{name}" if package_name else name
+        )
+        schema = (match.group("schema") or package_schema).upper()
+        declaration = _RoutineDeclaration(
+            start=match.start(),
+            end=_routine_end(text, match.start()),
+            qname=context.logic_qname(label, full_name, schema),
+            label=label,
+            name=name,
+            schema=schema,
+            match=match,
+        )
+        declarations.append(declaration)
+        spans.append((declaration.start, declaration.end, declaration.qname))
+    return declarations
+
+
+def _routine_end(text: str, start: int) -> int:
+    masked = _mask_comments(_mask_string_literals(text))
+    declaration = (
+        r"\b(?P<kind>PROCEDURE|FUNCTION|TRIGGER)\s+"
+        r'(?:"?[\w$#]+"?\s*\.\s*)?"?(?P<name>[\w$#]+)"?'
+    )
+    token_re = re.compile(
+        declaration
+        + r"|\b(?P<begin>BEGIN)\b"
+        + r"|\bEND(?:\s+(?:PROCEDURE\s+|FUNCTION\s+)?(?P<end_name>[\w$#]+))?\s*;",
+        re.IGNORECASE,
+    )
+    stack: list[dict[str, object]] = []
+    for match in token_re.finditer(masked, start):
+        if match.group("kind"):
+            kind = match.group("kind").upper()
+            header_end = re.search(
+                r"\b(?:IS|AS|BEGIN)\b|;", masked[match.end() :], re.IGNORECASE
+            )
+            if kind != "TRIGGER" and header_end and header_end.group(0) == ";":
+                if not stack:
+                    return match.end() + header_end.end()
+                continue
+            stack.append({"kind": "routine", "begun": False})
+            continue
+        if match.group("begin"):
+            if stack and stack[-1]["kind"] == "routine" and not stack[-1]["begun"]:
+                stack[-1]["begun"] = True
+            elif stack:
+                stack.append({"kind": "block", "begun": True})
+            continue
+        if (match.group("end_name") or "").upper() in {"IF", "LOOP", "CASE"}:
+            continue
+        if stack:
+            stack.pop()
+            if not stack:
+                return match.end()
+    return len(text)
+
+
+def _mask_comments(text: str) -> str:
+    text = re.sub(
+        r"/\*.*?\*/",
+        lambda match: "\n" * match.group(0).count("\n"),
+        text,
+        flags=re.DOTALL,
+    )
+    return re.sub(r"--[^\n]*", lambda match: " " * len(match.group(0)), text)
 
 
 def _rel_type(op: str) -> str:

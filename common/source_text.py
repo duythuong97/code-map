@@ -4,12 +4,16 @@ from pathlib import Path
 
 SOURCE_ENCODINGS = ("utf-8-sig", "utf-8", "cp932", "shift_jis", "euc_jp")
 
-def read_source_text(path: str | Path) -> str:
-    data = Path(path).read_bytes()
+
+def decode_source_bytes(data: bytes) -> str:
     for encoding in SOURCE_ENCODINGS:
         try:
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    # ponytail: lossy fallback for unknown legacy encodings; add charset detection when mixed encodings appear.
+    # ponytail: lossy fallback supports unknown legacy source; raise instead when strict source integrity is required.
     return data.decode("utf-8", errors="replace")
+
+
+def read_source_text(path: str | Path) -> str:
+    return decode_source_bytes(Path(path).read_bytes())

@@ -9,19 +9,68 @@
     "python_no_site": true,
     "venv_python": "python3.13"
   },
+  "imports": {
+    "csv": [
+      {
+        "id": "sample-table-definitions",
+        "path": "samples/table_definitions",
+        "kind": "table_definitions",
+        "db_name": "OracleHRDB",
+        "schema": "HR",
+        "priority": 0
+      }
+    ]
+  },
   "extractors": {
-    "reset": true,
-    "db_name": "OracleHRDB",
-    "table_definition": {
-      "db_name": "OracleHRDB",
-      "schema": "HR"
+    "state": {
+      "log_path": "logs/extraction.log",
+      "log_max_bytes": 10485760,
+      "log_backups": 5
     },
-    "table_definitions_path": "samples/table_definitions",
+    "features": {
+      "antlr_plsql_calls": true
+    },
     "sources": [
       {
+        "id": "sample-plsql",
         "path": "samples",
         "repo": "samples",
-        "schema": "HR"
+        "db_name": "OracleHRDB",
+        "schema": "HR",
+        "priority": 0,
+        "exclude": [
+          "**/bin/**",
+          "**/obj/**",
+          "**/.git/**",
+          "dummy_graph_10_levels.sql"
+        ],
+        "rules": [
+          {
+            "patterns": [
+              "**/*.sql",
+              "**/*.pks",
+              "**/*.pkb",
+              "**/*.pck",
+              "**/*.pls",
+              "**/*.plb",
+              "**/*.fnc",
+              "**/*.prc",
+              "**/*.trg"
+            ],
+            "extractor": "oracle_plsql",
+            "owner": "callable_or_file"
+          },
+          {
+            "patterns": ["**/*.xml"],
+            "extractor": "xml_sql",
+            "owner": "file"
+          },
+          {
+            "patterns": ["**/*.cs"],
+            "extractor": "csharp_sql",
+            "owner": "repository_or_project"
+          }
+        ]
       }
     ]
   }

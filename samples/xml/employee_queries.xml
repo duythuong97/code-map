@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper xmlns="urn:mybatis" namespace="Samples.Employee">
+  <sql id="employeeSource">FROM HR.EMPLOYEE e</sql>
+
+  <select id="findActive"><![CDATA[
+    SELECT e.EMPLOYEE_ID
+  ]]><include refid="Samples.Employee.employeeSource"/><![CDATA[
+    JOIN HR.DEPARTMENT d ON d.DEPARTMENT_ID = e.DEPARTMENT_ID
+    WHERE e.STATUS = 'ACTIVE'
+  ]]></select>
+
+  <insert id="writeAudit"><![CDATA[
+    INSERT INTO HR.JOB_AUDIT (JOB_NAME, STATUS)
+    VALUES ('XML_SAMPLE', 'DONE')
+  ]]></insert>
+
+  <update id="touchSummary"><![CDATA[
+    UPDATE HR.PAYROLL_SUMMARY SET UPDATED_AT = SYSDATE
+  ]]></update>
+
+  <delete id="clearStage"><![CDATA[
+    DELETE FROM HR.PAYROLL_STAGING WHERE STATUS = 'DONE'
+  ]]></delete>
+
+  <merge id="mergeSummary"><![CDATA[
+    MERGE INTO HR.PAYROLL_SUMMARY s
+    USING HR.PAYROLL_BASE p ON (p.PAY_PERIOD = s.PAY_PERIOD)
+    WHEN MATCHED THEN UPDATE SET s.UPDATED_AT = SYSDATE
+  ]]></merge>
+
+  <statement id="closeMonth">CALL HR.PKG_PAYROLL.CLOSE_MONTH</statement>
+</mapper>

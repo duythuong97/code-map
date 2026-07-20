@@ -1,16 +1,24 @@
 import unittest
 
 from extractors.oracle_plsql import OraclePlSqlExtractor
+from extractors.oracle_plsql_antlr_calls import OraclePlSqlAntlrCallExtractor
 from extractors.oracle_plsql_lineage import OraclePlSqlLineageExtractor
+from extractors.run_extract import build_extractors
 from db import schema as S
 from db.entities import ExtractionContext, ExtractionResult
 
-CTX = ExtractionContext(repository="repo", db_name="DB", extra_tags={"schema": "HR"})
+CTX = ExtractionContext(
+    repository="repo",
+    db_name="DB",
+    schema_name="HR",
+    source_id="coverage",
+    relative_source_path="case.pkb",
+)
 
 
 def extract(text: str, file_name: str = "case.pkb") -> ExtractionResult:
     out = ExtractionResult()
-    for extractor in (OraclePlSqlExtractor(), OraclePlSqlLineageExtractor()):
+    for extractor in (OraclePlSqlExtractor(), OraclePlSqlAntlrCallExtractor(), OraclePlSqlLineageExtractor()):
         if extractor.can_handle(file_name, text):
             out = out.merge(extractor.extract(file_name, text, CTX))
     return out
@@ -62,7 +70,7 @@ CASES = [
         "procedure params modeled",
         "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE p(x NUMBER) IS BEGIN NULL; END; END; /",
         lambda r: has_property(r, S.LABEL_PROCEDURE, "parameters"),
-        False,
+        True,
     ),
     (
         "package constant",
@@ -167,6 +175,18 @@ CASES = [
         True,
     ),
     (
+        "local function assignment call",
+        "CREATE OR REPLACE PACKAGE BODY hr.pkg AS FUNCTION functiona RETURN NUMBER IS BEGIN RETURN 1; END; FUNCTION functionb RETURN NUMBER IS nRet NUMBER; BEGIN nRet := functiona(); RETURN nRet; END; END; /",
+        lambda r: has_edge(r, S.REL_CALLS, ":PKG.FUNCTIONA", ":PKG.FUNCTIONB"),
+        True,
+    ),
+    (
+        "local procedure statement call",
+        "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE proca IS BEGIN NULL; END; PROCEDURE procb IS BEGIN proca(); END; END; /",
+        lambda r: has_edge(r, S.REL_CALLS, ":PKG.PROCA", ":PKG.PROCB"),
+        True,
+    ),
+    (
         "cursor declaration",
         "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE p IS CURSOR c IS SELECT e.id FROM hr.emp e; BEGIN NULL; END; END; /",
         lambda r: has_node(r, "Cursor") and has_edge(r, "READS_COLUMN", ":HR.EMP:ID"),
@@ -194,30 +214,39 @@ CASES = [
         "quoted identifiers",
         'CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE p IS BEGIN INSERT INTO "Emp Log"("Id") VALUES(1); END; END; /',
         lambda r: has_edge(r, S.REL_INSERTS_INTO, ":HR.Emp Log"),
-        False,
+        True,
     ),
     (
         "local nested procedure ownership",
         "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE outer IS PROCEDURE inner IS BEGIN INSERT INTO hr.inner_t(id) VALUES(1); END; BEGIN INSERT INTO hr.outer_t(id) VALUES(1); inner; END; END; /",
         lambda r: has_edge(r, S.REL_INSERTS_INTO, ":HR.OUTER_T", ":PKG.OUTER") and has_edge(r, S.REL_INSERTS_INTO, ":HR.INNER_T", ":PKG.OUTER.INNER"),
-        False,
+        True,
     ),
     (
         "exception flow modeled",
         "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE p IS BEGIN INSERT INTO hr.t(id) VALUES(1); EXCEPTION WHEN OTHERS THEN INSERT INTO hr.err_log(msg) VALUES(SQLERRM); END; END; /",
         lambda r: has_edge(r, "HANDLES_EXCEPTION"),
-        False,
+        True,
     ),
     (
         "synonym resolved",
         "CREATE OR REPLACE PACKAGE BODY hr.pkg AS PROCEDURE p IS BEGIN SELECT id INTO v FROM emp_syn; END; END; /",
         lambda r: has_edge(r, S.REL_READS_FROM, ":HR.EMP"),
-        False,
+        True,
     ),
 ]
 
 
 class OraclePlSqlCoverageMatrixTest(unittest.TestCase):
+    def test_antlr_call_extractor_is_config_gated(self):
+        self.assertFalse(any(isinstance(e, OraclePlSqlAntlrCallExtractor) for e in build_extractors({})))
+        self.assertTrue(
+            any(
+                isinstance(e, OraclePlSqlAntlrCallExtractor)
+                for e in build_extractors({"features": {"antlr_plsql_calls": True}})
+            )
+        )
+
     def test_current_plsql_feature_coverage_matrix(self):
         covered = 0
         unexpected = []

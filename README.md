@@ -1,6 +1,6 @@
 # Code Map
 
-Code Map quét source PL/SQL, import metadata bảng/cột, lưu kết quả vào SQLite và hiển thị graph/lineage qua Flask API + React UI.
+Code Map quét Oracle PL/SQL, XML SQL và SQL nhúng trong C# qua EF/Dapper/ADO.NET; import metadata bảng/cột; lưu graph/lineage vào SQLite; phục vụ qua Flask API + React UI.
 
 ## Cài đặt
 
@@ -12,89 +12,130 @@ cd webapp && npm install && npm run build && cd ..
 
 ## Cấu hình
 
-Project dùng **một file config duy nhất**: `code-map.config.json`.
+Project dùng một file `code-map.config.json`:
 
-- `db`: SQLite DB dùng chung cho API và extractor.
-- `api`: runtime config cho Flask/PM2/UI.
-- `extractors`: config import metadata và extract source.
+- `db`: SQLite DB.
+- `api`: Flask/PM2/UI runtime.
+- `imports.csv`: metadata imports độc lập theo DB/schema/encoding/priority.
+- `extractors.sources`: source roots, stable ID, repo, DB/schema, exclusions, rules.
+- `extractors.state`: lease, heartbeat, rotating log.
 
-Ví dụ:
+Rule extractor/owner hợp lệ:
+
+- `oracle_plsql` + `callable_or_file`.
+- `xml_sql` + `file`.
+- `csharp_sql` + `repository_or_project`.
+
+C# map mỗi file tới `.csproj` gần nhất. Class `*Repository`/`*Dao` tạo owner `Repository`; class khác tạo owner `Application`. XML luôn tạo owner `SourceFile`.
+
+Ví dụ rút gọn:
 
 ```json
 {
   "db": "code_map.db",
-  "api": {
-    "url_prefix": "/code-map",
-    "host": "127.0.0.1",
-    "port": 8000,
-    "pm2_name": "code-map",
-    "python": "python3",
-    "python_no_site": true,
-    "venv_python": "python3.13"
+  "imports": {
+    "csv": [{
+      "id": "hr-metadata",
+      "path": "metadata/hr",
+      "kind": "table_definitions",
+      "db_name": "OracleHRDB",
+      "schema": "HR",
+      "encoding": "utf-8",
+      "priority": 0
+    }]
   },
   "extractors": {
-    "reset": true,
-    "db_name": "OracleHRDB",
-    "table_definition": {
-      "db_name": "OracleHRDB",
-      "schema": "HR"
+    "state": {
+      "log_path": "logs/extraction.log",
+      "log_max_bytes": 10485760,
+      "log_backups": 5
     },
-    "table_definitions_path": "samples/table_definitions",
-    "sources": [
-      {"path": "samples", "repo": "samples", "schema": "HR"}
-    ]
+    "sources": [{
+      "id": "business-source",
+      "path": "src",
+      "repo": "business",
+      "db_name": "OracleHRDB",
+      "schema": "HR",
+      "priority": 0,
+      "exclude": ["**/bin/**", "**/obj/**", "**/.git/**"],
+      "rules": [
+        {"patterns": ["**/*.pkb", "**/*.sql"], "extractor": "oracle_plsql", "owner": "callable_or_file"},
+        {"patterns": ["**/*.xml"], "extractor": "xml_sql", "owner": "file"},
+        {"patterns": ["**/*.cs"], "extractor": "csharp_sql", "owner": "repository_or_project"}
+      ]
+    }]
   }
 }
 ```
 
-Sửa `code-map.config.json`; không sửa hardcode trong code.
+`extractors.reset`, `table_definitions_path`, source/import ID trùng, import roots overlap, rule không hợp lệ đều bị từ chối trước khi mở DB.
 
-## Lệnh chính
+## Unified pipeline
 
-Import metadata + extract PL/SQL vào cùng SQLite DB:
+Metadata luôn chạy trước source trong cùng một run/lease:
 
 ```bash
 .venv/bin/python -m extractors.run_all --config code-map.config.json
 ```
 
-`extractors.reset: true` chỉ xóa graph `nodes/edges`; không xóa metadata `table_definitions/table_columns` vừa import.
+Mặc định incremental:
 
-Chỉ extract PL/SQL, không import metadata:
+- `stat()` fast path; không đọc file không đổi.
+- SHA-256 xác nhận content khi stat/context thay đổi.
+- File thành công commit facts + projection trong một transaction.
+- File lỗi giữ facts/fingerprint tốt gần nhất; run sau retry.
+- Full scan chỉ cleanup file thực sự mất sau khi scan source thành công.
+- Một writer được bảo vệ bởi lease + fencing token + heartbeat.
+
+Buộc parse lại file được discover, không truncate DB:
 
 ```bash
-.venv/bin/python -m extractors.run_extract --config code-map.config.json
+.venv/bin/python -m extractors.run_all --config code-map.config.json --rebuild
 ```
 
-Chỉ import CSV metadata:
+Incremental theo Git name-status manifest (`A`, `M`, `D`):
 
 ```bash
-.venv/bin/python -m extractors.import_csv samples/table_metadata.csv --config code-map.config.json
+.venv/bin/python -m extractors.run_all --config code-map.config.json --files-from changed-files.txt
 ```
 
-CSV mẫu: `samples/table_metadata.csv`.
+Theo dõi:
 
-Header hỗ trợ:
+- Rotating log tại `extractors.state.log_path`.
+- Run/status/counters/current file tại `extraction_runs`.
+- Work/error/delete attempts tại `extraction_run_files`.
+- Latest fingerprint/error tại `extraction_files`.
+
+## Bootstrap v2 an toàn
+
+Build full staging sibling, validate integrity/projections/API-read queries, checkpoint WAL, xuất `<db>.v2.ready`:
+
+```bash
+.venv/bin/python -m extractors.bootstrap_v2 --config code-map.config.json
+```
+
+Lệnh này không sửa, xóa hoặc rename live DB. Khi lỗi, `<db>.v2.tmp` bị xóa. Cutover chỉ thực hiện bằng controlled operation riêng: dừng API, backup live DB, atomic rename, restart, smoke test.
+
+## CSV metadata
+
+Header được nhận diện nghiêm ngặt; header lạ không được phép replace metadata thành rỗng. Encoding cấu hình explicit: `utf-8`, `utf-8-sig`, `cp932`, `shift_jis`, `euc_jp`.
+
+Ví dụ:
 
 ```csv
-mã table,tên tiếng nhật,tên tiếng anh,description,mã column,tên tiếng nhật column,tên tiếng anh column,description column
+table_code,table_name_ja,table_name_en,description,column_code,column_name_ja,column_name_en,column_description
 EMPLOYEES,従業員,Employees,Employee master,EMPLOYEE_ID,従業員ID,Employee ID,Primary key
 ```
 
-Encoding hỗ trợ: `utf-8-sig`, `utf-8`, `cp932`, `shift_jis`, `euc_jp`.
-
-## Chạy API/UI local
+## API/UI local
 
 ```bash
 CODE_MAP_CONFIG=code-map.config.json .venv/bin/python api/app.py
 ```
 
-Mở:
+Mở `http://127.0.0.1:8000/code-map/`.
 
-```text
-http://127.0.0.1:8000/code-map/
-```
-
-## Chạy production bằng PM2
+## Production PM2
 
 ```bash
 pm2 delete code-map || true
@@ -112,36 +153,19 @@ curl -fsS http://127.0.0.1:8000/code-map/api/graph-contract
 
 PM2 trên `/Volumes` dùng `python3 -S -c ...` để tránh lỗi quyền đọc `.venv/pyvenv.cfg`.
 
-## IIS subdirectory
-
-App hỗ trợ chạy dưới `/code-map` qua `api.url_prefix` trong `code-map.config.json`.
-
-Frontend đọc prefix từ `/code-map/app-config.js`; không hardcode trong React.
-
-## Kiểm thử / validation
+## Kiểm thử
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python -m extractors.run_all --config code-map.config.json
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 cd webapp && npm run build && cd ..
 ```
 
-Coverage hiện tại của feature matrix PL/SQL: khoảng `25/30 = 83.3%`.
+## Cấu trúc
 
-## Cấu trúc project
-
-- `code-map.config.json`: config duy nhất cho API + extractor.
-- `api/`: Flask API + static UI; chỉ đọc DB/phục vụ API, không chứa logic extract/import pipeline.
-- `db/`: SQLite schema, entity model, writer/migration.
-- `extractors/`: toàn bộ data init/import/extract/pipeline và PL/SQL extractors.
-- `common/`: helper config/path và đọc source text an toàn encoding.
-- `samples/`: PL/SQL sample + metadata sample để test/demo.
-- `tests/`: unit test và feature coverage matrix.
+- `common/`: config/path/source decoding.
+- `db/`: entities, state/fact schema, transactional projection writer.
+- `extractors/`: scanner, imports-first coordinator, PL/SQL/XML/C# handlers, staging bootstrap.
+- `api/`: read-only serving layer; không chạy extraction.
 - `webapp/`: React/Vite UI.
-- `ecosystem.config.js`: PM2 runtime config.
-
-## Ghi chú kiến trúc
-
-- API đọc từ SQLite và trả JSON/UI; không chạy extractor trong `api/`.
-- Extractor hiện là regex-based practical extractor, chưa phải full PL/SQL parser.
-- Extractor đang cover các nhóm chính: package/procedure/function/trigger, DML table refs, sequence, package call, constants/variables/types đơn giản, simple dynamic SQL và column lineage phổ biến.
+- `samples/`: fixtures/demo.
+- `tests/`: extraction, state, metadata, coordinator, staging regressions.

@@ -7,12 +7,16 @@ Run:
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import re
 import sqlite3
 import sys
-from pathlib import Path
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -20,16 +24,19 @@ if str(ROOT) not in sys.path:
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from common.config import load_app_config, resolve_path
-from common.source_text import read_source_text
+from common.source_text import decode_source_bytes
 from db.writer import ensure_db_schema
 
-APP_CONFIG_PATH = resolve_path(os.environ.get("CODE_MAP_CONFIG", "code-map.config.json"), ROOT)
+APP_CONFIG_PATH = resolve_path(
+    os.environ.get("CODE_MAP_CONFIG", "code-map.config.json"), ROOT
+)
 APP_CONFIG = load_app_config(APP_CONFIG_PATH)
 DB_PATH = resolve_path(APP_CONFIG["db"], APP_CONFIG_PATH.parent)
 WEB_DIST = ROOT / "webapp" / "dist"
 URL_PREFIX = APP_CONFIG["url_prefix"]
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
 
 class PrefixMiddleware:
     def __init__(self, wrapped, prefix: str):
@@ -42,21 +49,75 @@ class PrefixMiddleware:
         path = environ.get("PATH_INFO", "")
         if path == self.prefix or path.startswith(f"{self.prefix}/"):
             environ["SCRIPT_NAME"] = self.prefix
-            environ["PATH_INFO"] = path[len(self.prefix):] or "/"
+            environ["PATH_INFO"] = path[len(self.prefix) :] or "/"
         return self.wrapped(environ, start_response)
+
 
 app.wsgi_app = PrefixMiddleware(app.wsgi_app, URL_PREFIX)
 
 NODE_STYLES = {
-    "Table": {"kind": "table", "icon": "database", "className": "table", "visible": True},
+    "Table": {
+        "kind": "table",
+        "icon": "database",
+        "className": "table",
+        "visible": True,
+    },
     "Procedure": {"kind": "code", "icon": "code", "className": "code", "visible": True},
-    "SQLFunction": {"kind": "code", "icon": "box", "className": "code", "visible": True},
+    "SQLFunction": {
+        "kind": "code",
+        "icon": "box",
+        "className": "code",
+        "visible": True,
+    },
     "Function": {"kind": "code", "icon": "box", "className": "code", "visible": True},
-    "Trigger": {"kind": "trigger", "icon": "git-branch", "className": "trigger", "visible": True},
-    "PLSQLPackage": {"kind": "package", "icon": "file-code", "className": "file", "visible": True},
-    "Sequence": {"kind": "sequence", "icon": "hash", "className": "sequence", "visible": True},
-    "Cursor": {"kind": "detail", "icon": "file-code", "className": "file", "visible": False},
-    "Column": {"kind": "detail", "icon": "list", "className": "detail", "visible": False},
+    "Trigger": {
+        "kind": "trigger",
+        "icon": "git-branch",
+        "className": "trigger",
+        "visible": True,
+    },
+    "PLSQLPackage": {
+        "kind": "package",
+        "icon": "file-code",
+        "className": "file",
+        "visible": True,
+    },
+    "Sequence": {
+        "kind": "sequence",
+        "icon": "hash",
+        "className": "sequence",
+        "visible": True,
+    },
+    "SourceFile": {
+        "kind": "source-file",
+        "icon": "file-code",
+        "className": "source-file",
+        "visible": True,
+    },
+    "Repository": {
+        "kind": "repository",
+        "icon": "code",
+        "className": "repository",
+        "visible": True,
+    },
+    "Application": {
+        "kind": "application",
+        "icon": "box",
+        "className": "application",
+        "visible": True,
+    },
+    "Cursor": {
+        "kind": "detail",
+        "icon": "file-code",
+        "className": "file",
+        "visible": False,
+    },
+    "Column": {
+        "kind": "detail",
+        "icon": "list",
+        "className": "detail",
+        "visible": False,
+    },
 }
 EDGE_STYLES = {
     "READS": {"color": "#2563eb", "visible": True},
@@ -70,11 +131,15 @@ EDGE_STYLES = {
 }
 
 
-def conn() -> sqlite3.Connection:
+@contextmanager
+def conn() -> Iterator[sqlite3.Connection]:
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
-    ensure_db_schema(db)
-    return db
+    try:
+        ensure_db_schema(db)
+        yield db
+    finally:
+        db.close()
 
 
 def db_ready(db: sqlite3.Connection) -> bool:
@@ -85,10 +150,28 @@ def db_ready(db: sqlite3.Connection) -> bool:
     )
 
 
-def db_error() -> dict[str, str]:
+def db_error() -> dict[str, Any]:
     return {
-        "error": f"Database chưa có dữ liệu. Chạy: python -m extractors.run_all --config {APP_CONFIG_PATH}"
+        "error": {
+            "code": "database_not_ready",
+            "message": f"Database chưa có dữ liệu. Chạy: python -m extractors.run_all --config {APP_CONFIG_PATH}",
+        }
     }
+
+def api_error(code: str, message: str, status: int, **details: Any):
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if details:
+        payload["error"]["details"] = details
+    return jsonify(payload), status
+
+@app.errorhandler(404)
+def route_not_found(_error):
+    return api_error("not_found", "API route not found", 404)
+
+@app.errorhandler(405)
+def method_not_allowed(_error):
+    return api_error("method_not_allowed", "HTTP method not allowed", 405)
+
 
 TABLE_DEF_COLUMNS = """
 SELECT code, name_ja, name_en, description
@@ -102,6 +185,7 @@ WHERE db_name=? AND schema_name=? AND table_name=?
 ORDER BY code, name
 """
 
+
 @app.get("/api/graph-contract")
 def graph_contract():
     return jsonify({"nodes": NODE_STYLES, "edges": EDGE_STYLES})
@@ -110,13 +194,20 @@ def graph_contract():
 @app.get("/")
 def index():
     if (WEB_DIST / "index.html").exists():
-        return send_from_directory(WEB_DIST, "index.html")
-    return render_template("index.html")
+        response = send_from_directory(WEB_DIST, "index.html")
+    else:
+        response = render_template("index.html")
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.get("/app-config.js")
 def app_config_js():
-    return "window.CODE_MAP_CONFIG = " + json.dumps({"urlPrefix": URL_PREFIX}) + ";", 200, {"Content-Type": "application/javascript"}
+    return (
+        "window.CODE_MAP_CONFIG = " + json.dumps({"urlPrefix": URL_PREFIX}) + ";",
+        200,
+        {"Content-Type": "application/javascript"},
+    )
 
 
 @app.get("/assets/<path:path>")
@@ -151,7 +242,7 @@ def roots():
             return jsonify(db_error())
         rows = db.execute(
             f"""
-            SELECT label, qualified_name, name
+            SELECT label, qualified_name, name, properties_json
             FROM nodes
             WHERE label IN ({','.join('?' for _ in labels)})
                             AND NOT (label='Table' AND upper(name) IN ('NEW','OLD','R','SRC'))
@@ -159,20 +250,26 @@ def roots():
                 WHEN 'PLSQLPackage' THEN 0
                 WHEN 'Procedure' THEN 1
                 WHEN 'SQLFunction' THEN 2
-                WHEN 'Table' THEN 3
-                ELSE 4
-            END, name
+                WHEN 'SourceFile' THEN 3
+                WHEN 'Repository' THEN 4
+                WHEN 'Application' THEN 5
+                WHEN 'Table' THEN 6
+                ELSE 7
+            END, name, qualified_name
             """,
             labels,
         ).fetchall()
-        return jsonify([dict(r) for r in rows])
+        return jsonify([api_node(enrich_node(db, row)) for row in rows])
+
 
 @app.get("/api/schemas")
 def schemas():
     with conn() as db:
         if not db_ready(db):
             return jsonify([])
-        rows = db.execute("SELECT qualified_name, properties_json FROM nodes").fetchall()
+        rows = db.execute(
+            "SELECT qualified_name, properties_json FROM nodes"
+        ).fetchall()
     found = set()
     for row in rows:
         qn = row["qualified_name"] or ""
@@ -196,12 +293,17 @@ def table_definition():
     if not table_name:
         return jsonify([])
     with conn() as db:
-        table = db.execute(TABLE_DEF_COLUMNS, (db_name, schema_name, table_name)).fetchone()
+        table = db.execute(
+            TABLE_DEF_COLUMNS, (db_name, schema_name, table_name)
+        ).fetchone()
         rows = db.execute(
             COLUMN_DEF_COLUMNS,
             (db_name, schema_name, table_name),
         ).fetchall()
-        return jsonify({"table": dict(table) if table else {}, "columns": [dict(r) for r in rows]})
+        return jsonify(
+            {"table": dict(table) if table else {}, "columns": [dict(r) for r in rows]}
+        )
+
 
 def table_display_name(db: sqlite3.Connection, qn: str, fallback: str) -> str:
     db_name, schema_name, table_name = split_table_qname(qn)
@@ -215,46 +317,220 @@ def table_display_name(db: sqlite3.Connection, qn: str, fallback: str) -> str:
     name_en = row["name_en"] or "-"
     return f"{code} ({name_ja} - {name_en})"
 
-def enrich_table_node(db: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
+
+def enrich_node(db: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
     data = dict(row)
+    try:
+        properties = json.loads(data.pop("properties_json", None) or "{}")
+    except (TypeError, ValueError):
+        properties = {}
     if data.get("label") == "Table":
-        data["name"] = table_display_name(db, data.get("qualified_name", ""), data.get("name", ""))
+        data["name"] = table_display_name(
+            db, data.get("qualified_name", ""), data.get("name", "")
+        )
+    data["display"] = node_display(data, properties)
     return data
+
+def node_display(node: dict, properties: dict) -> dict[str, str | None]:
+    label = node.get("label") or "Unknown"
+    name = str(node.get("name") or "")
+    qname = str(node.get("qualified_name") or "")
+    repository = _optional_text(properties.get("repository"))
+    project = _optional_text(properties.get("project") or properties.get("project_name"))
+    namespace = _optional_text(properties.get("namespace"))
+    source_path = _optional_text(properties.get("source_path"))
+    if label == "SourceFile":
+        return {
+            "title": Path(source_path or name or "Source file").name,
+            "subtitle": source_path,
+            "scope": " / ".join(value for value in (repository, project) if value) or None,
+        }
+    if label == "Repository":
+        return {"title": name or "Repository", "subtitle": namespace, "scope": project}
+    if label == "Application":
+        return {
+            "title": project or name or "Application",
+            "subtitle": repository,
+            "scope": "Project fallback",
+        }
+    if label == "Table":
+        db_name, schema_name, _ = split_table_qname(qname)
+        return {
+            "title": name or qname,
+            "subtitle": schema_name or None,
+            "scope": db_name or None,
+        }
+    return {
+        "title": name or qname,
+        "subtitle": _optional_text(properties.get("schema") or properties.get("package")),
+        "scope": repository or _optional_text(properties.get("db_name")),
+    }
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
 
 @app.get("/api/node-detail")
 def node_detail():
-    qn = request.args.get("qname", "")
+    qn = request.args.get("qname", "").strip()
+    if not qn:
+        return api_error("invalid_request", "qname is required", 400)
     with conn() as db:
         if not db_ready(db):
-            return jsonify({"node": None, "code": "", "columns": []})
+            return jsonify(db_error()), 503
         row = db.execute(
             "SELECT label, qualified_name, name, properties_json FROM nodes WHERE qualified_name=?",
             (qn,),
         ).fetchone()
         if not row:
-            return jsonify({"node": None, "code": "", "columns": []})
-        data = dict(row)
+            return api_error("node_not_found", "Node not found", 404, qname=qn)
+        raw = dict(row)
         try:
-            props = json.loads(data.pop("properties_json") or "{}")
-        except Exception:
+            props = json.loads(raw.get("properties_json") or "{}")
+        except (TypeError, ValueError):
             props = {}
-        line = int(props.get("line") or 1)
-        code = "" if data["label"] == "Table" else source_object_snippet(props.get("source_file") or "", line, data["name"], data["label"])
-        columns = []
+        sources = node_sources(db, qn, props)
+        relation_count = db.execute(
+            "SELECT COUNT(*) FROM edges WHERE from_qname=? OR to_qname=?", (qn, qn)
+        ).fetchone()[0]
+        occurrence_count = db.execute(
+            "SELECT COUNT(*) FROM edge_facts WHERE from_qname=? OR to_qname=?", (qn, qn)
+        ).fetchone()[0]
+        warnings = node_warnings(db, qn, props)
         table = {}
-        if data["label"] == "Table":
+        columns = []
+        if raw["label"] == "Table":
             db_name, schema_name, table_name = split_table_qname(qn)
-            table_row = db.execute(TABLE_DEF_COLUMNS, (db_name, schema_name, table_name)).fetchone()
+            table_row = db.execute(
+                TABLE_DEF_COLUMNS, (db_name, schema_name, table_name)
+            ).fetchone()
             table = dict(table_row) if table_row else {}
             columns = [
-                dict(r)
-                for r in db.execute(
-                    COLUMN_DEF_COLUMNS,
-                    (db_name, schema_name, table_name),
+                dict(item)
+                for item in db.execute(
+                    COLUMN_DEF_COLUMNS, (db_name, schema_name, table_name)
                 ).fetchall()
             ]
-        impact = table_impact_data(db, qn) if data["label"] == "Table" else {"columns": []}
-        return jsonify({"node": api_node(enrich_table_node(db, data)), "properties": props, "code": code, "table": table, "columns": columns, "impact": impact})
+        return jsonify(
+            {
+                "node": api_node(enrich_node(db, row)),
+                "properties": readable_node_properties(
+                    raw["label"], props, sources, raw.get("name")
+                ),
+                "sources": sources,
+                "counts": {
+                    "sources": len(sources),
+                    "relations": relation_count,
+                    "occurrences": occurrence_count,
+                },
+                "warnings": warnings,
+                "table": table,
+                "columns": columns,
+                "impact": table_impact_data(db, qn) if raw["label"] == "Table" else {"columns": []},
+                "code": None,
+            }
+        )
+
+def node_sources(db: sqlite3.Connection, qname: str, fallback: dict) -> list[dict]:
+    rows = db.execute(
+        """
+        SELECT DISTINCT f.source_id, f.relative_path, f.project_name,
+               f.handler_name, s.source_root
+        FROM node_facts n
+        JOIN extraction_files f ON f.id=n.file_id
+        LEFT JOIN extraction_sources s ON s.source_id=f.source_id
+        WHERE n.qname=? AND f.status<>'deleted'
+        ORDER BY f.source_id, f.relative_path, f.handler_name
+        """,
+        (qname,),
+    ).fetchall()
+    sources = [source_item(*row) for row in rows]
+    if sources:
+        return sources
+    source_id = _optional_text(fallback.get("source_id"))
+    source_path = _optional_text(fallback.get("source_path") or fallback.get("source_file"))
+    if not source_id or not source_path:
+        return []
+    root_row = db.execute(
+        "SELECT source_root FROM extraction_sources WHERE source_id=?", (source_id,)
+    ).fetchone()
+    return [
+        source_item(
+            source_id,
+            source_path,
+            _optional_text(fallback.get("project")) or "",
+            _optional_text(fallback.get("extractor_name")) or "",
+            root_row[0] if root_row else None,
+        )
+    ]
+
+def source_item(
+    source_id: str, source_path: str, project: str, extractor: str, source_root: str | None
+) -> dict:
+    locator = resolve_source_locator(source_root, source_path)
+    return {
+        "source_id": source_id,
+        "source_path": safe_relative_source_path(source_path),
+        "project": project or None,
+        "extractor": extractor or None,
+        "language": source_language(source_path),
+        "availability": locator[0],
+    }
+
+def node_warnings(db: sqlite3.Connection, qname: str, properties: dict) -> list[dict]:
+    unresolved = bool(properties.get("unresolved_sql"))
+    if not unresolved:
+        for row in db.execute("SELECT properties_json FROM node_facts WHERE qname=?", (qname,)):
+            try:
+                unresolved = unresolved or bool(json.loads(row[0] or "{}").get("unresolved_sql"))
+            except (TypeError, ValueError):
+                continue
+    return (
+        [{"code": "dynamic_sql_unresolved", "message": "Dynamic SQL unresolved; graph targets may be incomplete."}]
+        if unresolved
+        else []
+    )
+
+def readable_node_properties(
+    label: str, properties: dict, sources: list[dict], object_name: str | None = None
+) -> dict:
+    primary_source = sources[0] if sources else {}
+    values = {
+        "repository": _optional_text(properties.get("repository")),
+        "project": _optional_text(
+            properties.get("project")
+            or properties.get("project_name")
+            or primary_source.get("project")
+        ),
+    }
+    if label == "SourceFile":
+        source = primary_source
+        values.update(
+            {
+                "source_id": source.get("source_id") or _optional_text(properties.get("source_id")),
+                "source_path": source.get("source_path") or _optional_text(properties.get("source_path")),
+                "language": source.get("language"),
+                "extractor": source.get("extractor") or _optional_text(properties.get("extractor_name")),
+                "source_availability": source.get("availability") or "invalid_source",
+            }
+        )
+    elif label == "Repository":
+        values["class_name"] = _optional_text(object_name)
+        values["namespace"] = _optional_text(properties.get("namespace"))
+        values["extractors"] = sorted({item["extractor"] for item in sources if item.get("extractor")})
+    elif label == "Application":
+        values["project_fallback"] = True
+        values["extractors"] = sorted({item["extractor"] for item in sources if item.get("extractor")})
+    else:
+        values.update(
+            {
+                "schema": _optional_text(properties.get("schema")),
+                "db_name": _optional_text(properties.get("db_name")),
+            }
+        )
+    return {key: value for key, value in values.items() if value is not None}
+
 
 @app.get("/api/table-impact")
 def table_impact():
@@ -278,46 +554,76 @@ def flow():
         if not db_ready(db):
             return jsonify({"node": None, "flows": [], "evidence": []})
         node = db.execute(
-            "SELECT label, qualified_name, name FROM nodes WHERE qualified_name=?",
+            "SELECT label, qualified_name, name, properties_json FROM nodes WHERE qualified_name=?",
             (qn,),
         ).fetchone()
-        hidden_labels = tuple(label for label, style in NODE_STYLES.items() if not style["visible"])
-        if direction == "in":
-            qname_clause = "e.to_qname=?"
-            qname_params = (qn,)
-        elif direction == "out":
-            qname_clause = "e.from_qname=?"
-            qname_params = (qn,)
-        else:
-            qname_clause = "(e.from_qname=? OR e.to_qname=?)"
-            qname_params = (qn, qn)
-        rows = db.execute(
-            """
-            SELECT e.from_qname,e.to_qname,e.rel_type,e.source_file,e.line,e.properties_json,
-                   nf.label from_label,nf.name from_name,nt.label to_label,nt.name to_name
-            FROM edges e
-            LEFT JOIN nodes nf ON nf.qualified_name=e.from_qname
-            LEFT JOIN nodes nt ON nt.qualified_name=e.to_qname
-                        WHERE {qname_clause}
-                            AND e.rel_type NOT IN ('CONTAINS','BELONGS_TO')
-                            AND COALESCE(nf.label, '') NOT IN ({hidden})
-                            AND COALESCE(nt.label, '') NOT IN ({hidden})
-            ORDER BY e.line LIMIT 240
-            """.format(qname_clause=qname_clause, hidden=','.join('?' for _ in hidden_labels)),
-            (*qname_params, *hidden_labels, *hidden_labels),
-        ).fetchall()
-        flows = []
-        for row in rows:
-            item = flow_dict(row, qn)
-            if not item["visible"]:
+        if not node:
+            return api_error("node_not_found", "Node not found", 404, qname=qn)
+        flows = query_flow_rows(db, qn, direction, requested_types)
+        return jsonify(
+            {
+                "node": api_node(enrich_node(db, node)),
+                "flows": flows,
+                "truncated": False,
+                "contract": {"nodes": NODE_STYLES, "edges": EDGE_STYLES},
+            }
+        )
+
+
+@app.get("/api/flow-all")
+def flow_all():
+    qn = request.args.get("qname", "")
+    direction = request.args.get("direction", "both").lower()
+    requested_types = {
+        item.strip().upper()
+        for item in request.args.get("types", "").split(",")
+        if item.strip()
+    }
+    try:
+        max_nodes = max(1, min(int(request.args.get("max_nodes", 500) or 500), 1000))
+    except (TypeError, ValueError):
+        return api_error("invalid_request", "max_nodes must be an integer", 400)
+    with conn() as db:
+        if not db_ready(db):
+            return jsonify({"node": None, "flows": [], "evidence": []})
+        node = db.execute(
+            "SELECT label, qualified_name, name, properties_json FROM nodes WHERE qualified_name=?",
+            (qn,),
+        ).fetchone()
+        if not node:
+            return api_error("node_not_found", "Node not found", 404, qname=qn)
+        pending = [qn]
+        visited = set()
+        flows_by_id = {}
+        while pending and len(visited) < max_nodes:
+            current_qn = pending.pop(0)
+            if current_qn in visited:
                 continue
-            item_type = item["flow_type"].upper()
-            if requested_types and item_type not in requested_types and not (item_type == "REMOTE_READS" and "READS" in requested_types):
-                continue
-            item["from_name"] = table_display_name(db, item["from_qname"], item.get("from_name") or item["from_qname"])
-            item["to_name"] = table_display_name(db, item["to_qname"], item.get("to_name") or item["to_qname"])
-            flows.append(item)
-        return jsonify({"node": api_node(enrich_table_node(db, node)) if node else None, "flows": flows, "contract": {"nodes": NODE_STYLES, "edges": EDGE_STYLES}})
+            visited.add(current_qn)
+            rows = query_flow_rows(db, current_qn, direction, requested_types)
+            for item in rows:
+                flows_by_id[edge_key(item)] = item
+                if direction == "in":
+                    next_qn = item["from_qname"]
+                elif direction == "out":
+                    next_qn = item["to_qname"]
+                else:
+                    next_qn = (
+                        item["to_qname"]
+                        if item["from_qname"] == current_qn
+                        else item["from_qname"]
+                    )
+                if next_qn and next_qn not in visited:
+                    pending.append(next_qn)
+        return jsonify(
+            {
+                "node": api_node(enrich_node(db, node)),
+                "flows": list(flows_by_id.values()),
+                "truncated": bool(pending),
+                "max_nodes": max_nodes,
+                "contract": {"nodes": NODE_STYLES, "edges": EDGE_STYLES},
+            }
+        )
 
 
 @app.get("/api/search")
@@ -329,26 +635,224 @@ def search():
     with conn() as db:
         if not db_ready(db):
             return jsonify(db_error())
-        visible_labels = tuple(label for label, style in NODE_STYLES.items() if style["visible"])
+        visible_labels = tuple(
+            label for label, style in NODE_STYLES.items() if style["visible"]
+        )
         label_clause = "AND label=?" if label else ""
-        params = (like, like, *visible_labels, label) if label else (like, like, *visible_labels)
         rows = db.execute(
             f"""
-            SELECT label, qualified_name, name
+            SELECT label, qualified_name, name, properties_json
             FROM nodes
-            WHERE (upper(qualified_name) LIKE ? OR upper(name) LIKE ?)
+            WHERE (upper(qualified_name) LIKE ? OR upper(name) LIKE ?
+                   OR upper(COALESCE(properties_json,'')) LIKE ?)
               AND label IN ({','.join('?' for _ in visible_labels)}) {label_clause}
-            ORDER BY CASE label WHEN 'Table' THEN 0 ELSE 1 END, name
+            ORDER BY CASE label
+                WHEN 'SourceFile' THEN 0 WHEN 'Repository' THEN 1
+                WHEN 'Application' THEN 2 WHEN 'Table' THEN 3 ELSE 4
+            END, name, qualified_name
             LIMIT 80
             """,
-            params,
+            ((like, like, like, *visible_labels, label) if label else (like, like, like, *visible_labels)),
         ).fetchall()
-        items = [enrich_table_node(db, r) for r in rows]
+        items = [api_node(enrich_node(db, row)) for row in rows]
         if schema:
             prefix = f":{schema.upper()}."
             items = [item for item in items if prefix in item["qualified_name"].upper()]
         return jsonify(items)
 
+
+@app.get("/api/edge-evidence")
+def edge_evidence():
+    relation = relation_args()
+    if isinstance(relation, tuple) and len(relation) == 2:
+        return relation
+    try:
+        limit = max(1, min(int(request.args.get("limit", "50")), 100))
+        offset = decode_cursor(request.args.get("cursor", ""))
+    except (TypeError, ValueError):
+        return api_error("invalid_pagination", "cursor or limit is invalid", 400)
+    with conn() as db:
+        if not db_ready(db):
+            return jsonify(db_error()), 503
+        page = relation_evidence_page(db, *relation, offset=offset, limit=limit)
+        if page["evidence_count"] == 0 and not relation_exists(db, *relation):
+            return api_error("relation_not_found", "Relation not found", 404)
+        return jsonify(page)
+
+@app.get("/api/snippet")
+def occurrence_snippet():
+    relation = relation_args()
+    if isinstance(relation, tuple) and len(relation) == 2:
+        return relation
+    occurrence_id = request.args.get("occurrence_id", "").strip()
+    if not re.fullmatch(r"occ_[0-9a-f]{32}", occurrence_id):
+        return api_error("invalid_occurrence", "occurrence_id is invalid", 400)
+    with conn() as db:
+        if not db_ready(db):
+            return jsonify(db_error()), 503
+        occurrence = find_occurrence(db, *relation, occurrence_id)
+        if not occurrence:
+            return api_error("occurrence_not_found", "Occurrence not found for relation", 404)
+        status, path = resolve_source_locator(
+            occurrence.get("source_root"), occurrence.get("source_path")
+        )
+        if status != "available" or path is None:
+            return jsonify(snippet_state(status, occurrence))
+        return jsonify(read_bounded_snippet(path, occurrence))
+
+def relation_args():
+    relation = tuple(request.args.get(name, "").strip() for name in ("from_qname", "to_qname", "rel_type"))
+    if not all(relation):
+        return api_error("invalid_relation", "from_qname, to_qname and rel_type are required", 400)
+    return relation
+
+def relation_exists(db: sqlite3.Connection, from_qname: str, to_qname: str, rel_type: str) -> bool:
+    return bool(db.execute(
+        "SELECT 1 FROM edges WHERE from_qname=? AND to_qname=? AND rel_type=?",
+        (from_qname, to_qname, rel_type),
+    ).fetchone())
+
+def relation_evidence_page(
+    db: sqlite3.Connection, from_qname: str, to_qname: str, rel_type: str, *, offset: int, limit: int
+) -> dict:
+    total = db.execute(
+        """SELECT COUNT(*) FROM edge_facts e JOIN extraction_files f ON f.id=e.file_id
+        WHERE e.from_qname=? AND e.to_qname=? AND e.rel_type=? AND f.status<>'deleted'""",
+        (from_qname, to_qname, rel_type),
+    ).fetchone()[0]
+    rows = db.execute(
+        """SELECT e.fact_key,e.source_path,e.line,e.properties_json,f.source_id,f.handler_name
+        FROM edge_facts e JOIN extraction_files f ON f.id=e.file_id
+        WHERE e.from_qname=? AND e.to_qname=? AND e.rel_type=? AND f.status<>'deleted'
+        ORDER BY e.priority DESC,f.source_id ASC,e.source_path ASC,e.line ASC,e.fact_key ASC
+        LIMIT ? OFFSET ?""",
+        (from_qname, to_qname, rel_type, limit, offset),
+    ).fetchall()
+    items = []
+    for row in rows:
+        try:
+            properties = json.loads(row["properties_json"] or "{}")
+        except (TypeError, ValueError):
+            properties = {}
+        properties.update({
+            "source_id": row["source_id"], "source_path": row["source_path"] or "",
+            "line": row["line"], "extractor_name": properties.get("extractor_name") or row["handler_name"],
+        })
+        items.append(normalize_evidence(properties, fact_key=row["fact_key"]))
+    next_offset = offset + len(items)
+    return {
+        "evidence": items, "evidence_count": total, "evidence_truncated": next_offset < total,
+        "next_cursor": encode_cursor(next_offset) if next_offset < total else None,
+    }
+
+def find_occurrence(
+    db: sqlite3.Connection, from_qname: str, to_qname: str, rel_type: str, occurrence_id: str
+) -> dict | None:
+    rows = db.execute(
+        """SELECT e.fact_key,e.source_path,e.line,e.properties_json,
+        f.source_id,f.handler_name,s.source_root
+        FROM edge_facts e JOIN extraction_files f ON f.id=e.file_id
+        LEFT JOIN extraction_sources s ON s.source_id=f.source_id
+        WHERE e.from_qname=? AND e.to_qname=? AND e.rel_type=? AND f.status<>'deleted'
+        ORDER BY e.priority DESC,f.source_id ASC,e.source_path ASC,e.line ASC,e.fact_key ASC""",
+        (from_qname, to_qname, rel_type),
+    ).fetchall()
+    for row in rows:
+        candidate = stable_occurrence_id(row["source_id"], row["source_path"] or "", row["fact_key"])
+        if candidate != occurrence_id:
+            continue
+        try:
+            properties = json.loads(row["properties_json"] or "{}")
+        except (TypeError, ValueError):
+            properties = {}
+        properties.update({
+            "occurrence_id": candidate, "source_id": row["source_id"],
+            "source_path": row["source_path"] or "", "line": row["line"],
+            "source_root": row["source_root"],
+            "extractor_name": properties.get("extractor_name") or row["handler_name"],
+        })
+        return properties
+    return None
+
+def encode_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(str(offset).encode("ascii")).decode("ascii").rstrip("=")
+
+def decode_cursor(cursor: str) -> int:
+    if not cursor:
+        return 0
+    if len(cursor) > 24 or not re.fullmatch(r"[A-Za-z0-9_-]+", cursor):
+        raise ValueError("invalid cursor")
+    offset = int(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode("ascii"))
+    if offset < 0:
+        raise ValueError("negative cursor")
+    return offset
+
+def source_language(source_path: Any) -> str | None:
+    return {
+        ".cs": "csharp", ".xml": "xml", ".sql": "sql", ".pks": "plsql",
+        ".pkb": "plsql", ".pls": "plsql", ".csv": "csv",
+    }.get(PurePosixPath(str(source_path or "")).suffix.lower())
+
+def safe_relative_source_path(source_path: Any) -> str | None:
+    path = PurePosixPath(str(source_path or ""))
+    if not source_path or path.is_absolute() or ".." in path.parts:
+        return None
+    return path.as_posix()
+
+def resolve_source_locator(source_root: str | None, source_path: str | None) -> tuple[str, Path | None]:
+    if not source_root or not source_path:
+        return "invalid_source", None
+    relative = PurePosixPath(source_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        return "invalid_source", None
+    try:
+        root = Path(source_root).resolve(strict=True)
+        candidate = (root / Path(*relative.parts)).resolve(strict=False)
+        candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return "invalid_source", None
+    if not candidate.exists() or not candidate.is_file():
+        return "not_found", None
+    if not os.access(candidate, os.R_OK):
+        return "unreadable", None
+    return "available", candidate
+
+def snippet_state(status: str, occurrence: dict) -> dict:
+    line = positive_line(occurrence.get("line"))
+    return {
+        "status": status,
+        "source_path": safe_relative_source_path(occurrence.get("source_path")),
+        "focus_line": line, "start_line": None, "end_line": None,
+        "language": source_language(str(occurrence.get("source_path") or "")), "text": None,
+    }
+
+def read_bounded_snippet(path: Path, occurrence: dict) -> dict:
+    focus = positive_line(occurrence.get("line"))
+    try:
+        text = decode_source_bytes(path.read_bytes()[: 8 * 1024 * 1024])
+    except OSError:
+        return snippet_state("unreadable", occurrence)
+    lines = text.splitlines()
+    if not lines:
+        return snippet_state("unreadable", occurrence)
+    focus = min(focus, len(lines))
+    start = max(1, focus - 6)
+    end = min(len(lines), focus + 12, start + 24)
+    selected = "\n".join(lines[start - 1 : end])
+    encoded = selected.encode("utf-8")
+    if len(encoded) > 64 * 1024:
+        selected = decode_source_bytes(encoded[: 64 * 1024])
+    return {
+        "status": "available", "source_path": safe_relative_source_path(occurrence.get("source_path")),
+        "focus_line": focus, "start_line": start, "end_line": end,
+        "language": source_language(str(occurrence.get("source_path") or "")), "text": selected,
+    }
+
+def positive_line(value: Any) -> int:
+    try:
+        return max(1, int(value or 1))
+    except (TypeError, ValueError):
+        return 1
 
 @app.get("/api/lineage")
 def lineage():
@@ -369,7 +873,8 @@ def lineage():
         ).fetchone()
         upstream = db.execute(
             """
-            SELECT e.rel_type,e.source_file,e.line,e.properties_json,n.qualified_name other_qname,n.name other_name
+            SELECT e.from_qname,e.to_qname,e.rel_type,e.source_file,e.line,e.properties_json,
+                   n.qualified_name other_qname,n.name other_name
             FROM edges e JOIN nodes n ON n.qualified_name=e.from_qname
             WHERE e.to_qname=? ORDER BY e.line LIMIT 160
             """,
@@ -377,40 +882,43 @@ def lineage():
         ).fetchall()
         downstream = db.execute(
             """
-            SELECT e.rel_type,e.source_file,e.line,e.properties_json,n.qualified_name other_qname,n.name other_name
+            SELECT e.from_qname,e.to_qname,e.rel_type,e.source_file,e.line,e.properties_json,
+                   n.qualified_name other_qname,n.name other_name
             FROM edges e JOIN nodes n ON n.qualified_name=e.to_qname
             WHERE e.from_qname=? ORDER BY e.line LIMIT 160
             """,
             (qn,),
         ).fetchall()
-        ups = [edge_dict(r) for r in upstream]
-        dns = [edge_dict(r) for r in downstream]
-        evidence = [
-            snippet(e["source_file"], int(e["line"]))
-            for e in ups + dns
-            if e.get("source_file") and e.get("line")
-        ]
+        if not node:
+            return api_error("node_not_found", "Node not found", 404, qname=qn)
         return jsonify(
             {
-                "node": dict(node) if node else None,
-                "upstream": ups,
-                "downstream": dns,
-                "evidence": [x for x in evidence if x][:10],
+                "node": api_node(enrich_node(db, node)),
+                "upstream": [edge_dict(db, row) for row in upstream],
+                "downstream": [edge_dict(db, row) for row in downstream],
             }
         )
 
 
-def edge_dict(row: sqlite3.Row) -> dict:
+def edge_dict(db: sqlite3.Connection, row: sqlite3.Row) -> dict:
     data = dict(row)
     try:
         props = json.loads(data.pop("properties_json") or "{}")
     except Exception:
         props = {}
-    data["expression"] = props.get("expression", "")
-    data["operation"] = props.get("operation", "")
-    data["columns"] = props.get("columns", [])
-    data["confidence"] = props.get("confidence", "")
+    data.update(relation_properties(data.get("rel_type", ""), props))
+    data.update(
+        relation_evidence_page(
+            db,
+            data.get("from_qname", ""),
+            data.get("to_qname", ""),
+            data.get("rel_type", ""),
+            offset=0,
+            limit=100,
+        )
+    )
     return data
+
 
 def table_impact_data(db: sqlite3.Connection, qn: str) -> dict:
     rows = db.execute(
@@ -433,9 +941,21 @@ def table_impact_data(db: sqlite3.Connection, qn: str) -> dict:
     }
     for row in rows:
         props = json.loads(row["properties_json"] or "{}")
-        columns = props.get("columns") or (["*"] if row["rel_type"] == "DELETES_FROM" else [])
+        columns = props.get("columns") or (
+            ["*"] if row["rel_type"] == "DELETES_FROM" else []
+        )
         for col in columns:
-            item = buckets.setdefault(col, {"name": col, "reads": [], "inserts": [], "updates": [], "deletes": [], "merges": []})
+            item = buckets.setdefault(
+                col,
+                {
+                    "name": col,
+                    "reads": [],
+                    "inserts": [],
+                    "updates": [],
+                    "deletes": [],
+                    "merges": [],
+                },
+            )
             item[rel_key[row["rel_type"]]].append(
                 {
                     "node": row["actor_name"] or row["actor_qname"],
@@ -446,6 +966,98 @@ def table_impact_data(db: sqlite3.Connection, qn: str) -> dict:
                 }
             )
     return {"table": qn, "columns": [buckets[k] for k in sorted(buckets)]}
+
+
+def query_flow_rows(
+    db: sqlite3.Connection, qn: str, direction: str, requested_types: set[str]
+) -> list[dict]:
+    hidden_labels = tuple(
+        label for label, style in NODE_STYLES.items() if not style["visible"]
+    )
+    if direction == "in":
+        qname_clause = "e.to_qname=?"
+        qname_params = (qn,)
+    elif direction == "out":
+        qname_clause = "e.from_qname=?"
+        qname_params = (qn,)
+    else:
+        qname_clause = "(e.from_qname=? OR e.to_qname=?)"
+        qname_params = (qn, qn)
+    rows = db.execute(
+        """
+        SELECT e.from_qname,e.to_qname,e.rel_type,e.source_file,e.line,e.properties_json,
+               nf.label from_label,nf.name from_name,nf.properties_json from_properties_json,
+               nt.label to_label,nt.name to_name,nt.properties_json to_properties_json
+        FROM edges e
+        LEFT JOIN nodes nf ON nf.qualified_name=e.from_qname
+        LEFT JOIN nodes nt ON nt.qualified_name=e.to_qname
+        WHERE {qname_clause}
+          AND e.rel_type NOT IN ('CONTAINS','BELONGS_TO')
+          AND COALESCE(nf.label, '') NOT IN ({hidden})
+          AND COALESCE(nt.label, '') NOT IN ({hidden})
+        ORDER BY e.line LIMIT 240
+        """.format(
+            qname_clause=qname_clause, hidden=",".join("?" for _ in hidden_labels)
+        ),
+        (*qname_params, *hidden_labels, *hidden_labels),
+    ).fetchall()
+    flows = []
+    for row in rows:
+        item = flow_dict(row, qn)
+        if not item["visible"]:
+            continue
+        item_type = item["flow_type"].upper()
+        if (
+            requested_types
+            and item_type not in requested_types
+            and not (item_type == "REMOTE_READS" and "READS" in requested_types)
+        ):
+            continue
+        from_node = enrich_node(
+            db,
+            {
+                "label": item.get("from_label"),
+                "qualified_name": item["from_qname"],
+                "name": item.get("from_name"),
+                "properties_json": item.pop("from_properties_json", "{}"),
+            },
+        )
+        to_node = enrich_node(
+            db,
+            {
+                "label": item.get("to_label"),
+                "qualified_name": item["to_qname"],
+                "name": item.get("to_name"),
+                "properties_json": item.pop("to_properties_json", "{}"),
+            },
+        )
+        item.update(
+            {
+                "from_name": from_node["display"]["title"],
+                "from_display": from_node["display"],
+                "to_name": to_node["display"]["title"],
+                "to_display": to_node["display"],
+            }
+        )
+        item.update(
+            relation_evidence_page(
+                db, item["from_qname"], item["to_qname"], item["rel_type"], offset=0, limit=100
+            )
+        )
+        flows.append(item)
+    return flows
+
+
+def edge_key(item: dict) -> str:
+    return "|".join(
+        [
+            item.get("from_qname") or "",
+            item.get("to_qname") or "",
+            item.get("rel_type") or "",
+            str(item.get("line") or ""),
+            item.get("source_file") or "",
+        ]
+    )
 
 
 def flow_dict(row: sqlite3.Row, selected_qn: str) -> dict:
@@ -464,19 +1076,56 @@ def flow_dict(row: sqlite3.Row, selected_qn: str) -> dict:
             "flow_type": ftype,
             "visible": bool(style.get("visible", True)),
             "style": style,
-            "operation": props.get("operation", ""),
-            "expression": props.get("expression", ""),
-            "columns": props.get("columns", []),
-            "confidence": props.get("confidence", ""),
-            "code": (
-                snippet(data.get("source_file") or "", int(data["line"]))
-                if data.get("line")
-                else ""
-            ),
+            **relation_properties(rel, props),
         }
     )
     return data
 
+
+def relation_properties(rel_type: str, properties: dict) -> dict:
+    evidence = [normalize_evidence(item) for item in properties.get("evidence") or []]
+    return {
+        "rel_type": rel_type,
+        "flow_type": flow_type(rel_type, properties),
+        "operation": _optional_text(properties.get("operation")) or relation_operation(rel_type),
+        "expression": _optional_text(properties.get("expression")),
+        "columns": sorted({str(item) for item in properties.get("columns") or []}),
+        "confidence": _optional_text(properties.get("confidence")),
+        "evidence": evidence,
+        "evidence_count": int(properties.get("evidence_count") or len(evidence)),
+        "evidence_truncated": bool(properties.get("evidence_truncated")),
+    }
+
+def normalize_evidence(properties: dict, *, fact_key: str = "") -> dict:
+    source_id = str(properties.get("source_id") or "")
+    raw_source_path = str(properties.get("source_path") or "")
+    source_path = safe_relative_source_path(raw_source_path)
+    occurrence_id = stable_occurrence_id(source_id, raw_source_path, fact_key or _json_stable(properties))
+    keys = (
+        "line", "operation", "query_id", "mapper_tag", "call_type", "expression",
+        "columns", "confidence", "extractor_name", "language",
+    )
+    item = {key: properties[key] for key in keys if properties.get(key) not in (None, "", [])}
+    item.update({"occurrence_id": occurrence_id, "source_id": source_id, "source_path": source_path})
+    item.setdefault("operation", None)
+    item.setdefault("columns", [])
+    item.setdefault("language", source_language(source_path))
+    return item
+
+def stable_occurrence_id(source_id: str, source_path: str, fact_key: str) -> str:
+    digest = hashlib.sha256(
+        "\0".join((source_id, PurePosixPath(source_path).as_posix(), fact_key)).encode("utf-8")
+    ).hexdigest()
+    return f"occ_{digest[:32]}"
+
+def relation_operation(rel_type: str) -> str:
+    return {
+        "READS_FROM": "SELECT", "READS_COLUMN": "SELECT", "INSERTS_INTO": "INSERT",
+        "UPDATES": "UPDATE", "DELETES_FROM": "DELETE", "MERGES_INTO": "MERGE", "CALLS": "CALL",
+    }.get(rel_type, rel_type)
+
+def _json_stable(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 def flow_type(rel: str, props: dict) -> str:
     if rel in {"WRITES_TO", "INSERTS_INTO", "UPDATES", "DELETES_FROM", "MERGES_INTO"}:
@@ -493,9 +1142,15 @@ def flow_type(rel: str, props: dict) -> str:
         return "USES"
     return rel
 
+
 def api_node(row: dict) -> dict:
     label = row.get("label") or "Unknown"
-    fallback = {"kind": "unknown", "icon": "box", "className": "unknown", "visible": True}
+    fallback = {
+        "kind": "unknown",
+        "icon": "box",
+        "className": "unknown",
+        "visible": True,
+    }
     return {**row, "style": NODE_STYLES.get(label, fallback)}
 
 
@@ -510,31 +1165,6 @@ def split_table_qname(qn: str) -> tuple[str, str, str]:
     if not table_name:
         return db_name, "", schema_name
     return db_name, schema_name, table_name
-
-
-def snippet(path: str, line: int) -> str:
-    p = Path(path)
-    if not p.exists():
-        return ""
-    lines = read_source_text(p).splitlines()
-    start = max(0, line - 4)
-    end = min(len(lines), line + 5)
-    return "\n".join(f"{i + 1:5d}: {lines[i]}" for i in range(start, end))
-
-def source_object_snippet(path: str, line: int, name: str, label: str) -> str:
-    p = Path(path)
-    if not p.exists():
-        return ""
-    lines = read_source_text(p).splitlines()
-    if label not in {"Procedure", "SQLFunction", "Function", "Trigger"}:
-        return snippet(path, line)
-    start = max(0, line - 1)
-    end_re = re.compile(rf"^\s*END\s+{re.escape(name)}\s*;", re.IGNORECASE)
-    anon_end_re = re.compile(r"^\s*END\s*;", re.IGNORECASE)
-    for i in range(start + 1, len(lines)):
-        if end_re.search(lines[i]) or (label == "Trigger" and anon_end_re.search(lines[i])):
-            return "\n".join(f"{n + 1:5d}: {lines[n]}" for n in range(start, i + 1))
-    return "\n".join(f"{n + 1:5d}: {lines[n]}" for n in range(start, len(lines)))
 
 
 def parse_args():

@@ -69,6 +69,13 @@ class ExtractionResult:
         return not self.nodes and not self.edges
 
 
+@dataclass(frozen=True)
+class MetadataFact:
+    entity_kind: str
+    entity_id: str
+    payload: dict[str, Any]
+    row_order: int
+
 @dataclass
 class ExtractionContext:
     """Shared context passed to every extractor for a given file.
@@ -92,11 +99,15 @@ class ExtractionContext:
     repo_owner: str = ""
     team_name: str = ""
 
-    # Database scoping — set when a source folder belongs to a specific DB schema.
-    # Used to build table qnames so that same-named tables in different DBs are distinct.
-    # e.g. db_name="OracleDB_Main" → Table:MyRepo:OracleDB_Main:USERS
-    # Leave empty for single-DB repos (falls back to Table:MyRepo:USERS)
+    # Stable extraction and database identity.
     db_name: str = ""
+    schema_name: str = ""
+    source_id: str = ""
+    relative_source_path: str = ""
+    project_name: str = ""
+    project_relative_root: str = ""
+    project_file: str = ""
+    owner_policy: str = ""
 
     # Workflow / scheduling metadata (JP1, Airflow, cron, Hangfire …)
     workflow_name: str = ""   # JP1 Jobnet name / Airflow DAG ID
@@ -104,21 +115,65 @@ class ExtractionContext:
     scheduler_type: str = ""  # "jp1" | "airflow" | "cron" | "hangfire"
 
     def repo_qname(self) -> str:
-        """Return the qualified_name used for the Repository node."""
-        src = self.source or "git"
-        return f"Repository:{src}:{self.repository}"
+        return f"Repository:{self.repository}:{self.project_name or self.repository}"
 
-    def table_qname(self, table_name: str) -> str:
-        """Return the qualified_name for a Table node.
+    def repository_owner_qname(self, namespace: str, class_name: str) -> str:
+        owner = ".".join(part for part in (namespace, class_name) if part)
+        return f"Repository:{self.repository}:{self.project_name or self.repository}:{owner}"
 
-        Identity is (db_name, table_name) — repository is NOT included so that
-        the same physical table referenced from different repos merges cleanly.
-          With db_name:    Table:{db_name}:{table_name}
-          Without db_name: Table:{table_name}
-        """
-        if self.db_name:
-            return f"Table:{self.db_name}:{table_name}"
-        return f"Table:{table_name}"
+    def application_qname(self) -> str:
+        return f"Application:{self.repository}:{self.project_name or self.repository}"
+
+    def source_file_qname(self) -> str:
+        if not self.source_id or not self.relative_source_path:
+            raise ValueError("SourceFile identity requires source_id and relative_source_path")
+        return f"SourceFile:{self.source_id}:{Path(self.relative_source_path).as_posix()}"
+
+    def resolved_object(
+        self, object_name: str, explicit_schema: str | None = None
+    ) -> tuple[str, str, bool]:
+        normalized = _normalize_name(object_name)
+        if "." in normalized:
+            schema, name = normalized.rsplit(".", 1)
+            return schema, name, False
+        schema = _normalize_name(explicit_schema or self.schema_name)
+        if schema:
+            return schema, normalized, False
+        unresolved_schema = f"UNRESOLVED[{self.source_id or self.repository or 'UNKNOWN'}]"
+        return unresolved_schema, normalized, True
+
+    def table_qname(self, table_name: str, explicit_schema: str | None = None) -> str:
+        schema, name, _ = self.resolved_object(table_name, explicit_schema)
+        return f"Table:{self.db_name}:{schema}.{name}"
+
+    def sequence_qname(
+        self, sequence_name: str, explicit_schema: str | None = None
+    ) -> str:
+        schema, name, _ = self.resolved_object(sequence_name, explicit_schema)
+        return f"Sequence:{self.db_name}:{schema}.{name}"
+
+    def column_qname(
+        self, table_name: str, column_name: str, explicit_schema: str | None = None
+    ) -> str:
+        table_identity = self.table_qname(table_name, explicit_schema).removeprefix("Table:")
+        return f"Column:{table_identity}:{_normalize_name(column_name)}"
+
+    def logic_qname(
+        self, label: str, name: str, explicit_schema: str | None = None
+    ) -> str:
+        schema = _normalize_name(explicit_schema or self.schema_name)
+        if not schema:
+            schema = f"UNRESOLVED[{self.source_id or self.repository or 'UNKNOWN'}]"
+        return f"{label}:{self.repository}:{self.db_name}:{schema}:{_normalize_name(name)}"
+
+    def evidence_properties(self, line: int | None = None) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "source_id": self.source_id,
+            "source_path": Path(self.relative_source_path).as_posix(),
+        }
+        if line is not None:
+            out["line"] = line
+        return out
 
     def infer_service_from_namespace(self, namespace: str) -> str:
         """Strip namespace_prefix and return the next segment as service name."""
@@ -139,3 +194,15 @@ class ExtractionContext:
             if part not in {"src", "lib", "app", "main", "java", "cs", "ts", ".", ".."}:
                 return part.lower()
         return self.repository
+
+
+def _normalize_name(value: str) -> str:
+    parts = []
+    for raw in str(value or "").split("."):
+        part = raw.strip()
+        parts.append(
+            part[1:-1]
+            if part.startswith('"') and part.endswith('"')
+            else part.upper()
+        )
+    return ".".join(filter(None, parts))

@@ -19,7 +19,6 @@ import {
   FileCode2,
   GitBranch,
   Hash,
-  Info,
   List,
   Lock,
   Maximize2,
@@ -52,7 +51,18 @@ const DETAIL_WIDTH_KEY = "code-map.detailWidth";
 const DEFAULT_DETAIL_WIDTH = 620;
 const MIN_DETAIL_WIDTH = 360;
 const MAX_DETAIL_WIDTH = 980;
-const EDGE_TYPE_DEFAULTS = ["CALLS", "READS", "WRITES", "DERIVES", "TRIGGERS", "USES"];
+const EDGE_TYPE_DEFAULTS = [
+  "CALLS",
+  "READS",
+  "REMOTE_READS",
+  "WRITES",
+  "DERIVES",
+  "TRIGGERS",
+  "USES",
+];
+const READ_FLOW_TYPES = ["READS", "REMOTE_READS"];
+const WRITE_FLOW_TYPES = ["WRITES"];
+const EVERY_FLOW_TYPES = EDGE_TYPE_DEFAULTS;
 
 const icons = {
   box: Box,
@@ -73,11 +83,19 @@ const nodeTypes = {
   PLSQLPackage: { icon: FileCode2, className: "file" },
   Cursor: { icon: FileCode2, className: "file" },
   Sequence: { icon: Hash, className: "sequence" },
+  SourceFile: { icon: FileCode2, className: "source-file" },
+  Repository: { icon: Code2, className: "repository" },
+  Application: { icon: Box, className: "application" },
 };
 const rfNodeTypes = { flowNode: FlowNode };
 const edgeTypes = { lane: LaneEdge };
 const basePath = window.CODE_MAP_CONFIG?.urlPrefix || "";
-const api = (path) => fetch(`${basePath}${path}`).then((res) => res.json());
+async function api(path, options = {}) {
+  const response = await fetch(`${basePath}${path}`, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || `Request failed (${response.status})`);
+  return payload;
+}
 const shortName = (qname = "") => qname.split(":").pop() || qname;
 const objectName = (qname = "") =>
   shortName(qname).split(".").pop() || shortName(qname);
@@ -93,17 +111,26 @@ function tableDisplayParts(label = "", qname = "") {
   };
 }
 const rootView = (row) => ({
-  name: row.name || shortName(row.qualified_name),
+  name: row.display?.title || row.name || shortName(row.qualified_name),
   type: row.label,
-  schema: row.qualified_name?.split(":").pop()?.split(".")[0] || "",
+  schema: row.display?.scope || row.display?.subtitle || "",
+  subtitle: row.display?.subtitle,
+  display: row.display,
+  style: row.style,
   qname: row.qualified_name,
   nodeId: row.qualified_name,
 });
 
 function App() {
   const resizeStartRef = useRef(null);
+  const searchAbortRef = useRef(null);
+  const rootAbortRef = useRef(null);
+  const detailAbortRef = useRef(null);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchState, setSearchState] = useState({ status: "idle", error: "" });
+  const [flowState, setFlowState] = useState({ status: "idle", error: "", truncated: false });
+  const [detailState, setDetailState] = useState({ status: "idle", error: "" });
   const [schemas, setSchemas] = useState([]);
   const [schema, setSchema] = useState("");
   const [roots, setRoots] = useState([]);
@@ -113,6 +140,7 @@ function App() {
   const [selection, setSelection] = useState(null);
   const [detail, setDetail] = useState(null);
   const [contract, setContract] = useState({ nodes: nodeTypes, edges: {} });
+  const [detailOpen, setDetailOpen] = useState(true);
   const [detailWidth, setDetailWidth] = useState(() => {
     const stored = Number(localStorage.getItem(DETAIL_WIDTH_KEY));
     if (!Number.isFinite(stored)) return DEFAULT_DETAIL_WIDTH;
@@ -152,78 +180,136 @@ function App() {
     };
     document.body.classList.add("resizing-detail");
   };
+  const resizeDetailWithKeyboard = (event) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const delta = event.key === "ArrowRight" ? 24 : -24;
+    setDetailWidth((width) => Math.min(MAX_DETAIL_WIDTH, Math.max(MIN_DETAIL_WIDTH, width + delta)));
+  };
 
   useEffect(() => {
     api("/api/schemas").then((rows) =>
       setSchemas(Array.isArray(rows) ? rows : []),
-    );
+    ).catch(() => setSchemas([]));
     api("/api/graph-contract").then((data) =>
       setContract({ nodes: data.nodes || nodeTypes, edges: data.edges || {} }),
-    );
+    ).catch(() => {});
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      const term = query.trim();
-      if (!term) {
-        setRoots([]);
-        return;
-      }
+    const term = query.trim();
+    if (!term) {
+      searchAbortRef.current?.abort();
+      setRoots([]);
+      setSearchState({ status: "idle", error: "" });
+      return undefined;
+    }
+    const controller = new AbortController();
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = controller;
+    const t = setTimeout(async () => {
+      setSearchState({ status: "loading", error: "" });
       const schemaArg = schema ? `&schema=${encodeURIComponent(schema)}` : "";
-      api(`/api/search?q=${encodeURIComponent(term)}${schemaArg}`).then(
-        (rows) => setRoots(Array.isArray(rows) ? rows.map(rootView) : []),
-      );
+      try {
+        const rows = await api(`/api/search?q=${encodeURIComponent(term)}${schemaArg}`, { signal: controller.signal });
+        const results = Array.isArray(rows) ? rows.map(rootView) : [];
+        setRoots(results);
+        setSearchState({ status: results.length ? "ready" : "empty", error: "" });
+      } catch (error) {
+        if (error.name !== "AbortError") setSearchState({ status: "error", error: error.message });
+      }
     }, 180);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [query, schema]);
 
-  function selectRoot(root) {
+  async function loadNodeDetail(qname) {
+    const controller = new AbortController();
+    detailAbortRef.current?.abort();
+    detailAbortRef.current = controller;
+    setDetail(null);
+    setDetailState({ status: "loading", error: "" });
+    try {
+      const data = await api(`/api/node-detail?qname=${encodeURIComponent(qname)}`, { signal: controller.signal });
+      setDetail(data);
+      setDetailState({ status: "ready", error: "" });
+    } catch (error) {
+      if (error.name !== "AbortError") setDetailState({ status: "error", error: error.message });
+    }
+  }
+
+  async function selectRoot(root) {
     if (!root) return;
+    const controller = new AbortController();
+    rootAbortRef.current?.abort();
+    rootAbortRef.current = controller;
     setQuery(root.name || objectName(root.qname));
     setSearchOpen(false);
     setSelected(root);
     setFocusNodeId(root.nodeId);
-    api(`/api/flow?qname=${encodeURIComponent(root.qname)}`).then((data) => {
+    setFlowState({ status: "loading", error: "", truncated: false });
+    const initialGraph = toGraph(
+      { label: root.type, qualified_name: root.qname, name: root.name, display: root.display, style: root.style },
+      [],
+      contract,
+    );
+    setFlow(initialGraph);
+    setSelection({ type: "node", item: initialGraph.nodes[0] });
+    setDetailOpen(true);
+    loadNodeDetail(root.qname);
+    try {
+      const data = await api(`/api/flow?qname=${encodeURIComponent(root.qname)}`, { signal: controller.signal });
       const graph = toGraph(
-        data.node || {
-          label: root.type,
-          qualified_name: root.qname,
-          name: root.name,
-        },
-        [],
+        data.node || { label: root.type, qualified_name: root.qname, name: root.name, display: root.display },
+        data.flows || [],
         data.contract || contract,
       );
       const layouted = applyStableLayout(graph, root.qname);
       setFlow(layouted);
-      setSelection({
-        type: "node",
-        item:
-          layouted.nodes.find((node) => node.id === root.qname) ||
-          layouted.nodes[0],
-      });
-      api(`/api/node-detail?qname=${encodeURIComponent(root.qname)}`).then(
-        setDetail,
-      );
-    });
+      setSelection({ type: "node", item: layouted.nodes.find((node) => node.id === root.qname) || layouted.nodes[0] });
+      setFlowState({ status: "ready", error: "", truncated: Boolean(data.truncated) });
+    } catch (error) {
+      if (error.name !== "AbortError") setFlowState({ status: "error", error: error.message, truncated: false });
+    }
   }
 
   async function submitSearch() {
     const rawTerm = query.trim();
     const term = rawTerm.toLowerCase();
     if (!term) return;
+    const controller = new AbortController();
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = controller;
+    setSearchState({ status: "loading", error: "" });
     const schemaArg = schema ? `&schema=${encodeURIComponent(schema)}` : "";
-    const rows = await api(
-      `/api/search?q=${encodeURIComponent(rawTerm)}${schemaArg}`,
-    );
-    const matches = Array.isArray(rows) ? rows.map(rootView) : roots;
-    setRoots(matches);
-    const exact = matches.find((root) => {
-      const values = [root.name, objectName(root.qname), root.qname]
-        .filter(Boolean)
-        .map((value) => value.toLowerCase());
-      return values.includes(term);
-    });
-    selectRoot(exact || matches[0]);
+    try {
+      const rows = await api(
+        `/api/search?q=${encodeURIComponent(rawTerm)}${schemaArg}`,
+        { signal: controller.signal },
+      );
+      const matches = Array.isArray(rows) ? rows.map(rootView) : [];
+      setRoots(matches);
+      if (!matches.length) {
+        setSearchOpen(true);
+        setSearchState({ status: "empty", error: "" });
+        return;
+      }
+      setSearchState({ status: "ready", error: "" });
+      const exact = matches.find((root) => {
+        const values = [root.name, objectName(root.qname), root.qname]
+          .filter(Boolean)
+          .map((value) => value.toLowerCase());
+        return values.includes(term);
+      });
+      await selectRoot(exact || matches[0]);
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        setSearchOpen(true);
+        setSearchState({ status: "error", error: error.message });
+      }
+    }
   }
 
   return (
@@ -232,7 +318,6 @@ function App() {
       style={{ "--detail-width": `${detailWidth}px` }}
     >
       <aside className="sidebar">
-        <h1></h1>
         <div className="search-row">
           <select
             aria-label="Schema"
@@ -265,9 +350,18 @@ function App() {
                   e.preventDefault();
                   submitSearch();
                 }}
-                placeholder="Search table / package / procedure..."
+                placeholder="Search file / repository / application / database object..."
               />
             </label>
+            {searchOpen && query.trim() && searchState.status === "loading" ? (
+              <p className="empty-search" role="status">Searching…</p>
+            ) : null}
+            {searchOpen && query.trim() && searchState.status === "empty" ? (
+              <p className="empty-search" role="status">No results. Try another name or schema.</p>
+            ) : null}
+            {searchOpen && query.trim() && searchState.status === "error" ? (
+              <p className="state-banner error" role="alert">{searchState.error}</p>
+            ) : null}
             {searchOpen && query.trim() && roots.length ? (
               <nav
                 id="node-search-options"
@@ -299,24 +393,43 @@ function App() {
             ) : null}
           </div>
         </div>
-        <DetailsPanel selection={selection} detail={detail} flow={flow} />
+        {detailOpen ? (
+          <DetailsPanel
+            selection={selection}
+            detail={detail}
+            detailState={detailState}
+            flow={flow}
+            onClose={() => setDetailOpen(false)}
+            onRetry={() => selection?.type === "node" && loadNodeDetail(selection.item.id)}
+          />
+        ) : (
+          <button type="button" className="open-detail" onClick={() => setDetailOpen(true)}>Open details</button>
+        )}
       </aside>
       <button
         type="button"
         className="detail-resizer"
         aria-label="Resize detail panel"
+        title="Use Left/Right arrows to resize"
         onPointerDown={startDetailResize}
+        onKeyDown={resizeDetailWithKeyboard}
       />
       <main className="main">
+        {flowState.status === "loading" ? <div className="state-banner" role="status">Loading relationships…</div> : null}
+        {flowState.status === "error" ? <div className="state-banner error" role="alert">{flowState.error} <button onClick={() => selectRoot(selected)}>Retry</button></div> : null}
+        {flowState.truncated ? <div className="state-banner warning" role="status">Graph truncated at the server limit. Narrow direction or relation filters.</div> : null}
+        {flowState.status === "ready" && flow.edges.length === 0 ? <div className="state-banner" role="status">No visible one-hop relationships. Use 1/W/R/E or change filters.</div> : null}
         <section className="content-grid graph-only">
           <GraphCard
+            key={selected?.nodeId || "empty"}
             flow={flow}
             focusNodeId={focusNodeId}
+            resetKey={selected?.nodeId || ""}
             selection={selection}
             setFlow={setFlow}
             setFocusNodeId={setFocusNodeId}
-            setSelection={setSelection}
-            setDetail={setDetail}
+            setSelection={(next) => { setSelection(next); setDetailOpen(true); }}
+            loadNodeDetail={loadNodeDetail}
             contract={contract}
           />
         </section>
@@ -327,16 +440,19 @@ function App() {
 
 function toGraph(center, flows, contract, centerPosition = { x: 720, y: 360 }) {
   const nodes = new Map();
-  const add = (qualified_name, label, name, position) =>
+  const add = (qualified_name, label, name, position, display = null, style = null) =>
     nodes.set(qualified_name, {
       id: qualified_name,
       type: "flowNode",
       position,
       data: {
         type: label || "Table",
-        label: name || shortName(qualified_name),
+        label: display?.title || name || shortName(qualified_name),
+        subtitle: display?.subtitle || null,
+        scope: display?.scope || null,
+        display,
         qname: qualified_name,
-        style: contract.nodes?.[label] || center.style || {},
+        style: style || contract.nodes?.[label] || center.style || {},
         code: "",
       },
     });
@@ -345,7 +461,7 @@ function toGraph(center, flows, contract, centerPosition = { x: 720, y: 360 }) {
   add(center.qualified_name, center.label, center.name, {
     x: centerX,
     y: centerY,
-  });
+  }, center.display, center.style);
   flows.forEach((row, i) => {
     const otherQname =
       row.from_qname === center.qualified_name ? row.to_qname : row.from_qname;
@@ -369,10 +485,11 @@ function toGraph(center, flows, contract, centerPosition = { x: 720, y: 360 }) {
     ).length;
     const rowGap = 190;
     const startY = centerY - ((sameSideTotal - 1) * rowGap) / 2;
+    const otherDisplay = row.from_qname === center.qualified_name ? row.to_display : row.from_display;
     add(otherQname, otherLabel, otherName, {
       x: columnX,
       y: startY + sameSideIndex * rowGap,
-    });
+    }, otherDisplay);
   });
   const edges = flows.map((row) => {
     const flowType = row.flow_type || row.rel_type;
@@ -384,7 +501,7 @@ function toGraph(center, flows, contract, centerPosition = { x: 720, y: 360 }) {
       target: row.to_qname,
       type: "lane",
       label: flowType,
-      data: row,
+      data: { ...row, baseline: true },
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color,
@@ -452,13 +569,140 @@ function expandInPlace(flow, center, flows, contract) {
   };
 }
 
+function mergeFlowRows(flow, center, flows, contract, loadKey) {
+  const centerNode = flow.nodes.find(
+    (node) => node.id === center.qualified_name,
+  );
+  const centerPosition = centerNode?.position || { x: 720, y: 360 };
+  const nodes = new Map(flow.nodes.map((node) => [node.id, node]));
+  const edges = new Map(flow.edges.map((edge) => [edge.id, edge]));
+  const occupied = [...nodes.values()].map((node) => node.position);
+  const newNodeCount = { value: 0 };
+  const ensureNode = (qname, label, name, sideHint = 1, display = null, style = null) => {
+    const existing = nodes.get(qname);
+    if (existing) {
+      if (loadKey && Array.isArray(existing.data?.loadKeys)) {
+        nodes.set(qname, {
+          ...existing,
+          data: {
+            ...existing.data,
+            loadKeys: [...new Set([...existing.data.loadKeys, loadKey])],
+          },
+        });
+      }
+      return;
+    }
+    const preferred = {
+      x: centerPosition.x + sideHint * 480,
+      y: centerPosition.y + newNodeCount.value * 190,
+    };
+    const position = findFreeSlot(preferred, occupied);
+    occupied.push(position);
+    newNodeCount.value += 1;
+    nodes.set(qname, {
+      id: qname,
+      type: "flowNode",
+      position,
+      data: {
+        type: label || "Table",
+        label: display?.title || name || shortName(qname),
+        subtitle: display?.subtitle || null,
+        scope: display?.scope || null,
+        display,
+        qname,
+        style: style || contract.nodes?.[label] || {},
+        code: "",
+        loadKeys: [loadKey],
+      },
+    });
+  };
+  ensureNode(center.qualified_name, center.label, center.name, 0, center.display, center.style);
+  flows.forEach((row) => {
+    const sourceSide = row.to_qname === center.qualified_name ? -1 : 1;
+    const targetSide = row.from_qname === center.qualified_name ? 1 : -1;
+    ensureNode(row.from_qname, row.from_label, row.from_name, sourceSide, row.from_display, row.from_style);
+    ensureNode(row.to_qname, row.to_label, row.to_name, targetSide, row.to_display, row.to_style);
+    const flowType = row.flow_type || row.rel_type;
+    const edgeStyle = row.style || contract.edges?.[flowType] || {};
+    const color = edgeStyle.color || flowColors[flowType] || "#94a3b8";
+    const id = edgeId(row);
+    const existing = edges.get(id);
+    edges.set(id, {
+      ...(existing || {}),
+      id,
+      source: row.from_qname,
+      target: row.to_qname,
+      type: "lane",
+      label: flowType,
+      data: {
+        ...row,
+        baseline: Boolean(existing?.data?.baseline),
+        loadKeys: [...new Set([...(existing?.data?.loadKeys || []), loadKey])],
+      },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color,
+      },
+      style: { stroke: color, strokeWidth: 2.2, strokeDasharray: "5 6" },
+      interactionWidth: 18,
+      labelStyle: { fill: "#e5e7eb", fontSize: 10, fontWeight: 800 },
+      labelBgPadding: [7, 4],
+      labelBgBorderRadius: 4,
+      labelBgStyle: { fill: "#0f172a", fillOpacity: 0.92 },
+    });
+  });
+  return {
+    nodes: [...nodes.values()],
+    edges: spaceEdgeLabels([...edges.values()]),
+  };
+}
+
+async function loadFlowRows(rootId, direction, selectedTypes, recursive, signal) {
+  const endpoint = recursive ? "/api/flow-all" : "/api/flow";
+  return api(
+    `${endpoint}?qname=${encodeURIComponent(rootId)}&direction=${direction}&types=${encodeURIComponent(selectedTypes.join(","))}`,
+    { signal },
+  );
+}
+
+function filterVisibleEdges(edges, nodes) {
+  const filtersByNode = new Map(
+    nodes.map((node) => [node.id, node.data?.edgeFilters || {}]),
+  );
+  return edges.filter((edge) => {
+    const loadKeys = edge.data?.loadKeys || [];
+    const belongsToRecursiveFlow = loadKeys.some((key) => key.endsWith("|all"));
+    if (belongsToRecursiveFlow) return true;
+    const type = edge.data?.flow_type || edge.data?.rel_type || edge.label;
+    const sourceOut = filtersByNode.get(edge.source)?.out || EDGE_TYPE_DEFAULTS;
+    const targetIn = filtersByNode.get(edge.target)?.in || EDGE_TYPE_DEFAULTS;
+    return sourceOut.includes(type) && targetIn.includes(type);
+  });
+}
+
+function filterVisibleNodes(nodes, visibleEdges, keepNodeIds = []) {
+  const connectedNodeIds = new Set();
+  visibleEdges.forEach((edge) => {
+    connectedNodeIds.add(edge.source);
+    connectedNodeIds.add(edge.target);
+  });
+  const preservedNodeIds = new Set(keepNodeIds.filter(Boolean));
+  if (!preservedNodeIds.size && nodes[0]?.id) preservedNodeIds.add(nodes[0].id);
+  return nodes.filter(
+    (node) =>
+      !Array.isArray(node.data?.loadKeys) ||
+      preservedNodeIds.has(node.id) ||
+      connectedNodeIds.has(node.id),
+  );
+}
+
 function unloadRelationGroup(flow, loadKey, keepNodeId) {
   const edges = flow.edges
     .map((edge) => {
       const loadKeys = edge.data?.loadKeys;
       if (!loadKeys?.includes(loadKey)) return edge;
       const nextKeys = loadKeys.filter((key) => key !== loadKey);
-      return nextKeys.length
+      return nextKeys.length || edge.data?.baseline
         ? { ...edge, data: { ...edge.data, loadKeys: nextKeys } }
         : null;
     })
@@ -475,7 +719,13 @@ function unloadRelationGroup(flow, loadKey, keepNodeId) {
       const nextKeys = loadKeys.filter((key) => key !== loadKey);
       return { ...node, data: { ...node.data, loadKeys: nextKeys } };
     })
-    .filter((node) => node && (!node.data?.loadKeys || node.data.loadKeys.length || connectedNodeIds.has(node.id)));
+    .filter(
+      (node) =>
+        node &&
+        (!node.data?.loadKeys ||
+          node.data.loadKeys.length ||
+          connectedNodeIds.has(node.id)),
+    );
   return { nodes, edges: spaceEdgeLabels(edges) };
 }
 
@@ -548,9 +798,7 @@ function layoutLevels(flow, centerId) {
   const levels = new Map([[centerId, 0]]);
   walkLevels(incoming, levels, centerId, -1);
   walkLevels(outgoing, levels, centerId, 1);
-  nodeIds
-    .filter((id) => !levels.has(id))
-    .forEach((id) => levels.set(id, 0));
+  nodeIds.filter((id) => !levels.has(id)).forEach((id) => levels.set(id, 0));
   return levels;
 }
 
@@ -560,7 +808,11 @@ function walkLevels(links, levels, startId, step) {
     const [id, level] = queue.shift();
     (links.get(id) || []).forEach((nextId) => {
       const nextLevel = level + step;
-      if (levels.has(nextId) && Math.abs(levels.get(nextId)) <= Math.abs(nextLevel)) return;
+      if (
+        levels.has(nextId) &&
+        Math.abs(levels.get(nextId)) <= Math.abs(nextLevel)
+      )
+        return;
       levels.set(nextId, nextLevel);
       queue.push([nextId, nextLevel]);
     });
@@ -681,85 +933,103 @@ function TableSummary({ table = {} }) {
 function GraphCard({
   flow,
   focusNodeId,
+  resetKey,
   selection,
   setFlow,
   setFocusNodeId,
   setSelection,
-  setDetail,
+  loadNodeDetail,
   contract,
 }) {
+  const expansionAbortRef = useRef(null);
   const [loadedRelationKeys, setLoadedRelationKeys] = useState(() => new Set());
-  const loadRelations = (node, direction, edgeTypes) => {
-    const selectedTypes = Array.isArray(edgeTypes) ? edgeTypes : EDGE_TYPE_DEFAULTS;
+  const [expansionState, setExpansionState] = useState({ status: "idle", error: "", truncated: false });
+  useEffect(() => {
+    setLoadedRelationKeys(new Set());
+    setExpansionState({ status: "idle", error: "", truncated: false });
+    return () => expansionAbortRef.current?.abort();
+  }, [resetKey]);
+
+  const loadRelations = async (node, direction, edgeTypes, options = {}) => {
+    const selectedTypes = Array.isArray(edgeTypes)
+      ? edgeTypes
+      : EDGE_TYPE_DEFAULTS;
+    const recursive = options.recursive !== false;
     if (!selectedTypes.length) return;
-    const types = selectedTypes.join(",");
-    const loadKey = `${node.id}|${direction}|${[...selectedTypes].sort().join(",")}`;
+    const scope = recursive ? "all" : "one";
+    const loadKey = `${node.id}|${direction}|${[...selectedTypes].sort().join(",")}|${scope}`;
     if (loadedRelationKeys.has(loadKey)) {
-      setFlow((current) => unloadRelationGroup(current, loadKey, node.id));
-      setLoadedRelationKeys((current) => {
-        const next = new Set(current);
-        next.delete(loadKey);
-        return next;
-      });
       setFocusNodeId(node.id);
+      loadNodeDetail(node.id);
       return;
     }
-    const path = `/api/flow?qname=${encodeURIComponent(node.id)}&direction=${direction}&types=${encodeURIComponent(types)}`;
-    api(path).then((data) => {
-      const loadedEdgeIds = new Set((data.flows || []).map(edgeId));
+    const controller = new AbortController();
+    expansionAbortRef.current?.abort();
+    expansionAbortRef.current = controller;
+    setExpansionState({ status: "loading", error: "", truncated: false });
+    try {
+      const data = await loadFlowRows(node.id, direction, selectedTypes, recursive, controller.signal);
+      const rows = data.flows || [];
       let nextSelection = null;
       setFlow((current) => {
-        const existingNodeIds = new Set(current.nodes.map((item) => item.id));
-        const existingEdgeIds = new Set(current.edges.map((item) => item.id));
-        const graph = expandInPlace(
+        const graph = mergeFlowRows(
           current,
-          data.node || {
+          {
             label: node.data.type,
             qualified_name: node.id,
             name: node.data.label,
           },
-          data.flows || [],
-          data.contract || contract,
+          rows,
+          contract,
+          loadKey,
         );
-        const taggedGraph = {
-          nodes: graph.nodes.map((item) =>
-            existingNodeIds.has(item.id)
-              ? item
-              : {
-                  ...item,
-                  data: {
-                    ...item.data,
-                    loadKeys: [...(item.data.loadKeys || []), loadKey],
-                  },
-                },
-          ),
-          edges: graph.edges.map((item) =>
-            loadedEdgeIds.has(item.id) && !existingEdgeIds.has(item.id)
-              ? {
-                  ...item,
-                  data: {
-                    ...item.data,
-                    loadKeys: [...new Set([...(item.data.loadKeys || []), loadKey])],
-                  },
-                }
-              : item,
-          ),
-        };
-        nextSelection = taggedGraph.nodes.find((item) => item.id === node.id) || taggedGraph.nodes[0];
-        return taggedGraph;
+        nextSelection =
+          graph.nodes.find((item) => item.id === node.id) || graph.nodes[0];
+        return graph;
       });
-      if (nextSelection) {
-        setSelection({ type: "node", item: nextSelection });
-      }
+      if (nextSelection) setSelection({ type: "node", item: nextSelection });
       setLoadedRelationKeys((current) => new Set(current).add(loadKey));
       setFocusNodeId(node.id);
-      api(`/api/node-detail?qname=${encodeURIComponent(node.id)}`).then(setDetail);
+      loadNodeDetail(node.id);
+      setExpansionState({ status: "ready", error: "", truncated: Boolean(data.truncated) });
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        setExpansionState({ status: "error", error: error.message, truncated: false });
+      }
+    }
+  };
+  const unloadRelations = (node, direction, edgeTypes, options = {}) => {
+    const selectedTypes = Array.isArray(edgeTypes)
+      ? edgeTypes
+      : EDGE_TYPE_DEFAULTS;
+    const recursive = options.recursive !== false;
+    const scope = recursive ? "all" : "one";
+    const loadKey = `${node.id}|${direction}|${[...selectedTypes].sort().join(",")}|${scope}`;
+    setFlow((current) => unloadRelationGroup(current, loadKey, node.id));
+    setLoadedRelationKeys((current) => {
+      const next = new Set(current);
+      next.delete(loadKey);
+      return next;
     });
   };
+  const changeNodeEdgeFilters = (nodeId, edgeTypes) => {
+    setFlow((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, edgeFilters: edgeTypes } }
+          : node,
+      ),
+    }));
+  };
   const changeNodeEdgeTypes = (nodeId, edgeTypes, changedDirection) => {
-    const changedDirections = changedDirection ? [changedDirection] : ["in", "out"];
+    const changedDirections = changedDirection
+      ? [changedDirection]
+      : ["in", "out"];
     const keysToUnload = [...loadedRelationKeys].filter((key) =>
-      changedDirections.some((direction) => key.startsWith(`${nodeId}|${direction}|`)),
+      changedDirections.some((direction) =>
+        key.startsWith(`${nodeId}|${direction}|`),
+      ),
     );
     if (keysToUnload.length) {
       setFlow((current) =>
@@ -794,16 +1064,36 @@ function GraphCard({
             out: EDGE_TYPE_DEFAULTS,
           },
           onLoadRelations: loadRelations,
+          onUnloadRelations: unloadRelations,
+          onSetEdgeFilters: changeNodeEdgeFilters,
           onChangeEdgeTypes: changeNodeEdgeTypes,
           loadedRelationKeys,
         },
       })),
     [flow.nodes, flow, contract, loadedRelationKeys],
   );
+  const visibleEdges = useMemo(
+    () => filterVisibleEdges(flow.edges, graphNodes),
+    [flow.edges, graphNodes],
+  );
+  const selectedNodeId =
+    selection?.type === "node" ? selection.item?.id : undefined;
+  const visibleNodes = useMemo(
+    () =>
+      filterVisibleNodes(graphNodes, visibleEdges, [
+        resetKey,
+        focusNodeId,
+        selectedNodeId,
+      ]),
+    [graphNodes, visibleEdges, resetKey, focusNodeId, selectedNodeId],
+  );
   return (
     <ReactFlowProvider>
       <article className="card graph-card full">
-        <FlowViewportController focusNodeId={focusNodeId} nodes={graphNodes} />
+        <FlowViewportController focusNodeId={focusNodeId} nodes={visibleNodes} />
+        {expansionState.status === "loading" ? <p className="state-banner graph-state" role="status">Loading expanded relationships…</p> : null}
+        {expansionState.status === "error" ? <p className="state-banner error graph-state" role="alert">{expansionState.error}</p> : null}
+        {expansionState.truncated ? <p className="state-banner warning graph-state" role="status">Recursive graph truncated at the server limit.</p> : null}
         <div className="card-title-row">
           <h3>Table Relationship</h3>
           <GraphTools
@@ -816,8 +1106,8 @@ function GraphCard({
         <div className="graph-body">
           <div className="flow-wrap">
             <ReactFlow
-              nodes={graphNodes}
-              edges={flow.edges}
+              nodes={visibleNodes}
+              edges={visibleEdges}
               nodeTypes={rfNodeTypes}
               edgeTypes={edgeTypes}
               fitView
@@ -832,9 +1122,7 @@ function GraphCard({
               }
               onNodeClick={(_, node) => {
                 setSelection({ type: "node", item: node });
-                api(
-                  `/api/node-detail?qname=${encodeURIComponent(node.id)}`,
-                ).then(setDetail);
+                loadNodeDetail(node.id);
               }}
               onEdgeClick={(_, edge) =>
                 setSelection({ type: "edge", item: edge })
@@ -882,16 +1170,13 @@ function FlowViewportController({ focusNodeId, nodes }) {
   return null;
 }
 
-function GraphTools({
-  flow,
-  setFlow,
-  selection,
-  setFocusNodeId,
-}) {
+function GraphTools({ flow, setFlow, selection, setFocusNodeId }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const autoLayout = () => {
     const centerId =
-      selection?.type === "node" ? selection.item.id : flow.nodes[0]?.id;
+      selection?.type === "node" && selection.item?.id
+        ? selection.item.id
+        : flow.nodes[0]?.id;
     if (!centerId) return;
     setFlow(applyStableLayout(flow, centerId));
     setFocusNodeId(centerId);
@@ -918,105 +1203,47 @@ function GraphTools({
   );
 }
 
-function DetailsPanel({ selection, detail, flow }) {
-  if (!selection?.item)
+function DetailsPanel({ selection, detail, detailState, flow, onClose, onRetry }) {
+  const item = selection?.item;
+  if (!item)
     return (
       <aside className="details-panel">
-        <h4>
-          <Info size={15} /> Detail
-        </h4>
+        <PanelHeader title="Details" onClose={onClose} />
+        <h4>Select a node or edge to view metadata, relationships, and evidence.</h4>
       </aside>
     );
-  const item = selection.item;
   if (selection.type === "edge") {
     const edge = item.data || {};
-    const fromName = edge.from_name || objectName(edge.from_qname);
-    const toName = edge.to_name || objectName(edge.to_qname);
-    const type = edge.flow_type || edge.rel_type;
-    const action = flowDescription(type);
-    const columns = edge.columns?.length ? edge.columns : [];
-    const meaning = relationMeaning(type, false, fromName, toName);
-    const impact = edgeImpactText(type, fromName, toName, columns);
-    return (
-      <aside className="details-panel">
-        <DetailSection title="Flow summary">
-          <div className="edge-summary">
-            <strong>{action}</strong>
-            <p>
-              <span>{fromName}</span>
-              <b>→</b>
-              <span>{toName}</span>
-            </p>
-          </div>
-        </DetailSection>
-        <div className="edge-insight-grid">
-          <InsightCard title="Meaning">{meaning}</InsightCard>
-          <InsightCard title="Affected columns">
-            {columns.length ? (
-              <div className="column-tags">
-                {columns.map((column) => (
-                  <span key={column}>{column}</span>
-                ))}
-              </div>
-            ) : (
-              "No column-level metadata for this relation."
-            )}
-          </InsightCard>
-          <InsightCard title="Evidence">
-            <p>
-              {edge.source_file || "No source file"}
-              {edge.line ? `:${edge.line}` : ""}
-            </p>
-            {edge.expression ? <p>Expression: {edge.expression}</p> : null}
-            <pre>{edge.code || "No code evidence."}</pre>
-          </InsightCard>
-          <InsightCard title="Impact">{impact}</InsightCard>
-        </div>
-        <DebugMetadata
-          items={[
-            [
-              "Relation",
-              `${edge.flow_type || "—"}${
-                edge.rel_type && edge.rel_type !== edge.flow_type
-                  ? ` (${edge.rel_type})`
-                  : ""
-              }`,
-            ],
-            ["Source qname", edge.from_qname],
-            ["Target qname", edge.to_qname],
-            ["Confidence", edge.confidence || "—"],
-          ]}
-        />
-      </aside>
-    );
+    const relationKey = `${edge.from_qname}|${edge.to_qname}|${edge.rel_type}`;
+    return <OccurrenceEdgeDetails key={relationKey} edge={edge} onClose={onClose} />;
   }
   const isTable = item.data.type === "Table";
   const table = detail?.table || { code: item.data.name };
   const columns = detail?.columns || [];
-  const nodeEdges = flow?.edges?.filter(
+  const visibleEdges = filterVisibleEdges(flow?.edges || [], flow?.nodes || []);
+  const nodeEdges = visibleEdges.filter(
     (edge) => edge.source === item.id || edge.target === item.id,
-  ) || [];
+  );
   return (
     <aside className="details-panel">
+      <PanelHeader title={item.data.label || "Details"} onClose={onClose} />
+      {detailState?.status === "loading" ? <p className="state-banner" role="status">Loading details…</p> : null}
+      {detailState?.status === "error" ? <p className="state-banner error" role="alert">{detailState.error} <button onClick={onRetry}>Retry</button></p> : null}
+      {detail?.warnings?.map((warning) => <p className="state-banner warning" role="status" key={warning.code}>{warning.message}</p>)}
       {isTable ? (
         <DetailSection title="Table definition">
           <TableSummary table={table} />
         </DetailSection>
       ) : (
-        <DetailSection title="Object detail">
+        <DetailSection title={`${item.data.type} detail`}>
           <dl>
-            <dt>Name</dt>
-            <dd>{item.data.label}</dd>
-            <dt>Type</dt>
-            <dd>{item.data.type}</dd>
-            <dt>Code</dt>
-            <dd>
-              <pre>
-                {detail?.code ||
-                  item.data.code ||
-                  "No code snippet. Re-extract to capture declaration lines."}
-              </pre>
-            </dd>
+            <dt>Name</dt><dd>{detail?.node?.display?.title || item.data.label}</dd>
+            {Object.entries(detail?.properties || {}).map(([key, value]) => (
+              <React.Fragment key={key}><dt>{humanize(key)}</dt><dd>{formatDetailValue(value)}</dd></React.Fragment>
+            ))}
+            <dt>Contributing sources</dt><dd>{detail?.counts?.sources ?? "—"}</dd>
+            <dt>Total relations</dt><dd>{detail?.counts?.relations ?? nodeEdges.length}</dd>
+            <dt>Occurrences</dt><dd>{detail?.counts?.occurrences ?? "—"}</dd>
           </dl>
         </DetailSection>
       )}
@@ -1025,7 +1252,8 @@ function DetailsPanel({ selection, detail, flow }) {
           <DefinitionTable columns={columns} showSummary={false} />
         </DetailSection>
       ) : null}
-      <RelationSummary node={item} edges={nodeEdges} />
+      {detail?.sources?.length ? <SourceList sources={detail.sources} /> : null}
+      <RelationSummary node={item} edges={nodeEdges} total={detail?.counts?.relations} />
       {detail?.impact?.columns?.length ? (
         <DetailSection title="Column impact">
           <Table>
@@ -1067,10 +1295,105 @@ function DetailsPanel({ selection, detail, flow }) {
   );
 }
 
-function InsightCard({ title, children }) {
+function OccurrenceEdgeDetails({ edge, onClose }) {
+  const [evidence, setEvidence] = useState(edge.evidence || []);
+  const [selectedId, setSelectedId] = useState(edge.evidence?.[0]?.occurrence_id || "");
+  const [nextCursor, setNextCursor] = useState(edge.next_cursor || null);
+  const [pageState, setPageState] = useState({ status: "idle", error: "" });
+  const [snippet, setSnippet] = useState(null);
+  const [snippetState, setSnippetState] = useState({ status: "idle", error: "" });
+  const relationQuery = useMemo(() => new URLSearchParams({
+    from_qname: edge.from_qname || "", to_qname: edge.to_qname || "", rel_type: edge.rel_type || "",
+  }).toString(), [edge.from_qname, edge.to_qname, edge.rel_type]);
+  useEffect(() => {
+    const initial = edge.evidence || [];
+    setEvidence(initial);
+    setSelectedId(initial[0]?.occurrence_id || "");
+    setNextCursor(edge.next_cursor || null);
+    setPageState({ status: "idle", error: "" });
+  }, [relationQuery, edge.evidence, edge.next_cursor]);
+  const occurrence = evidence.find((item) => item.occurrence_id === selectedId) || evidence[0];
+  useEffect(() => {
+    setSnippet(null);
+    if (!occurrence?.occurrence_id) {
+      setSnippetState({ status: "empty", error: "No source occurrence available." });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setSnippetState({ status: "loading", error: "" });
+    api(`/api/snippet?${relationQuery}&occurrence_id=${encodeURIComponent(occurrence.occurrence_id)}`, { signal: controller.signal })
+      .then((data) => {
+        setSnippet(data);
+        setSnippetState({ status: data.status === "available" ? "ready" : "empty", error: data.status === "available" ? "" : `Source ${data.status}.` });
+      })
+      .catch((error) => {
+        if (error.name !== "AbortError") setSnippetState({ status: "error", error: error.message });
+      });
+    return () => controller.abort();
+  }, [relationQuery, occurrence?.occurrence_id]);
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    setPageState({ status: "loading", error: "" });
+    try {
+      const page = await api(`/api/edge-evidence?${relationQuery}&cursor=${encodeURIComponent(nextCursor)}&limit=50`);
+      setEvidence((items) => [...items, ...(page.evidence || [])]);
+      setNextCursor(page.next_cursor || null);
+      setPageState({ status: "ready", error: "" });
+    } catch (error) {
+      setPageState({ status: "error", error: error.message });
+    }
+  };
+  const fromName = edge.from_display?.title || edge.from_name || objectName(edge.from_qname);
+  const toName = edge.to_display?.title || edge.to_name || objectName(edge.to_qname);
+  const occurrenceIndex = Math.max(0, evidence.findIndex((item) => item.occurrence_id === occurrence?.occurrence_id));
+  const columns = occurrence?.columns?.length ? occurrence.columns : edge.columns || [];
   return (
-    <DetailSection title={title}>{children}</DetailSection>
+    <aside className="details-panel">
+      <PanelHeader title={`${edge.operation || edge.rel_type || "Relation"}: ${fromName} → ${toName}`} onClose={onClose} />
+      <DetailSection title="Flow summary"><div className="edge-summary"><strong>{flowDescription(edge.flow_type)}</strong><p><span>{fromName}</span><b>→</b><span>{toName}</span></p></div></DetailSection>
+      <DetailSection title={`Occurrence ${evidence.length ? occurrenceIndex + 1 : 0} / ${edge.evidence_count ?? evidence.length}`}>
+        {evidence.length ? <label className="occurrence-select">Source occurrence<select aria-label="Select source occurrence" value={occurrence?.occurrence_id || ""} onChange={(event) => setSelectedId(event.target.value)}>{evidence.map((item, index) => <option key={item.occurrence_id} value={item.occurrence_id}>{index + 1}. {item.source_path}:{item.line || "?"}</option>)}</select></label> : <p>No source occurrences.</p>}
+        {nextCursor ? <button type="button" onClick={loadMore} disabled={pageState.status === "loading"}>{pageState.status === "loading" ? "Loading…" : "Load more occurrences"}</button> : null}
+        {pageState.status === "error" ? <p className="state-banner error" role="alert">{pageState.error}</p> : null}
+        {edge.evidence_truncated && nextCursor ? <p className="state-banner warning">More evidence available; load the next page.</p> : null}
+      </DetailSection>
+      {occurrence ? <DetailSection title="Occurrence metadata"><dl>{[
+        ["Source", occurrence.source_path], ["Line", occurrence.line], ["Operation", occurrence.operation || edge.operation],
+        ["Query ID", occurrence.query_id], ["Mapper tag", occurrence.mapper_tag], ["Call type", occurrence.call_type],
+        ["Expression", occurrence.expression], ["Extractor", occurrence.extractor_name], ["Confidence", occurrence.confidence],
+      ].filter(([, value]) => value != null && value !== "").map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{formatDetailValue(value)}</dd></React.Fragment>)}</dl>{columns.length ? <div className="column-tags">{columns.map((column) => <span key={column}>{column}</span>)}</div> : null}</DetailSection> : null}
+      <DetailSection title="Source snippet">
+        {snippetState.status === "loading" ? <p role="status">Loading source…</p> : null}
+        {["empty", "error"].includes(snippetState.status) ? <p className="state-banner error" role="alert">{snippetState.error}</p> : null}
+        {snippet?.status === "available" ? <SourceSnippet snippet={snippet} /> : null}
+      </DetailSection>
+      <DebugMetadata items={[["Raw relation", edge.rel_type], ["Flow type", edge.flow_type], ["Source qname", edge.from_qname], ["Target qname", edge.to_qname]]} />
+    </aside>
   );
+}
+
+function SourceSnippet({ snippet }) {
+  return <div className="source-snippet"><header>{snippet.source_path}:{snippet.focus_line} · {snippet.language || "source"}</header><pre>{String(snippet.text || "").split("\n").map((line, index) => {
+    const lineNumber = snippet.start_line + index;
+    return <span key={lineNumber} className={lineNumber === snippet.focus_line ? "focus-line" : ""}><b>{lineNumber}</b>{line}{"\n"}</span>;
+  })}</pre></div>;
+}
+
+function PanelHeader({ title, onClose }) {
+  return <header className="panel-header"><h4>{title}</h4><button type="button" aria-label="Close detail panel" onClick={onClose}>Close</button></header>;
+}
+
+function SourceList({ sources }) {
+  return <DetailSection title="Sources"><ul className="source-list">{sources.map((source) => (
+    <li key={`${source.source_id}:${source.source_path}`}><strong>{source.source_path}</strong><span>{source.project || "No project"} · {source.extractor || "Unknown extractor"} · {source.availability}</span></li>
+  ))}</ul></DetailSection>;
+}
+
+const humanize = (key) => key.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+const formatDetailValue = (value) => Array.isArray(value) ? value.join(", ") || "—" : typeof value === "boolean" ? (value ? "Yes" : "No") : value ?? "—";
+
+function InsightCard({ title, children }) {
+  return <DetailSection title={title}>{children}</DetailSection>;
 }
 
 function DetailSection({ title, children, defaultOpen = true }) {
@@ -1102,11 +1425,11 @@ function DebugMetadata({ items = [] }) {
   );
 }
 
-function RelationSummary({ node, edges }) {
+function RelationSummary({ node, edges, total }) {
   if (!edges.length) return null;
   const rows = edges.map((edge) => relationRow(node, edge));
   return (
-    <DetailSection title="Relationships">
+    <DetailSection title={`Visible relationships (${edges.length} of ${total ?? edges.length})`}>
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -1139,9 +1462,10 @@ function relationRow(node, edge) {
   const currentName = node.data?.label || objectName(node.id);
   const meaning = relationMeaning(type, incoming, currentName, otherName);
   const columns = data.columns || [];
-  const evidence = data.source_file || data.line
-    ? `${data.source_file || "source"}${data.line ? `:${data.line}` : ""}`
-    : "—";
+  const evidence =
+    data.source_file || data.line
+      ? `${data.source_file || "source"}${data.line ? `:${data.line}` : ""}`
+      : "—";
   return {
     id: edge.id,
     meaning,
@@ -1176,7 +1500,9 @@ function relationMeaning(type = "", incoming, currentName, otherName) {
       TRIGGERS: `${otherName} triggers ${currentName}.`,
       USES: `${otherName} uses ${currentName}.`,
     };
-    return meanings[normalized] || `${otherName} has a relation to ${currentName}.`;
+    return (
+      meanings[normalized] || `${otherName} has a relation to ${currentName}.`
+    );
   }
   const meanings = {
     READS: `${currentName} reads data from ${otherName}.`,
@@ -1187,7 +1513,9 @@ function relationMeaning(type = "", incoming, currentName, otherName) {
     TRIGGERS: `${currentName} triggers ${otherName}.`,
     USES: `${currentName} uses ${otherName}.`,
   };
-  return meanings[normalized] || `${currentName} has a relation to ${otherName}.`;
+  return (
+    meanings[normalized] || `${currentName} has a relation to ${otherName}.`
+  );
 }
 
 function edgeImpactText(type = "", fromName, toName, columns = []) {
@@ -1204,7 +1532,9 @@ function edgeImpactText(type = "", fromName, toName, columns = []) {
     TRIGGERS: `Changes in ${fromName} can trigger behavior in ${toName}.`,
     USES: `${fromName} depends on ${toName}; changes to ${toName} may affect this flow.`,
   };
-  return impacts[normalized] || `${fromName} is related to ${toName}.${columnText}`;
+  return (
+    impacts[normalized] || `${fromName} is related to ${toName}.${columnText}`
+  );
 }
 
 function actorNames(items = []) {
@@ -1258,40 +1588,48 @@ function FlowNode({ data }) {
   const nodeRef = useRef(null);
   const meta = data.style || nodeTypes[data.type] || nodeTypes.Table;
   const Icon = icons[meta.icon] || nodeTypes[data.type]?.icon || Box;
-  const id = objectName(data.qname);
-  const schema = schemaName(data.qname);
+  const id = data.label || objectName(data.qname);
+  const schema = data.scope || schemaName(data.qname);
   const isTable = data.type === "Table";
   const tableParts = isTable ? tableDisplayParts(data.label, data.qname) : null;
   const edgeFilters = data.edgeFilters || {
     in: EDGE_TYPE_DEFAULTS,
     out: EDGE_TYPE_DEFAULTS,
   };
-  const relationKey = (direction) =>
-    `${data.qname}|${direction}|${[...(edgeFilters[direction] || EDGE_TYPE_DEFAULTS)].sort().join(",")}`;
-  const stop = (event) => event.stopPropagation();
-  const openFilter = (direction) => (event) => {
-    event.stopPropagation();
-    setOpenDirection((current) => (current === direction ? null : direction));
-  };
-  const load = (direction) => (event) => {
-    event.stopPropagation();
-    data.onLoadRelations?.(
-      { id: data.qname, data },
-      direction,
-      edgeFilters[direction] || EDGE_TYPE_DEFAULTS,
+  const relationKey = (direction, types, recursive = true) =>
+    `${data.qname}|${direction}|${[...types].sort().join(",")}|${recursive ? "all" : "one"}`;
+  const isReadLoaded = (direction) =>
+    data.loadedRelationKeys?.has(relationKey(direction, READ_FLOW_TYPES));
+  const isWriteLoaded = (direction) =>
+    data.loadedRelationKeys?.has(relationKey(direction, WRITE_FLOW_TYPES));
+  const isEveryLoaded = (direction) =>
+    data.loadedRelationKeys?.has(relationKey(direction, EVERY_FLOW_TYPES));
+  const isOneHopLoaded = (direction) =>
+    data.loadedRelationKeys?.has(
+      relationKey(direction, EDGE_TYPE_DEFAULTS, false),
     );
-    setOpenDirection(null);
+  const stop = (event) => event.stopPropagation();
+  const toggleOneHop = (direction) => (event) => {
+    event.stopPropagation();
+    const checked = event.target.checked;
+    const payload = { id: data.qname, data };
+    if (checked) {
+      data.onLoadRelations?.(payload, direction, EDGE_TYPE_DEFAULTS, {
+        recursive: false,
+      });
+      setOpenDirection(direction);
+    } else {
+      data.onUnloadRelations?.(payload, direction, EDGE_TYPE_DEFAULTS, {
+        recursive: false,
+      });
+      setOpenDirection(null);
+    }
   };
   const changeFilter = (direction, nextTypes) => {
-    data.onChangeEdgeTypes?.(data.qname, {
+    data.onSetEdgeFilters?.(data.qname, {
       ...edgeFilters,
       [direction]: nextTypes,
-    }, direction);
-    if (nextTypes.length) {
-      window.setTimeout(() => {
-        data.onLoadRelations?.({ id: data.qname, data }, direction, nextTypes);
-      }, 0);
-    }
+    });
   };
   const toggleType = (direction, type) => (event) => {
     event.stopPropagation();
@@ -1304,7 +1642,28 @@ function FlowNode({ data }) {
   const toggleAll = (direction) => (event) => {
     event.stopPropagation();
     const current = edgeFilters[direction] || EDGE_TYPE_DEFAULTS;
-    changeFilter(direction, current.length === EDGE_TYPE_DEFAULTS.length ? [] : EDGE_TYPE_DEFAULTS);
+    changeFilter(
+      direction,
+      current.length === EDGE_TYPE_DEFAULTS.length ? [] : EDGE_TYPE_DEFAULTS,
+    );
+  };
+  const toggleLoadFlowTypes = (direction, types) => (event) => {
+    event.stopPropagation();
+    const checked = event.target.checked;
+    const availableTypes = types.filter(
+      (type) => type === "REMOTE_READS" || EDGE_TYPE_DEFAULTS.includes(type),
+    );
+    if (!availableTypes.length) return;
+    const payload = { id: data.qname, data };
+    if (checked) {
+      data.onLoadRelations?.(payload, direction, availableTypes, {
+        recursive: true,
+      });
+    } else {
+      data.onUnloadRelations?.(payload, direction, availableTypes, {
+        recursive: true,
+      });
+    }
   };
   useEffect(() => {
     if (!openDirection) return undefined;
@@ -1313,28 +1672,39 @@ function FlowNode({ data }) {
       setOpenDirection(null);
     };
     document.addEventListener("pointerdown", closeOnOutsideClick);
-    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
   }, [openDirection]);
   return (
-    <div ref={nodeRef} className={`flow-node ${meta.className}`} title={data.label}>
+    <div
+      ref={nodeRef}
+      className={`flow-node ${meta.className}`}
+      title={data.label}
+    >
       <Handle className="flow-handle" type="target" position={Position.Left} />
       <Handle className="flow-handle" type="source" position={Position.Right} />
-      <button
-        type="button"
-        className={`node-relation-btn incoming ${data.loadedRelationKeys?.has(relationKey("in")) ? "active" : ""}`}
-        title="Filter incoming relationships"
-        onClick={openFilter("in")}
-      >
-        ←
-      </button>
-      <button
-        type="button"
-        className={`node-relation-btn outgoing ${data.loadedRelationKeys?.has(relationKey("out")) ? "active" : ""}`}
-        title="Filter outgoing relationships"
-        onClick={openFilter("out")}
-      >
-        →
-      </button>
+      <NodeFlowControls
+        direction="in"
+        oneHopChecked={isOneHopLoaded("in")}
+        writeChecked={isWriteLoaded("in")}
+        readChecked={isReadLoaded("in")}
+        everyChecked={isEveryLoaded("in")}
+        onToggleOneHop={toggleOneHop("in")}
+        onToggleWrite={toggleLoadFlowTypes("in", WRITE_FLOW_TYPES)}
+        onToggleRead={toggleLoadFlowTypes("in", READ_FLOW_TYPES)}
+        onToggleEvery={toggleLoadFlowTypes("in", EVERY_FLOW_TYPES)}
+      />
+      <NodeFlowControls
+        direction="out"
+        oneHopChecked={isOneHopLoaded("out")}
+        writeChecked={isWriteLoaded("out")}
+        readChecked={isReadLoaded("out")}
+        everyChecked={isEveryLoaded("out")}
+        onToggleOneHop={toggleOneHop("out")}
+        onToggleWrite={toggleLoadFlowTypes("out", WRITE_FLOW_TYPES)}
+        onToggleRead={toggleLoadFlowTypes("out", READ_FLOW_TYPES)}
+        onToggleEvery={toggleLoadFlowTypes("out", EVERY_FLOW_TYPES)}
+      />
       {openDirection ? (
         <div
           className={`node-edge-popover ${openDirection}`}
@@ -1348,13 +1718,6 @@ function FlowNode({ data }) {
             onToggleAll={toggleAll}
             onToggleType={toggleType}
           />
-          <button
-            type="button"
-            className="edge-filter-load"
-            onClick={load(openDirection)}
-          >
-            {data.loadedRelationKeys?.has(relationKey(openDirection)) ? "Unload" : "Load"}
-          </button>
         </div>
       ) : null}
       <div className="node-head">
@@ -1369,23 +1732,93 @@ function FlowNode({ data }) {
           <span>JP: {tableParts.nameJa}</span>
           <span>EN: {tableParts.nameEn}</span>
         </div>
-      ) : null}
+      ) : data.subtitle ? <div className="node-meta"><span>{data.subtitle}</span></div> : null}
       <div className="node-foot">
         <span>{schema || "-"}</span>
-        <span>ID</span>
+        <span>{data.type}</span>
       </div>
     </div>
   );
 }
 
-function EdgeDirectionFilter({ title, direction, selected, onToggleAll, onToggleType }) {
-  const allSelected = selected.length === EDGE_TYPE_DEFAULTS.length;
+function NodeFlowControls({
+  direction,
+  oneHopChecked,
+  writeChecked,
+  readChecked,
+  everyChecked,
+  onToggleOneHop,
+  onToggleWrite,
+  onToggleRead,
+  onToggleEvery,
+}) {
+  const title = direction === "in" ? "Incoming" : "Outgoing";
+  return (
+    <div
+      className={`node-flow-controls ${direction}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <label title={`Load one-hop ${title} edges using the edge filter`}>
+        <input
+          type="checkbox"
+          aria-label={`Load one-hop ${title} edges`}
+          checked={Boolean(oneHopChecked)}
+          onChange={onToggleOneHop}
+        />
+        1
+      </label>
+      <label title={`Load all ${title} Write flow`}>
+        <input
+          type="checkbox"
+          aria-label={`Load all ${title} write flow`}
+          checked={Boolean(writeChecked)}
+          onChange={onToggleWrite}
+        />
+        W
+      </label>
+      <label title={`Load all ${title} Read flow`}>
+        <input
+          type="checkbox"
+          aria-label={`Load all ${title} read flow`}
+          checked={Boolean(readChecked)}
+          onChange={onToggleRead}
+        />
+        R
+      </label>
+      <label title={`Load all ${title} edges recursively`}>
+        <input
+          type="checkbox"
+          aria-label={`Load every ${title} relation recursively`}
+          checked={Boolean(everyChecked)}
+          onChange={onToggleEvery}
+        />
+        E
+      </label>
+    </div>
+  );
+}
+
+function EdgeDirectionFilter({
+  title,
+  direction,
+  selected,
+  onToggleAll,
+  onToggleType,
+}) {
+  const allSelected = EDGE_TYPE_DEFAULTS.every((type) =>
+    selected.includes(type),
+  );
   return (
     <div className="edge-filter-group">
       <div className="edge-filter-title">{title}</div>
+      <div className="edge-filter-section-title">Show edges</div>
       <label className="edge-filter-all">
-        <input type="checkbox" checked={allSelected} onChange={onToggleAll(direction)} />
-        All
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={onToggleAll(direction)}
+        />
+        All edges
       </label>
       <div className="edge-filter-options">
         {EDGE_TYPE_DEFAULTS.map((type) => (
