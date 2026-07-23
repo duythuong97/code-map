@@ -44,37 +44,39 @@ def main() -> int:
     parser.add_argument("--config", required=True, help="Path to Angular extractor JSON config")
     args = parser.parse_args()
     if os.environ.get("CODEMAP_USE_LEGACY_SCANNERS") != "1":
-        return subprocess.call(["node", str(Path(__file__).with_name("main.mjs")), "--config", str(Path(args.config).resolve())], cwd=WORKSPACE_ROOT)
-    config = _load_angular_config(Path(args.config).resolve())
+        return subprocess.call(["node", str(Path(__file__).with_name("main.mjs")), "--config", str(Path(args.config).expanduser())])
+    config = _load_angular_config(Path(args.config).expanduser())
     extract(config)
     return 0
 
 def _load_angular_config(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
-    replacements = {
-        "CONFIG_DIR": str(path.parent.resolve()),
-        "WORKSPACE_ROOT": str(WORKSPACE_ROOT),
-        "SOURCE_ROOT": os.environ.get("SOURCE_ROOT", str(WORKSPACE_ROOT / "demo-sources")),
-        "OUTPUT_ROOT": os.environ.get("OUTPUT_ROOT", str(WORKSPACE_ROOT / "output")),
-    }
-    for key, value in replacements.items():
-        text = text.replace("${" + key + "}", value)
+    if not path.is_absolute():
+        raise ValueError(f"config path must be absolute: {path}")
+    text = os.path.expandvars(path.read_text(encoding="utf-8"))
+    unresolved = re.findall(r"\$\{[A-Z_]+\}", text)
+    if unresolved:
+        raise ValueError(f"Unresolved config variables: {', '.join(sorted(set(unresolved)))}")
     config = json.loads(text)
     missing = [key for key in ("type", "source", "root", "folders", "appConfig", "output") if key not in config]
     if missing:
         raise ValueError(f"Missing Angular extractor config keys: {', '.join(missing)}")
     if config["type"] != "angular":
         raise ValueError(f"Unsupported Angular extractor config type: {config['type']}")
+    for key in ("root", "output", "inputData"):
+        if config.get(key):
+            value = Path(config[key]).expanduser()
+            if not value.is_absolute():
+                raise ValueError(f"{key} must be an absolute path: {value}")
+            config[key] = str(value.resolve())
     return config
 
 
 def extract(config: dict) -> None:
-    workspace_root = WORKSPACE_ROOT
     source = config["source"]
     repository = config.get("repository", source)
     system_key = config.get("system", source)
     output = Path(config["output"]).resolve()
-    files = configured_files(config, [".ts", ".html"], workspace_root)
+    files = configured_files(config, [".ts", ".html"])
     app_config = _load_app_config(config)
     for file in files:
         app_config.update(_inline_config(file.text))
@@ -182,9 +184,8 @@ def _load_app_config(config: dict) -> dict[str, str]:
     path_value = config.get("appConfig")
     if not path_value:
         return {}
-    path = Path(config["root"]) / path_value
-    if not path.exists():
-        path = Path(path_value)
+    value = Path(path_value).expanduser()
+    path = value if value.is_absolute() else Path(config["root"]) / value
     if not path.exists():
         return {}
     try:

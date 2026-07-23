@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
 CSV_ENCODINGS = frozenset({"utf-8", "utf-8-sig", "cp932", "shift_jis", "euc_jp"})
+_ENV_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 
 def load_json_config(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    config_path = absolute_path(path, "config path")
+    text = config_path.read_text(encoding="utf-8")
+    text = _ENV_PATTERN.sub(lambda match: _required_env(match.group(1)), text)
+    return json.loads(text)
 
 
 def load_app_config(path: str | Path) -> dict[str, Any]:
@@ -25,9 +30,17 @@ def load_app_config(path: str | Path) -> dict[str, Any]:
 
 
 
-def resolve_path(value: str | Path, base_dir: Path = ROOT) -> Path:
+def absolute_path(value: str | Path, name: str) -> Path:
     path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (base_dir / path).resolve()
+    if not path.is_absolute():
+        raise ValueError(f"{name} must be an absolute path: {path}")
+    return path.resolve()
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
 
 
 

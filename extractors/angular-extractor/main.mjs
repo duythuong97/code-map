@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKSPACE_ROOT = path.resolve(__dirname, '../..');
 const VERSION = '2.0.0';
 
 const CSV_HEADERS = {
@@ -32,36 +31,28 @@ function argValue(name) {
 }
 
 function loadTypeScript() {
-  const candidates = [
-    'typescript',
-    path.join(WORKSPACE_ROOT, 'node_modules/typescript'),
-    path.join(WORKSPACE_ROOT, 'application/frontend/node_modules/typescript'),
-    '/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/node_modules/typescript/lib/typescript.js',
-  ];
-  for (const candidate of candidates) {
-    try {
-      return require(candidate);
-    } catch {
-      // try next candidate
-    }
+  if (!process.env.TYPESCRIPT_PATH) throw new Error('Missing required environment variable: TYPESCRIPT_PATH');
+  try {
+    return require(process.env.TYPESCRIPT_PATH);
+  } catch {
+    throw new Error(`Cannot load TypeScript from TYPESCRIPT_PATH: ${process.env.TYPESCRIPT_PATH}`);
   }
-  throw new Error('typescript compiler package not found; install typescript or use VS Code bundled TypeScript');
 }
 
 function loadConfig(configPath) {
-  const configDir = path.dirname(path.resolve(configPath));
-  const replacements = {
-    CONFIG_DIR: configDir,
-    WORKSPACE_ROOT,
-    SOURCE_ROOT: process.env.SOURCE_ROOT || path.join(WORKSPACE_ROOT, 'demo-sources'),
-    OUTPUT_ROOT: process.env.OUTPUT_ROOT || path.join(WORKSPACE_ROOT, 'output'),
-  };
-  const raw = readFileSync(configPath, 'utf8').replace(/\$\{([A-Z_]+)\}/g, (match, key) => replacements[key] || process.env[key] || match);
+  if (!path.isAbsolute(configPath)) throw new Error(`Config path must be absolute: ${configPath}`);
+  const raw = readFileSync(configPath, 'utf8').replace(/\$\{([A-Z][A-Z0-9_]*)\}/g, (_, name) => {
+    if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
+    return process.env[name];
+  });
   const config = JSON.parse(raw);
   for (const key of ['type', 'source', 'root', 'folders', 'appConfig', 'output']) {
     if (!(key in config)) throw new Error(`Missing Angular extractor config key: ${key}`);
   }
   if (config.type !== 'angular') throw new Error(`Unsupported Angular extractor config type: ${config.type}`);
+  for (const key of ['root', 'output', 'inputData']) {
+    if (config[key] && !path.isAbsolute(config[key])) throw new Error(`${key} must be an absolute path: ${config[key]}`);
+  }
   return config;
 }
 
@@ -264,9 +255,10 @@ function configuredFiles(config, extensions, discovery = discoverAngularProject(
       if (!extensions.includes(path.extname(absolute).toLowerCase())) continue;
       if (excludedPath(absolute, root, discovery.exclusions)) continue;
       const text = readFileSync(absolute, 'utf8');
+      const evidenceRoot = path.relative(WORKSPACE_ROOT, root).startsWith('..') ? root : WORKSPACE_ROOT;
       result.push({
         absolute,
-        relative: repoPath(path.relative(WORKSPACE_ROOT, absolute)),
+        relative: repoPath(path.relative(evidenceRoot, absolute)),
         text,
         sourceFile: textSourceFile(absolute, text),
       });
@@ -765,17 +757,14 @@ function eventMethodName(expression) {
 function loadAppConfig(config) {
   const value = config.appConfig;
   if (!value) return {};
-  const candidates = [path.resolve(config.root, value), path.resolve(value)];
-  for (const candidate of candidates) {
-    if (!existsSync(candidate)) continue;
-    try {
-      const data = JSON.parse(readFileSync(candidate, 'utf8'));
-      return Object.fromEntries(Object.entries(data).filter(([, v]) => typeof v === 'string'));
-    } catch {
-      return {};
-    }
+  const candidate = path.isAbsolute(value) ? value : path.resolve(config.root, value);
+  if (!existsSync(candidate)) return {};
+  try {
+    const data = JSON.parse(readFileSync(candidate, 'utf8'));
+    return Object.fromEntries(Object.entries(data).filter(([, v]) => typeof v === 'string'));
+  } catch {
+    return {};
   }
-  return {};
 }
 
 function routeQualityIssues(config, builder, files, source) {

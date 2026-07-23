@@ -1,52 +1,27 @@
-const fs = require("fs");
 const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env"), override: true });
 
-const rootDir = __dirname;
-const appConfigPath = path.join(rootDir, "configs", "code-map.config.json");
-const rootConfig = JSON.parse(fs.readFileSync(appConfigPath, "utf8"));
-const appConfig = { ...rootConfig.api, db: rootConfig.db };
-
-function resolvePythonPath(configuredPython) {
-  if (configuredPython) {
-    if (configuredPython.includes("/") || configuredPython.includes("\\")) {
-      return path.resolve(rootDir, configuredPython);
-    }
-    return configuredPython;
-  }
-
-  const venvPython = process.platform === "win32"
-    ? path.join(rootDir, ".venv", "Scripts", "python.exe")
-    : path.join(rootDir, ".venv", "bin", "python");
-
-  if (fs.existsSync(venvPython)) {
-    return venvPython;
-  }
-
-  return process.platform === "win32" ? "python" : "python3";
+function required(name) {
+  if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
+  return process.env[name];
 }
 
-function resolvePythonArgs() {
-  const args = [];
-  if (appConfig.python_no_site) {
-    args.push("-S");
-  }
-  args.push(path.join("application", "backend", "api", "server.py"));
-  return args;
+function absolute(name) {
+  const value = required(name);
+  if (!path.isAbsolute(value)) throw new Error(`${name} must be an absolute path: ${value}`);
+  return value;
 }
+
+const projectRoot = absolute("CODE_MAP_PROJECT_ROOT");
 
 module.exports = {
   apps: [
     {
-      name: appConfig.pm2_name || "code-map",
-      cwd: rootDir,
-      script: resolvePythonPath(appConfig.python),
-      args: resolvePythonArgs(),
+      name: required("CODE_MAP_PM2_NAME"),
+      script: path.join(projectRoot, ".venv", "bin", "python"),
+      args: [path.join(projectRoot, "application", "backend", "api", "server.py")],
       interpreter: "none",
-      env: {
-        NODE_ENV: "production",
-        CODE_MAP_CONFIG: appConfigPath,
-        PYTHONPATH: rootDir,
-      },
+      env: { NODE_ENV: "production" },
       autorestart: true,
       exp_backoff_restart_delay: 1000,
       min_uptime: "5s",

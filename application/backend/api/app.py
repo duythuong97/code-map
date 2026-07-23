@@ -25,26 +25,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from flask import Flask, g, jsonify, request, send_from_directory
-from application.backend.config import load_app_config, resolve_path
+from application.runtime_env import project_path, required_env
+from application.backend.config import absolute_path, load_app_config
 from application.backend.source_text import decode_source_bytes
 from application.backend.database.writer import ensure_db_schema
 from application.backend.api import graph_routes
 from application.backend.logging_config import configure_backend_logging
 
-APP_CONFIG_PATH = resolve_path(
-    os.environ.get("CODE_MAP_CONFIG", "configs/code-map.config.json"), ROOT
-)
+APP_CONFIG_PATH = project_path("configs", "code-map.config.json")
 APP_CONFIG = load_app_config(APP_CONFIG_PATH)
-DB_PATH = resolve_path(APP_CONFIG["db"], APP_CONFIG_PATH.parent)
-WEB_DIST = ROOT / "application" / "frontend" / "dist"
+DB_PATH = absolute_path(APP_CONFIG["db"], "db")
+WEB_DIST = project_path("application", "frontend", "dist")
 URL_PREFIX = APP_CONFIG["url_prefix"]
 
 app = Flask(__name__)
-BACKEND_LOG_PATH = configure_backend_logging(APP_CONFIG, APP_CONFIG_PATH.parent)
+BACKEND_LOG_PATH = configure_backend_logging(APP_CONFIG)
 logger = logging.getLogger("code_map.backend")
 if BACKEND_LOG_PATH:
     logger.info("backend file logging configured path=%s", BACKEND_LOG_PATH)
-app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("CODE_MAP_MAX_CONTENT_LENGTH", str(16 * 1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = int(required_env("CODE_MAP_MAX_CONTENT_LENGTH"))
 app.config["CODE_MAP_GRAPH_DB_PATH"] = DB_PATH
 app.register_blueprint(graph_routes.bp)
 
@@ -1288,6 +1287,6 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     if args.db:
-        DB_PATH = resolve_path(args.db, Path.cwd())
+        DB_PATH = absolute_path(args.db, "--db")
     logger.info("starting backend dev server host=%s port=%s prefix=%s db=%s", args.host, args.port, URL_PREFIX, DB_PATH)
     app.run(host=args.host, port=args.port, debug=False)

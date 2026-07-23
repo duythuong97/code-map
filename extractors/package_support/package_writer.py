@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from application import runtime_env as _runtime_env
 from contract.graph_contract import (
     api_operation_id,
     canonical_edge_id,
@@ -407,47 +408,39 @@ def end_column_from_snippet(snippet: str) -> str:
 
 
 def load_config(path: Path) -> dict:
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    base = path.parent
-    return _expand_paths(raw, base)
+    if not path.is_absolute():
+        raise ValueError(f"config path must be absolute: {path}")
+    raw = _expand_paths(json.loads(path.read_text(encoding="utf-8")))
+    for key in ("root", "output", "inputData"):
+        value = raw.get(key)
+        if value:
+            candidate = Path(value).expanduser()
+            if not candidate.is_absolute():
+                raise ValueError(f"{key} must be an absolute path: {candidate}")
+            raw[key] = str(candidate.resolve())
+    return raw
 
 
-def _expand_paths(value, base: Path):
+def _expand_paths(value):
     if isinstance(value, dict):
-        return {key: _expand_paths(item, base) for key, item in value.items()}
+        return {key: _expand_paths(item) for key, item in value.items()}
     if isinstance(value, list):
-        return [_expand_paths(item, base) for item in value]
-    if isinstance(value, str):
-        workspace_root = find_workspace_root(base)
-        source_root = Path(os.environ.get("SOURCE_ROOT", str(workspace_root / "demo-sources")))
-        output_root = Path(os.environ.get("OUTPUT_ROOT", str(workspace_root / "output")))
-        expanded = value.replace("${CONFIG_DIR}", str(base))
-        expanded = expanded.replace("${WORKSPACE_ROOT}", str(workspace_root))
-        expanded = expanded.replace("${SOURCE_ROOT}", str(source_root))
-        expanded = expanded.replace("${OUTPUT_ROOT}", str(output_root))
-        return expanded
-    return value
+        return [_expand_paths(item) for item in value]
+    if not isinstance(value, str) or "${" not in value:
+        return value
+    expanded = os.path.expandvars(value)
+    if "${" in expanded:
+        raise ValueError(f"Unresolved environment variable in config value: {value}")
+    return expanded
 
 
-def find_workspace_root(start: Path) -> Path:
-    current = start.resolve()
-    for candidate in (current, *current.parents):
-        if (candidate / "contract").exists() and (candidate / "extractors").exists():
-            return candidate
-    return Path.cwd().resolve()
+
+def workspace_relative(path: Path, base_root: Path) -> str:
+    return normalize_repository_path(str(path.resolve().relative_to(base_root.resolve())))
 
 
-def workspace_relative(path: Path, workspace_root: Path) -> str:
-    absolute = path.resolve()
-    root = workspace_root.resolve()
-    try:
-        return normalize_repository_path(str(absolute.relative_to(root)))
-    except ValueError:
-        return normalize_repository_path(str(path))
-
-
-def configured_files(config: dict, suffixes: Iterable[str], workspace_root: Path) -> list[SourceFile]:
-    root = Path(config["root"]).resolve()
+def configured_files(config: dict, suffixes: Iterable[str]) -> list[SourceFile]:
+    root = Path(config["root"]).expanduser().resolve()
     folders = config.get("folders") or ["."]
     suffix_set = {suffix.lower() for suffix in suffixes}
     path_databases: dict[Path, str] = {}
@@ -465,7 +458,7 @@ def configured_files(config: dict, suffixes: Iterable[str], workspace_root: Path
                 path_databases.setdefault(path, database)
     files = []
     for path, database in sorted(path_databases.items(), key=lambda item: str(item[0])):
-        files.append(SourceFile(path, workspace_relative(path, workspace_root), path.read_text(encoding="utf-8"), database))
+        files.append(SourceFile(path, workspace_relative(path, root), path.read_text(encoding="utf-8"), database))
     return files
 
 

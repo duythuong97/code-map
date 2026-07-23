@@ -27,21 +27,23 @@ sealed record StringEvaluation(string Value, bool IsDynamic);
 
 public static class ExtractorRuntime
 {
-    public static readonly string WorkspaceRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../.."));
-
     public static JsonDocument LoadConfig(string path)
     {
-        var configDir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? Directory.GetCurrentDirectory();
-        var sourceRoot = Environment.GetEnvironmentVariable("SOURCE_ROOT");
-        if (string.IsNullOrWhiteSpace(sourceRoot)) sourceRoot = Path.Combine(WorkspaceRoot, "demo-sources");
-        var outputRoot = Environment.GetEnvironmentVariable("OUTPUT_ROOT");
-        if (string.IsNullOrWhiteSpace(outputRoot)) outputRoot = Path.Combine(WorkspaceRoot, "output");
-        var text = File.ReadAllText(path, Encoding.UTF8)
-            .Replace("${CONFIG_DIR}", configDir)
-            .Replace("${WORKSPACE_ROOT}", WorkspaceRoot)
-            .Replace("${SOURCE_ROOT}", sourceRoot)
-            .Replace("${OUTPUT_ROOT}", outputRoot);
+        if (!Path.IsPathFullyQualified(path)) throw new ArgumentException($"Config path must be absolute: {path}");
+        var text = Regex.Replace(
+            File.ReadAllText(path, Encoding.UTF8),
+            @"\$\{([A-Z][A-Z0-9_]*)\}",
+            match => Environment.GetEnvironmentVariable(match.Groups[1].Value)
+                ?? throw new ArgumentException($"Missing required environment variable: {match.Groups[1].Value}"));
         return JsonDocument.Parse(text);
+    }
+
+    public static string ConfigPath(JsonElement element, string name, string fallback = "")
+    {
+        var value = String(element, name, fallback);
+        if (string.IsNullOrWhiteSpace(value)) return value;
+        if (!Path.IsPathFullyQualified(value)) throw new ArgumentException($"{name} must be an absolute path: {value}");
+        return Path.GetFullPath(value);
     }
 
     public static string String(JsonElement element, string name, string fallback = "")
@@ -52,7 +54,7 @@ public static class ExtractorRuntime
 
     public static List<SourceFile> ConfiguredFiles(JsonElement config, IReadOnlyCollection<string> extensions)
     {
-        var root = Path.GetFullPath(String(config, "root"));
+        var root = ConfigPath(config, "root");
         var folders = new List<string>();
         if (config.TryGetProperty("folders", out var foldersElement) && foldersElement.ValueKind == JsonValueKind.Array)
         {
@@ -79,10 +81,16 @@ public static class ExtractorRuntime
                 var syntaxTree = Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase)
                     ? CSharpSyntaxTree.ParseText(text, path: path)
                     : null;
-                files.Add(new SourceFile(path, RepositoryPath(Path.GetRelativePath(WorkspaceRoot, path)), text, syntaxTree));
+                files.Add(new SourceFile(path, RepositoryPath(Path.GetRelativePath(root, path)), text, syntaxTree));
             }
         }
         return files;
+    }
+
+    static bool IsWithin(string path, string root)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        return relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     static bool IsExcludedSourcePath(string path, string root)

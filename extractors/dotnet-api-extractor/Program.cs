@@ -15,9 +15,9 @@ var application = ExtractorRuntime.String(config, "application", source);
 var repository = ExtractorRuntime.String(config, "repository", source);
 var database = ExtractorRuntime.String(config, "database");
 var systemKey = ExtractorRuntime.String(config, "system", application);
-var root = Path.GetFullPath(ExtractorRuntime.String(config, "root"));
-var output = ExtractorRuntime.String(config, "output");
-var inputRoot = ExtractorRuntime.String(config, "inputData", Path.Combine(ExtractorRuntime.WorkspaceRoot, "input-data"));
+var root = ExtractorRuntime.ConfigPath(config, "root");
+var output = ExtractorRuntime.ConfigPath(config, "output");
+var inputRoot = ExtractorRuntime.ConfigPath(config, "inputData");
 var catalog = Catalog.Load(inputRoot, database);
 var files = ExpandWorkspaceFiles(ExtractorRuntime.ConfiguredFiles(config, new[] { ".cs", ".csproj", ".sln" }), root);
 var csFiles = files.Where(file => file.SyntaxTree is not null).ToList();
@@ -418,8 +418,7 @@ static SourceFile ReadSourceFile(string absolutePath, string root)
 
 static string SourceRelativePath(string absolutePath, string root)
 {
-    var basePath = IsUnderDirectory(absolutePath, ExtractorRuntime.WorkspaceRoot) ? ExtractorRuntime.WorkspaceRoot : root;
-    return ExtractorRuntime.RepositoryPath(Path.GetRelativePath(basePath, absolutePath));
+    return ExtractorRuntime.RepositoryPath(Path.GetRelativePath(root, absolutePath));
 }
 
 static bool IsExcludedProjectPath(string path)

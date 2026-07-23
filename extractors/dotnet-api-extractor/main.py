@@ -28,9 +28,9 @@ def main() -> int:
     args = parser.parse_args()
     if os.environ.get("CODEMAP_USE_LEGACY_SCANNERS") != "1":
         csproj = Path(__file__).with_name("DotNetApiExtractor.csproj")
-        completed = subprocess.run(["dotnet", "run", "--project", str(csproj), "--", "--config", str(Path(args.config).resolve())], cwd=WORKSPACE_ROOT)
+        completed = subprocess.run(["dotnet", "run", "--project", str(csproj), "--", "--config", str(Path(args.config).expanduser())])
         return completed.returncode
-    extract(load_config(Path(args.config).resolve()))
+    extract(load_config(Path(args.config).expanduser()))
     return 0
 
 
@@ -43,10 +43,10 @@ def extract(config: dict) -> None:
     database = config["database"]
     system_key = config.get("system", application)
     output = Path(config["output"]).resolve()
-    input_root = Path(config.get("inputData", WORKSPACE_ROOT / "input-data")).resolve()
+    input_root = Path(config["inputData"]).resolve()
     catalog = Catalog.load(input_root, database)
 
-    files = configured_files(config, [".cs"], WORKSPACE_ROOT)
+    files = configured_files(config, [".cs"])
     builder = PackageBuilder(f"dotnet-api-{source}", f"extractor:dotnet-api/{source}", "dotnet-api-extractor", _VERSION, {"source": source, "technology": "Roslyn SemanticModel compatible scanner"})
     builder.files_scanned = len(files)
 

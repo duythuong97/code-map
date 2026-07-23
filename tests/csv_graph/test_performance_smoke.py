@@ -34,7 +34,7 @@ class CsvGraphPerformanceSmokeTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory()
         cls.db = Path(cls.tmp.name) / "performance-smoke.sqlite"
-        import_roots(PACKAGES, cls.db, ROOT / "input-data")
+        import_roots(PACKAGES, cls.db, ROOT / "input-data", ROOT)
 
         from application.backend.api import graph_routes
 

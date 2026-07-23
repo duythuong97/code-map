@@ -202,23 +202,14 @@ def _validate_issue_source_anchor(root: Path, row: dict[str, str], workspace_roo
         _validate_line_bounds(source_file, row["start_line"], row["start_line"], "issue")
 
 def _resolve_source_path(root: Path, source_path: str, workspace_root: Path | None) -> Path | None:
-    candidates: list[Path] = []
-    if workspace_root is not None:
-        candidates.append(workspace_root)
-    candidates.extend([root, *root.parents, Path.cwd(), *Path.cwd().parents])
-    seen: set[Path] = set()
-    for candidate in candidates:
-        try:
-            base = candidate.resolve()
-        except OSError:
-            base = candidate
-        if base in seen:
-            continue
-        seen.add(base)
-        path = base / source_path
-        if path.is_file():
-            return path
-    return None
+    source = Path(source_path)
+    if source.is_absolute():
+        return source if source.is_file() else None
+    if workspace_root is None:
+        raise ValueError("workspace_root is required to resolve relative evidence paths")
+    base = workspace_root.resolve()
+    path = (base / source).resolve()
+    return path if path.is_relative_to(base) and path.is_file() else None
 
 def _validate_line_bounds(source_file: Path, start_line: str, end_line: str, label: str) -> None:
     if not start_line:
@@ -232,6 +223,8 @@ def _validate_line_bounds(source_file: Path, start_line: str, end_line: str, lab
 def validate_package(root: Path, external_node_ids: Iterable[str] = (), workspace_root: Path | None = None) -> dict[str, object]:
     raw_manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     manifest, file_specs = _normalize_manifest(raw_manifest)
+    repository_key = manifest["metadata"]["source"]["repositoryKey"]
+    repository_root = workspace_root / repository_key if workspace_root else None
     loaded = {name: _rows(root, name) for name in file_specs}
     checksum_validated = True
     normalized_files: dict[str, dict[str, object]] = {}
@@ -283,7 +276,7 @@ def validate_package(root: Path, external_node_ids: Iterable[str] = (), workspac
     for row in loaded["evidence"]:
         validate_enum("target_type", row["target_type"], TARGET_TYPES)
         row["source_path"] = validate_evidence_location(row["source_path"], row["start_line"], row["end_line"], row["start_column"], row["end_column"])
-        _validate_evidence_source_anchor(root, row, workspace_root)
+        _validate_evidence_source_anchor(root, row, repository_root)
         validate_confidence(row["confidence"])
         validate_properties_json(row["properties_json"])
         target_ids = node_ids if row["target_type"] == "NODE" else edge_ids
@@ -300,7 +293,7 @@ def validate_package(root: Path, external_node_ids: Iterable[str] = (), workspac
             raise ValueError("dangling issue source")
         if row["source_path"]:
             row["source_path"] = normalize_repository_path(row["source_path"])
-            _validate_issue_source_anchor(root, row, workspace_root)
+            _validate_issue_source_anchor(root, row, repository_root)
         elif row["start_line"]:
             raise ValueError("issue start_line requires source_path")
         if not row["message"].strip():

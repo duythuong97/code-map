@@ -3,6 +3,7 @@
   "source": "order-fulfillment",
   "database": "ORDER_DB",
   "executables": ["orderfulfillment.exe", "orderreconcile.exe"],
-  "root": "${SOURCE_ROOT}/order-fulfillment",
-  "output": "${OUTPUT_ROOT}/batch/order-fulfillment"
+  "root": "${CODE_MAP_SOURCE_ROOT}/order-fulfillment",
+  "inputData": "${CODE_MAP_PROJECT_ROOT}/input-data",
+  "output": "${CODE_MAP_PROJECT_ROOT}/output/batch/order-fulfillment"
 }

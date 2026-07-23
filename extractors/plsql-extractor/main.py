@@ -75,7 +75,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Extract Oracle PL/SQL objects and SQL dependencies into a CSV graph package.")
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
-    extract(load_config(Path(args.config).resolve()))
+    extract(load_config(Path(args.config).expanduser()))
     return 0
 
 
@@ -87,12 +87,12 @@ def extract(config: dict) -> None:
     database = config["database"]
     schema = config.get("schema", "")
     system_key = config.get("system", database)
-    input_root = Path(config.get("inputData", WORKSPACE_ROOT / "input-data")).resolve()
+    input_root = Path(config["inputData"]).resolve()
     output = Path(config["output"]).resolve()
     catalog = Catalog.load(input_root, database)
     local_routines = {item.upper() for item in config.get("localRoutines", [])}
 
-    files = configured_files(config, [".pks", ".pkb", ".pck", ".pls", ".plb", ".fnc", ".prc", ".trg", ".sql"], WORKSPACE_ROOT)
+    files = configured_files(config, [".pks", ".pkb", ".pck", ".pls", ".plb", ".fnc", ".prc", ".trg", ".sql"])
     builder = PackageBuilder(f"plsql-{source}", f"extractor:plsql/{source}", "plsql-extractor", _VERSION, {"source": source, "technology": "Python + ANTLR4 runtime Oracle PL/SQL parser", "parser": "extractors.package_support.oracle_parser.OraclePlsqlParser"})
     builder.files_scanned = len(files)
 

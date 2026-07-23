@@ -45,13 +45,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Normalize authoritative CSV inputs for the graph import pipeline.")
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
-    normalize(load_config(Path(args.config).resolve()))
+    normalize(load_config(Path(args.config).expanduser()))
     return 0
 
 def normalize(config: dict) -> None:
     if config.get("type") != "csv-normalizer":
         raise ValueError("Config type must be csv-normalizer")
-    source_root = Path(config.get("root", WORKSPACE_ROOT / "input-data")).resolve()
+    source_root = Path(config["root"]).resolve()
     output = Path(config["output"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     files = config.get("files", {})

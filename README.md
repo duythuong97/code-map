@@ -6,6 +6,17 @@ Config nằm trực tiếp trong `configs/`:
 
 - Sáu file `*-*.json` cấu hình standalone extractors, có trường `type`.
 - `code-map.config.json` chỉ cấu hình backend API và SQLite.
+- `.env` khai báo `CODE_MAP_PROJECT_ROOT` và một repository container `CODE_MAP_SOURCE_ROOT`.
+- Mỗi extractor config chọn repository bằng `${CODE_MAP_SOURCE_ROOT}/<repository>`; không giới hạn số repository cùng công nghệ.
+
+Ví dụ Windows:
+
+```dotenv
+CODE_MAP_PROJECT_ROOT=C:/tools/code-map
+CODE_MAP_SOURCE_ROOT=C:/sources
+```
+
+Hai Angular repositories `customer-web` và `admin-web` dùng hai config riêng với `root` lần lượt là `${CODE_MAP_SOURCE_ROOT}/customer-web` và `${CODE_MAP_SOURCE_ROOT}/admin-web`.
 
 ## 1. Cài dependency
 

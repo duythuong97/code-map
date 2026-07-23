@@ -10,23 +10,15 @@ DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_LOG_BACKUPS = 5
 
 
-def configure_backend_logging(app_config: dict[str, Any], base_dir: Path) -> Path | None:
-    """Configure backend API logs to a rotating file.
-
-    The file path is controlled by ``CODE_MAP_BACKEND_LOG_PATH`` or
-    ``api.log_path`` in ``configs/code-map.config.json``.  The handler is
-    shared by application, request, Werkzeug, and Waitress loggers so API
-    errors and access summaries land in the same file.
-    """
-    raw_path = os.environ.get("CODE_MAP_BACKEND_LOG_PATH") or app_config.get("log_path")
-    if not raw_path:
-        return None
-
-    log_path = Path(str(raw_path)).expanduser()
-    log_path = log_path if log_path.is_absolute() else (base_dir / log_path).resolve()
+def configure_backend_logging(app_config: dict[str, Any]) -> Path:
+    """Configure backend API logs to an explicitly configured rotating file."""
+    log_path = Path(str(app_config["log_path"])).expanduser()
+    if not log_path.is_absolute():
+        raise ValueError(f"log_path must be an absolute path: {log_path}")
+    log_path = log_path.resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    level = _log_level(app_config.get("log_level") or os.environ.get("CODE_MAP_BACKEND_LOG_LEVEL") or "INFO")
+    level = _log_level(app_config["log_level"])
     handler = _existing_file_handler(log_path)
     if handler is None:
         handler = RotatingFileHandler(

@@ -3,6 +3,7 @@
   "source": "order-ops",
   "system": "order-ops",
   "database": "ORDER_DB",
-  "root": "${SOURCE_ROOT}/order-ops",
-  "output": "${OUTPUT_ROOT}/sql-files/order-ops"
+  "root": "${CODE_MAP_SOURCE_ROOT}/order-ops",
+  "inputData": "${CODE_MAP_PROJECT_ROOT}/input-data",
+  "output": "${CODE_MAP_PROJECT_ROOT}/output/sql-files/order-ops"
 }

@@ -8,6 +8,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from application.runtime_env import project_path, required_absolute_path
 from application.backend.importer.package_validator import validate_package
 from application.backend.importer.pipeline import (
     import_roots,
@@ -27,17 +28,16 @@ def main() -> int:
     validate.add_argument("root", type=Path)
     publish = commands.add_parser("import")
     publish.add_argument("root", type=Path)
-    publish.add_argument("--db", type=Path, default=Path("data/code-flow-demo.sqlite"))
+    publish.add_argument("--db", type=Path, default=project_path("data", "code-flow-demo.sqlite"))
+    publish.add_argument("--input-root", type=Path, default=project_path("input-data"))
     integrity = commands.add_parser("integrity")
-    integrity.add_argument(
-        "--db", type=Path, default=Path("data/code-flow-demo.sqlite")
-    )
+    integrity.add_argument("--db", type=Path, default=project_path("data", "code-flow-demo.sqlite"))
     args = parser.parse_args()
     if args.command == "validate":
         roots = package_roots(args.root)
-        allowed = validation_ids(roots, Path("input-data"))
+        allowed = validation_ids(roots, project_path("input-data"))
         result = [
-            validate_package(root, allowed)["manifest"]["packageId"] for root in roots
+            validate_package(root, allowed, workspace_root=required_absolute_path("CODE_MAP_SOURCE_ROOT"))["manifest"]["packageId"] for root in roots
         ]
         print(json.dumps({"status": "valid", "packages": result}))
     elif args.command == "import":
@@ -45,7 +45,7 @@ def main() -> int:
             json.dumps(
                 {
                     "status": "imported",
-                    "counts": import_roots(package_roots(args.root), args.db),
+                    "counts": import_roots(package_roots(args.root), args.db, args.input_root, required_absolute_path("CODE_MAP_SOURCE_ROOT")),
                 }
             )
         )

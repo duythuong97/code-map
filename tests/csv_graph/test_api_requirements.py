@@ -26,7 +26,7 @@ class ApiRequirementsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "api-requirements.sqlite"
-        import_roots(PACKAGES, self.db, ROOT / "input-data")
+        import_roots(PACKAGES, self.db, ROOT / "input-data", ROOT)
         self.old_db_path = serving.DB_PATH
         serving.DB_PATH = self.db
         serving.app.config.update(TESTING=True, CODE_MAP_GRAPH_DB_PATH=self.db)

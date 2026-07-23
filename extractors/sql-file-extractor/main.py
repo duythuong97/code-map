@@ -30,7 +30,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Extract standalone Oracle SQL files into a CSV graph package.")
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
-    extract(load_config(Path(args.config).resolve()))
+    extract(load_config(Path(args.config).expanduser()))
     return 0
 
 
@@ -42,12 +42,12 @@ def extract(config: dict) -> None:
     default_database = config.get("database", "")
     schema = config.get("schema", "")
     system_key = config.get("system", default_database or source)
-    input_root = Path(config.get("inputData", WORKSPACE_ROOT / "input-data")).resolve()
+    input_root = Path(config["inputData"]).resolve()
     output = Path(config["output"]).resolve()
     has_folder_database = any(isinstance(item, dict) and item.get("database") for item in config.get("folders", []))
     catalog = Catalog.load(input_root, "" if has_folder_database else default_database)
 
-    files = configured_files(config, [".sql", ".ctl"], WORKSPACE_ROOT)
+    files = configured_files(config, [".sql", ".ctl"])
     builder = PackageBuilder(f"sql-files-{source}", f"extractor:sql-files/{source}", "sql-file-extractor", _VERSION, {"source": source, "technology": "Python Oracle SQL and SQL*Loader parser", "parser": "extractors.package_support.oracle_parser.OracleSqlParser"})
     builder.files_scanned = len(files)
 

@@ -8,7 +8,7 @@
     "sourceKey": "extractor:plsql/order-db",
     "repositoryKey": "order-db"
   },
-  "generatedAt": "2026-07-22T23:18:26.213706Z",
+  "generatedAt": "2026-07-23T11:02:19.294488Z",
   "files": {
     "nodes": "nodes.csv",
     "edges": "edges.csv",
@@ -24,20 +24,20 @@
   },
   "checksums": {
     "nodes.csv": {
-      "sha256": "74fafd907f7201ddb000fc1733fc6f55e2d8720cee8255126403bb95e6777a4a",
-      "bytes": 20849
+      "sha256": "b320f0dc586d9e113d3b40a4802aa9683b1d3c83ee25825af7a9313d95db41af",
+      "bytes": 20189
     },
     "edges.csv": {
-      "sha256": "6b74a4965171e885222fcf18c14ce58b25b7698cf183688a448ca2441b482be0",
-      "bytes": 43147
+      "sha256": "da8e91fdb890563a47aa0f600b54ea7d5c8198ec72e5168d0d37019c6c380a9a",
+      "bytes": 42861
     },
     "evidence.csv": {
-      "sha256": "b06f8e5fc4620ecba4bd19708053a96478117d03913545a06b9a10d8fed251a4",
-      "bytes": 29361
+      "sha256": "9c7a45f2fa8e569a6c1605ee6f75a5e95edfc1dd7b5e73891184f8f7927d2350",
+      "bytes": 26897
     },
     "issues.csv": {
-      "sha256": "7dcd7f82383662647ab00768ea4a7ed2f1be5492de1d6a2686cf9b5abc797b87",
-      "bytes": 581
+      "sha256": "961364d070f49d949677c96338a9dc9f68a85457f86142624c1181d79548b1b0",
+      "bytes": 537
     }
   },
   "metadata": {

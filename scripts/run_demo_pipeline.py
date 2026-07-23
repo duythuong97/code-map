@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
-"""Extract demo sources, validate CSV packages, then import them into SQLite."""
+"""Extract configured sources, validate packages, then import SQLite."""
 from __future__ import annotations
 
 import argparse
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-PYTHON = Path(sys.executable)
-DB = ROOT / "data/code-flow-demo.sqlite"
+from application.runtime_env import project_path
 
+PYTHON = project_path(".venv", "bin", "python")
+DB = project_path("data", "code-flow-demo.sqlite")
+INPUT_ROOT = project_path("input-data")
+OUTPUT_ROOT = project_path("output")
 STEPS = [
-    ("Angular", [PYTHON, "extractors/angular-extractor/main.py", "--config", "configs/angular-customer-web.json"]),
-    (".NET API", [PYTHON, "extractors/dotnet-api-extractor/main.py", "--config", "configs/dotnet-api-order-api.json"]),
-    (".NET batch", [PYTHON, "extractors/dotnet-batch-extractor/main.py", "--config", "configs/dotnet-batch-order-fulfillment.json"]),
-    ("PL/SQL", [PYTHON, "extractors/plsql-extractor/main.py", "--config", "configs/plsql-order-db.json"]),
-    ("SQL files", [PYTHON, "extractors/sql-file-extractor/main.py", "--config", "configs/sql-order-ops.json"]),
-    ("Validate CSV", [PYTHON, "-m", "application.backend.cli", "validate", "output"]),
-    ("Import SQLite", [PYTHON, "-m", "application.backend.cli", "import", "output", "--db", DB]),
+    ("Angular", [PYTHON, project_path("extractors", "angular-extractor", "main.py"), "--config", project_path("configs", "angular-customer-web.json")]),
+    (".NET API", [PYTHON, project_path("extractors", "dotnet-api-extractor", "main.py"), "--config", project_path("configs", "dotnet-api-order-api.json")]),
+    (".NET batch", [PYTHON, project_path("extractors", "dotnet-batch-extractor", "main.py"), "--config", project_path("configs", "dotnet-batch-order-fulfillment.json")]),
+    ("PL/SQL", [PYTHON, project_path("extractors", "plsql-extractor", "main.py"), "--config", project_path("configs", "plsql-order-db.json")]),
+    ("SQL files", [PYTHON, project_path("extractors", "sql-file-extractor", "main.py"), "--config", project_path("configs", "sql-order-ops.json")]),
+    ("Validate CSV", [PYTHON, "-m", "application.backend.cli", "validate", OUTPUT_ROOT]),
+    ("Import SQLite", [PYTHON, "-m", "application.backend.cli", "import", OUTPUT_ROOT, "--db", DB, "--input-root", INPUT_ROOT]),
     ("SQLite integrity", [PYTHON, "-m", "application.backend.cli", "integrity", "--db", DB]),
 ]
 
@@ -32,15 +33,10 @@ def main() -> int:
     for command in ("node", "dotnet"):
         if not shutil.which(command):
             raise SystemExit(f"Missing required command: {command}")
-    required = [
-        ROOT / "input-data/tables.csv",
-        ROOT / "input-data/jobnet.csv",
-        ROOT / "input-data/executable-mappings.csv",
-        ROOT / "input-data/localized-metadata.csv",
-    ]
-    missing = [str(path.relative_to(ROOT)) for path in required if not path.is_file()]
-    if not list((ROOT / "input-data/tables").glob("*.csv")):
-        missing.append("input-data/tables/*.csv")
+    required = [INPUT_ROOT / name for name in ("tables.csv", "jobnet.csv", "executable-mappings.csv", "localized-metadata.csv")]
+    missing = [str(path) for path in required if not path.is_file()]
+    if not list((INPUT_ROOT / "tables").glob("*.csv")):
+        missing.append(str(INPUT_ROOT / "tables/*.csv"))
     if missing:
         raise SystemExit("Missing authoritative CSV files: " + ", ".join(missing))
     if args.fresh:
@@ -49,7 +45,7 @@ def main() -> int:
 
     for label, command in STEPS:
         print(f"\n== {label} ==", flush=True)
-        subprocess.run([str(part) for part in command], cwd=ROOT, check=True)
+        subprocess.run([str(part) for part in command], check=True)
     print(f"\nDone: {DB}")
     return 0
 

@@ -24,8 +24,8 @@ class ContractValidatorRequirementsTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.package = self.root / "package"
-        (self.root / "src").mkdir()
-        (self.root / "src/app.ts").write_text("submit();\nconsole.log('issue');\nreturn;\n", encoding="utf-8")
+        (self.root / "test-web" / "src").mkdir(parents=True)
+        (self.root / "test-web" / "src/app.ts").write_text("submit();\nconsole.log('issue');\nreturn;\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

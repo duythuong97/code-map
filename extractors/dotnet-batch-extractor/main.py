@@ -30,9 +30,9 @@ def main() -> int:
     args = parser.parse_args()
     if os.environ.get("CODEMAP_USE_LEGACY_SCANNERS") != "1":
         csproj = Path(__file__).with_name("DotNetBatchExtractor.csproj")
-        completed = subprocess.run(["dotnet", "run", "--project", str(csproj), "--", "--config", str(Path(args.config).resolve())], cwd=WORKSPACE_ROOT)
+        completed = subprocess.run(["dotnet", "run", "--project", str(csproj), "--", "--config", str(Path(args.config).expanduser())])
         return completed.returncode
-    extract(load_config(Path(args.config).resolve()))
+    extract(load_config(Path(args.config).expanduser()))
     return 0
 
 
@@ -44,11 +44,11 @@ def extract(config: dict) -> None:
     scope = config.get("executableScope", "batch-system")
     system_key = config.get("system", scope)
     database = config.get("database") or _first_folder_database(config) or ""
-    input_root = Path(config.get("inputData", WORKSPACE_ROOT / "input-data")).resolve()
+    input_root = Path(config["inputData"]).resolve()
     output = Path(config["output"]).resolve()
     catalog = Catalog.load(input_root, database) if database else Catalog.load(input_root)
 
-    files = configured_files(config, [".cs", ".csproj"], WORKSPACE_ROOT)
+    files = configured_files(config, [".cs", ".csproj"])
     builder = PackageBuilder(f"dotnet-batch-{source}", f"extractor:dotnet-batch/{source}", "dotnet-batch-extractor", _VERSION, {"source": source, "technology": "Roslyn Workspace compatible scanner"})
     builder.files_scanned = len(files)
 

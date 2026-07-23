@@ -25,7 +25,7 @@ class ImportModelRequirementsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "graph.sqlite"
-        import_roots(PACKAGES, self.db_path, ROOT / "input-data")
+        import_roots(PACKAGES, self.db_path, ROOT / "input-data", ROOT)
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
 
@@ -119,7 +119,7 @@ class ImportModelRequirementsTest(unittest.TestCase):
         (package / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
         db_path = Path(self.tmp.name) / "localized-package.sqlite"
-        import_roots([package], db_path, ROOT / "input-data")
+        import_roots([package], db_path, ROOT / "input-data", ROOT)
         with sqlite3.connect(db_path) as db:
             row = db.execute(
                 """

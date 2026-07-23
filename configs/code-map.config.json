@@ -1,10 +1,17 @@
 {
-  "db": "../data/code-flow-demo.sqlite",
+  "db": "${CODE_MAP_PROJECT_ROOT}/data/code-flow-demo.sqlite",
   "api": {
     "url_prefix": "/code-map",
+    "graph_api_prefix": "${CODE_MAP_GRAPH_API_PREFIX}",
     "host": "127.0.0.1",
     "port": 8000,
     "python_no_site": true,
-    "log_path": "../logs/backend.log"
+    "log_path": "${CODE_MAP_PROJECT_ROOT}/logs/backend.log",
+    "log_level": "${CODE_MAP_BACKEND_LOG_LEVEL}",
+    "input_root": "${CODE_MAP_PROJECT_ROOT}/input-data",
+    "output_root": "${CODE_MAP_PROJECT_ROOT}/output",
+    "safe_source_roots": "${CODE_MAP_SOURCE_ROOT}",
+    "max_content_length": "${CODE_MAP_MAX_CONTENT_LENGTH}",
+    "knowledge_token": "${CODE_MAP_KNOWLEDGE_TOKEN}"
   }
 }

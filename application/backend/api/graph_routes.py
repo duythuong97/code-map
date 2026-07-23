@@ -12,19 +12,17 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
-ROOT = Path(__file__).resolve().parents[3]
+from application.runtime_env import project_path, required_absolute_path, required_env
 
-def _workspace_path(value: str | Path) -> Path:
-    path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
-
-bp = Blueprint("graph_api", __name__, url_prefix=os.environ.get("CODE_MAP_GRAPH_API_PREFIX", "/api/graph"))
-DB_PATH = _workspace_path(os.environ.get("CODE_MAP_GRAPH_DB", "data/code-flow-demo.sqlite"))
-SAFE_SOURCE_ROOTS = tuple(_workspace_path(value) for value in os.environ.get("CODE_MAP_SAFE_SOURCE_ROOTS", str(ROOT / "demo-sources")).split(os.pathsep) if value)
+bp = Blueprint("graph_api", __name__, url_prefix=required_env("CODE_MAP_GRAPH_API_PREFIX"))
+DB_PATH = project_path("data", "code-flow-demo.sqlite")
+OUTPUT_ROOT = project_path("output")
+SOURCE_ROOT = required_absolute_path("CODE_MAP_SOURCE_ROOT")
+SAFE_SOURCE_ROOTS = (SOURCE_ROOT,)
 KNOWLEDGE_STATUSES = {"draft","pending","approved","rejected"}
 KNOWLEDGE_MAX_BYTES = 16_384
 SEMANTIC_MAX_BYTES = 4_096
-MAX_IMPORT_BODY_BYTES = int(os.environ.get("CODE_MAP_MAX_CONTENT_LENGTH", str(16 * 1024 * 1024)))
+MAX_IMPORT_BODY_BYTES = int(required_env("CODE_MAP_MAX_CONTENT_LENGTH"))
 FLOW_MODES = {"1","W","R","E"}
 WRITE_TERMINALS = {"INSERTS","UPDATES","DELETES","MERGES","WRITES"}
 READ_TERMINALS = {"READS","REMOTE_READS"}
@@ -660,7 +658,8 @@ def snippet():
     target_id = request.args.get("target_id", "") or request.args.get("edge_id", "")
     if not relative:
         return jsonify(_snippet_payload("invalid_source", None, None)), 403
-    path = (ROOT / relative).resolve()
+    candidates = [(root / relative).resolve() for root in SAFE_SOURCE_ROOTS]
+    path = next((candidate for candidate, root in zip(candidates, SAFE_SOURCE_ROOTS) if candidate.is_relative_to(root) and candidate.is_file()), None)
     with connection() as db:
         if target_id:
             evidence_row=db.execute("""
@@ -672,10 +671,12 @@ def snippet():
                 SELECT source_path,start_line,end_line FROM graph_evidence
                 WHERE source_path=? ORDER BY evidence_id LIMIT 1
             """,(relative,)).fetchone()
-    safe=any(path==root or root in path.parents for root in SAFE_SOURCE_ROOTS)
-    hidden=path.is_relative_to(ROOT) and any(part.startswith('.') for part in path.relative_to(ROOT).parts)
+    safe=path is not None and any(path==root or root in path.parents for root in SAFE_SOURCE_ROOTS)
+    containing_root=next((root for root in SAFE_SOURCE_ROOTS if path is not None and (path==root or root in path.parents)), None)
+    hidden=bool(containing_root) and any(part.startswith('.') for part in path.relative_to(containing_root).parts)
     if not evidence_row or not safe or hidden:
         return jsonify(_snippet_payload("invalid_source", relative, evidence_row)), 403
+    assert path is not None
     if path.suffix.lower() in {".db",".sqlite",".sqlite3",".env",".ini",".toml",".yaml",".yml",".json"}:
         return jsonify(_snippet_payload("invalid_source", relative, evidence_row)), 403
     if not path.exists() or not path.is_file():
@@ -716,7 +717,7 @@ def knowledge():
     """GET is public read-only; POST requires header-token auth, never cookies."""
     with connection() as db:
         if request.method == "POST":
-            token=os.environ.get("CODE_MAP_KNOWLEDGE_TOKEN","")
+            token=required_env("CODE_MAP_KNOWLEDGE_TOKEN")
             supplied=request.headers.get("X-Code-Map-Token","")
             if not token or not hmac.compare_digest(supplied,token): return error("forbidden","Knowledge token required",403)
             if not request.is_json or request.content_length is None or request.content_length>KNOWLEDGE_MAX_BYTES: return error("invalid_knowledge","Bounded JSON body required",415)
@@ -739,9 +740,9 @@ def validate_imports():
         from application.backend.importer import pipeline
         from application.backend.importer.package_validator import validate_package
 
-        input_root = _workspace_path(os.environ.get("CODE_MAP_INPUT_ROOT", "input-data"))
+        input_root = project_path("input-data")
         allowed_ids = pipeline.validation_ids(roots_or_response, input_root)
-        packages = [validate_package(root, allowed_ids, workspace_root=ROOT) for root in roots_or_response]
+        packages = [validate_package(root, allowed_ids, workspace_root=SOURCE_ROOT) for root in roots_or_response]
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return error("validation_failed", "Import package validation failed", 400, reason=_safe_error_text(exc))
     return jsonify({
@@ -758,8 +759,8 @@ def imports_create():
     try:
         from application.backend.importer import pipeline
 
-        input_root = _workspace_path(os.environ.get("CODE_MAP_INPUT_ROOT", "input-data"))
-        counts = pipeline.import_roots(roots_or_response, Path(_graph_db_path()), input_root=input_root)
+        input_root = project_path("input-data")
+        counts = pipeline.import_roots(roots_or_response, Path(_graph_db_path()), input_root=input_root, evidence_root=SOURCE_ROOT)
     except (OSError, ValueError, RuntimeError, sqlite3.Error, json.JSONDecodeError) as exc:
         return error("import_failed", "Import package execution failed", 400, reason=_safe_error_text(exc))
     return jsonify({"status":"imported","package_count":len(roots_or_response),"counts":counts}), 201
@@ -793,7 +794,7 @@ def _import_roots_from_request():
     for value in raw_roots:
         root = _local_package_root(value)
         if root is None:
-            return error("invalid_path", "Package paths must be local workspace-relative directories")
+            return error("invalid_path", "Package paths must be absolute directories under the configured project output directory")
         roots.append(root)
     roots = list(dict.fromkeys(roots))
     if not roots:
@@ -805,12 +806,10 @@ def _local_package_root(value: object) -> Path | None:
     if not text:
         return None
     raw = Path(text).expanduser()
-    path = raw.resolve() if raw.is_absolute() else (ROOT / raw).resolve()
-    try:
-        path.relative_to(ROOT)
-    except ValueError:
+    if not raw.is_absolute():
         return None
-    return path if path.is_dir() else None
+    path = raw.resolve()
+    return path if path.is_relative_to(OUTPUT_ROOT) and path.is_dir() else None
 
 def _package_summary(package: dict[str, object], root: Path) -> dict[str, object]:
     manifest = dict(package.get("manifest") or {})
@@ -823,14 +822,11 @@ def _package_summary(package: dict[str, object], root: Path) -> dict[str, object
     }
 
 def _repo_relative(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(ROOT).as_posix()
-    except (OSError, ValueError):
-        return path.name
+    return path.resolve().relative_to(OUTPUT_ROOT).as_posix()
 
 def _safe_error_text(exc: BaseException) -> str:
     text = str(exc) or exc.__class__.__name__
-    text = text.replace(str(ROOT), "<workspace>")
+    text = text.replace(str(OUTPUT_ROOT), "<output-root>")
     return re.sub(r"/[^\s:'\"]+", "<path>", text)
 
 @bp.get("/imports")

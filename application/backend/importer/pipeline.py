@@ -918,7 +918,7 @@ def _terminal_mode(edge_type: str) -> str:
         return "W"
     return ""
 
-def authoritative_ids(input_root: Path = Path("input-data")) -> set[str]:
+def authoritative_ids(input_root: Path) -> set[str]:
     external=set()
     for table, columns in _table_catalog(input_root):
         database=normalize_oracle_identifier(table['database']); table_code=normalize_oracle_identifier(table['table_code'])
@@ -929,13 +929,13 @@ def authoritative_ids(input_root: Path = Path("input-data")) -> set[str]:
         external.add(f"job:batch-system:{row['jobnet_id']}:{row['job_id']}")
     return external
 
-def validation_ids(roots: Iterable[Path], input_root: Path = Path("input-data")) -> set[str]:
+def validation_ids(roots: Iterable[Path], input_root: Path) -> set[str]:
     external=authoritative_ids(input_root)
     for root in roots:
         external.update(row["node_id"] for row in _read(root/"nodes.csv"))
     return external
 
-def import_roots(roots: Iterable[Path], db_path: Path, input_root: Path = Path("input-data")) -> dict[str,int]:
+def import_roots(roots: Iterable[Path], db_path: Path, input_root: Path, evidence_root: Path) -> dict[str,int]:
     packages=list(roots)
     # Validation is complete before opening/publishing, preserving the live DB on corrupt input.
     allowed_ids=validation_ids(packages,input_root)
@@ -943,7 +943,7 @@ def import_roots(roots: Iterable[Path], db_path: Path, input_root: Path = Path("
         with closing(sqlite3.connect(db_path)) as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_nodes'").fetchone():
                 allowed_ids.update(row[0] for row in db.execute("SELECT node_id FROM graph_nodes"))
-    validated=[validate_package(root,allowed_ids) for root in packages]
+    validated=[validate_package(root,allowed_ids,workspace_root=evidence_root) for root in packages]
     db_path.parent.mkdir(parents=True,exist_ok=True)
     with closing(sqlite3.connect(db_path)) as db:
         initialize(db)

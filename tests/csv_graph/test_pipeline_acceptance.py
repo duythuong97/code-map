@@ -83,7 +83,7 @@ class PipelineAcceptance(unittest.TestCase):
     def setUp(self):
         self.maxDiff=None
         self.tmp=tempfile.TemporaryDirectory(); self.db=Path(self.tmp.name)/"graph.sqlite"
-        self.counts=import_roots(PACKAGES,self.db,ROOT/"input-data")
+        self.counts=import_roots(PACKAGES,self.db,ROOT/"input-data",ROOT)
         self.conn=sqlite3.connect(self.db)
         self.conn.row_factory=sqlite3.Row
     def tearDown(self): self.conn.close(); self.tmp.cleanup()
@@ -239,12 +239,12 @@ class PipelineAcceptance(unittest.TestCase):
         before_sources=self._source_rows()
         bad=Path(self.tmp.name)/"bad"; shutil.copytree(PACKAGES[0],bad)
         (bad/'nodes.csv').write_text('corrupt',encoding='utf-8')
-        with self.assertRaises(ValueError): import_roots([bad],self.db,ROOT/'input-data')
+        with self.assertRaises(ValueError): import_roots([bad],self.db,ROOT/'input-data',ROOT)
         self._reopen()
         self.assertEqual(before_counts,self._table_counts())
         self.assertEqual(before_sources,self._source_rows())
     def test_uc_32_reimport_idempotent(self):
-        before=dict(self.counts); after=import_roots(PACKAGES,self.db,ROOT/'input-data')
+        before=dict(self.counts); after=import_roots(PACKAGES,self.db,ROOT/'input-data',ROOT)
         self.assertEqual(before,after)
     def test_uc_32_source_replacement_preserves_other_source_evidence(self):
         before_node_sources=self._source_counts('graph_nodes')
@@ -258,7 +258,7 @@ class PipelineAcceptance(unittest.TestCase):
         self.assertTrue(self.conn.execute("SELECT 1 FROM graph_issues WHERE issue_id='issue:table-not-imported:1'").fetchone())
         replacement=Path(self.tmp.name)/"order-api-replacement"
         _write_minimal_order_api_replacement(replacement)
-        import_roots([replacement],self.db,ROOT/'input-data')
+        import_roots([replacement],self.db,ROOT/'input-data',ROOT)
         self._reopen()
         self.assertFalse(self.conn.execute("SELECT 1 FROM graph_nodes WHERE node_id='dotnet-solution:order-api:OrderApi.sln'").fetchone())
         self.assertFalse(self.conn.execute("SELECT 1 FROM graph_edges WHERE edge_id='edge:aeedbc3e29fc793b7cac7b577bff9baad9d892b8d88c97ca995bfd854988f339'").fetchone())
@@ -290,7 +290,7 @@ class PipelineAcceptance(unittest.TestCase):
 class GraphApiAcceptance(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.db=Path(self.tmp.name)/"api.sqlite"
-        import_roots(PACKAGES,self.db,ROOT/"input-data")
+        import_roots(PACKAGES,self.db,ROOT/"input-data",ROOT)
         os.environ["CODE_MAP_KNOWLEDGE_TOKEN"]="test-token"
         from application.backend.api import graph_routes
         graph_routes.DB_PATH=self.db
