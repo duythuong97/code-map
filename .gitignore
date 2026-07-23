@@ -17,11 +17,13 @@ htmlcov/
 *.sqlite
 *.sqlite3
 
-# Node / webapp
+# Node / frontend
 node_modules/
-webapp/node_modules/
-webapp/dist/
-webapp/.vite/
+application/frontend/node_modules/
+application/frontend/dist/
+application/frontend/.vite/
+extractors/**/bin/
+extractors/**/obj/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -34,9 +36,10 @@ pnpm-debug.log*
 
 # OS / editor
 .DS_Store
-.vscode/
+.vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+!.vscode/tasks.json
 .idea/
 
 # Logs / temp

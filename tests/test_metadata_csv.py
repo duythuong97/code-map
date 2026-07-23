@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from extractors.import_csv import parse_metadata_facts
+from application.backend.importer.import_csv import parse_metadata_facts
 
 
 class MetadataCsvParserTest(unittest.TestCase):

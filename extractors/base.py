@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from db.entities import ExtractionContext, ExtractionResult
+from contract.entities import ExtractionContext, ExtractionResult
 
 
 class BaseExtractor(ABC):

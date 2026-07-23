@@ -1,0 +1,3 @@
+issue_id,issue_type,severity,source_node_id,raw_reference,database_key,source_path,start_line,message,properties_json
+issue:749661eda6b45253e49d00bf,INVALID_CONFIG,ERROR,sql-file:order-ops:demo-sources/order-ops/reconcile_orders.sql,missing database mapping,ORDER_DB,demo-sources/order-ops/reconcile_orders.sql,1,SQL file contains unresolved or invalid configuration marker,{}
+issue:bb760cf9e7d4ca5771e629ef,PARSE_ERROR,ERROR,sql-file:order-ops:demo-sources/order-ops/reconcile_orders.sql,SELECT FROM WHERE MALFORMED;,ORDER_DB,demo-sources/order-ops/reconcile_orders.sql,31,SQL parser rejected this statement,{}

@@ -1,0 +1,138 @@
+{
+  "normalizer": "csv-normalizer",
+  "version": "1.0.0",
+  "contractVersion": "1.0",
+  "sourceId": "authoritative-csv-demo",
+  "createdAt": "2026-07-22T21:49:55.879543Z",
+  "files": {
+    "tables.csv": {
+      "rows": 11,
+      "sha256": "f6ffb3aa36cd2db7462f14ad29c4e0b0ce3377e2dcb7817047a9db437c719bea",
+      "bytes": 677,
+      "sourcePath": "input-data/tables.csv",
+      "sourceSha256": "f6ffb3aa36cd2db7462f14ad29c4e0b0ce3377e2dcb7817047a9db437c719bea",
+      "sourceBytes": 677,
+      "stableIdCount": 50
+    },
+    "jobnet.csv": {
+      "rows": 4,
+      "sha256": "e9fc2893f8f56ec0613da47e7cf37f61d145c2bb67f5569198b6c31e45794e6c",
+      "bytes": 515,
+      "sourcePath": "input-data/jobnet.csv",
+      "sourceSha256": "e9fc2893f8f56ec0613da47e7cf37f61d145c2bb67f5569198b6c31e45794e6c",
+      "sourceBytes": 515,
+      "stableIdCount": 5
+    },
+    "executable-mappings.csv": {
+      "rows": 2,
+      "sha256": "87af664fef7ac5ffe18548872967702cd59ec76aa03205667e049be466a23510",
+      "bytes": 242,
+      "sourcePath": "input-data/executable-mappings.csv",
+      "sourceSha256": "f9541e427f3b0e606a1cc4299f146e150826663bfa0a6e1825b6f8fe11b7d78c",
+      "sourceBytes": 241,
+      "stableIdCount": 2
+    },
+    "localized-metadata.csv": {
+      "rows": 2,
+      "sha256": "04a6f8107d248c27babd4fc46e6df82567b843176ebf30d122f30cd1d54748c5",
+      "bytes": 346,
+      "sourcePath": "input-data/localized-metadata.csv",
+      "sourceSha256": "77d6f2ab1c28d952a8ed57d72e19a350e999eeabe44705d32859fdb1b9c2a1c7",
+      "sourceBytes": 346,
+      "stableIdCount": 2
+    },
+    "semantic-dictionary.csv": {
+      "rows": 10,
+      "sha256": "83dd05a766c6a64a7a14108b3623bb3f2b5b2f6448a544e458573b7428960ff1",
+      "bytes": 1614,
+      "sourcePath": "input-data/semantic-dictionary.csv",
+      "sourceSha256": "eaf3eba6170ef4b9d69df92d5a98acc60cad224fbd257a856dafded96ae85f00",
+      "sourceBytes": 1614,
+      "stableIdCount": 5
+    }
+  },
+  "stableIds": {
+    "tables.csv": [
+      "column:ORDER_DB:BACKORDER:BACKORDER_ID",
+      "column:ORDER_DB:BACKORDER:ORDER_ID",
+      "column:ORDER_DB:BACKORDER:QUANTITY",
+      "column:ORDER_DB:FULFILLMENT_ALLOCATION:ALLOCATION_ID",
+      "column:ORDER_DB:FULFILLMENT_ALLOCATION:ORDER_ID",
+      "column:ORDER_DB:FULFILLMENT_ALLOCATION:STATUS",
+      "column:ORDER_DB:INVENTORY_RESERVATION:ORDER_ID",
+      "column:ORDER_DB:INVENTORY_RESERVATION:PRODUCT_ID",
+      "column:ORDER_DB:INVENTORY_RESERVATION:QUANTITY",
+      "column:ORDER_DB:INVENTORY_RESERVATION:RESERVATION_ID",
+      "column:ORDER_DB:INVENTORY_RESERVATION:STATUS",
+      "column:ORDER_DB:ORDER_DAILY_SUMMARY:ORDER_COUNT",
+      "column:ORDER_DB:ORDER_DAILY_SUMMARY:SUMMARY_DATE",
+      "column:ORDER_DB:ORDER_HEADER:CREATED_AT",
+      "column:ORDER_DB:ORDER_HEADER:CUSTOMER_ID",
+      "column:ORDER_DB:ORDER_HEADER:ORDER_ID",
+      "column:ORDER_DB:ORDER_HEADER:STATUS",
+      "column:ORDER_DB:ORDER_HEADER:TOTAL_AMOUNT",
+      "column:ORDER_DB:ORDER_LINE:ORDER_ID",
+      "column:ORDER_DB:ORDER_LINE:ORDER_LINE_ID",
+      "column:ORDER_DB:ORDER_LINE:PRODUCT_ID",
+      "column:ORDER_DB:ORDER_LINE:QUANTITY",
+      "column:ORDER_DB:ORDER_LINE:UNIT_PRICE",
+      "column:ORDER_DB:ORDER_STAGING_LINES:CUSTOMER_ID",
+      "column:ORDER_DB:ORDER_STAGING_LINES:PRODUCT_ID",
+      "column:ORDER_DB:ORDER_STAGING_LINES:QUANTITY",
+      "column:ORDER_DB:ORDER_STAGING_LINES:UNIT_PRICE",
+      "column:ORDER_DB:PAYMENT_TRANSACTION:AMOUNT",
+      "column:ORDER_DB:PAYMENT_TRANSACTION:ORDER_ID",
+      "column:ORDER_DB:PAYMENT_TRANSACTION:PAYMENT_ID",
+      "column:ORDER_DB:PAYMENT_TRANSACTION:STATUS",
+      "column:ORDER_DB:SHIPMENT:ORDER_ID",
+      "column:ORDER_DB:SHIPMENT:SHIPMENT_ID",
+      "column:ORDER_DB:SHIPMENT:STATUS",
+      "column:ORDER_DB:SHIPMENT_AUDIT:AUDIT_ID",
+      "column:ORDER_DB:SHIPMENT_AUDIT:SHIPMENT_ID",
+      "column:ORDER_DB:SHIPMENT_AUDIT:STATUS",
+      "column:ORDER_DB:SHIPMENT_PACKAGE:PACKAGE_ID",
+      "column:ORDER_DB:SHIPMENT_PACKAGE:SHIPMENT_ID",
+      "table:ORDER_DB:BACKORDER",
+      "table:ORDER_DB:FULFILLMENT_ALLOCATION",
+      "table:ORDER_DB:INVENTORY_RESERVATION",
+      "table:ORDER_DB:ORDER_DAILY_SUMMARY",
+      "table:ORDER_DB:ORDER_HEADER",
+      "table:ORDER_DB:ORDER_LINE",
+      "table:ORDER_DB:ORDER_STAGING_LINES",
+      "table:ORDER_DB:PAYMENT_TRANSACTION",
+      "table:ORDER_DB:SHIPMENT",
+      "table:ORDER_DB:SHIPMENT_AUDIT",
+      "table:ORDER_DB:SHIPMENT_PACKAGE"
+    ],
+    "jobnet.csv": [
+      "job-network:batch-system:ORDER_DAILY",
+      "job:batch-system:ORDER_DAILY:ALLOCATE_ORDERS",
+      "job:batch-system:ORDER_DAILY:CREATE_SHIPMENTS",
+      "job:batch-system:ORDER_DAILY:RECONCILE_ORDERS",
+      "job:batch-system:ORDER_DAILY:UNMAPPED_EXPORT"
+    ],
+    "executable-mappings.csv": [
+      "executable-mapping:batch-system:batch-system:orderfulfillment.exe",
+      "executable-mapping:batch-system:batch-system:orderreconcile.exe"
+    ],
+    "localized-metadata.csv": [
+      "column:ORDER_DB:ORDER_HEADER:STATUS",
+      "table:ORDER_DB:ORDER_HEADER"
+    ],
+    "semantic-dictionary.csv": [
+      "semantic:orders:allocate-order",
+      "semantic:orders:cancel-order",
+      "semantic:orders:create-order",
+      "semantic:orders:order-header",
+      "semantic:orders:order-status"
+    ]
+  },
+  "totals": {
+    "files": 5,
+    "presentFiles": 5,
+    "rows": 29,
+    "stableIds": 64,
+    "issues": 0
+  },
+  "issues": []
+}

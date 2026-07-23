@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from db import schema as S
-from db.entities import ExtractionContext, ExtractionResult
-from extractors.csharp_sql import CSharpSqlExtractor
-from extractors.sql_references import extract_sql_calls, extract_sql_references, looks_like_sql
-from extractors.xml_sql import XmlSqlExtractor
+from contract import schema as S
+from contract.entities import ExtractionContext, ExtractionResult
+from extractors.csharp_sql.extractor import CSharpSqlExtractor
+from extractors.sql.references import extract_sql_calls, extract_sql_references, looks_like_sql
+from extractors.xml_sql.extractor import XmlSqlExtractor
 
 
 XML_CONTEXT = ExtractionContext(

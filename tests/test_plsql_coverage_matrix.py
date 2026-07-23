@@ -1,11 +1,10 @@
 import unittest
 
-from extractors.oracle_plsql import OraclePlSqlExtractor
-from extractors.oracle_plsql_antlr_calls import OraclePlSqlAntlrCallExtractor
-from extractors.oracle_plsql_lineage import OraclePlSqlLineageExtractor
-from extractors.run_extract import build_extractors
-from db import schema as S
-from db.entities import ExtractionContext, ExtractionResult
+from extractors.oracle_plsql.extractor import OraclePlSqlExtractor
+from extractors.oracle_plsql.antlr_calls import OraclePlSqlAntlrCallExtractor
+from extractors.oracle_plsql.lineage import OraclePlSqlLineageExtractor
+from contract import schema as S
+from contract.entities import ExtractionContext, ExtractionResult
 
 CTX = ExtractionContext(
     repository="repo",
@@ -238,15 +237,6 @@ CASES = [
 
 
 class OraclePlSqlCoverageMatrixTest(unittest.TestCase):
-    def test_antlr_call_extractor_is_config_gated(self):
-        self.assertFalse(any(isinstance(e, OraclePlSqlAntlrCallExtractor) for e in build_extractors({})))
-        self.assertTrue(
-            any(
-                isinstance(e, OraclePlSqlAntlrCallExtractor)
-                for e in build_extractors({"features": {"antlr_plsql_calls": True}})
-            )
-        )
-
     def test_current_plsql_feature_coverage_matrix(self):
         covered = 0
         unexpected = []

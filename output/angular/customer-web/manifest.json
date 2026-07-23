@@ -1,0 +1,59 @@
+{
+  "contractVersion": "1.0",
+  "extractor": {
+    "name": "angular-extractor",
+    "version": "2.0.0"
+  },
+  "source": {
+    "sourceKey": "extractor:angular/customer-web",
+    "repositoryKey": "customer-web"
+  },
+  "generatedAt": "2026-07-22T22:53:38.385Z",
+  "files": {
+    "nodes": "nodes.csv",
+    "edges": "edges.csv",
+    "evidence": "evidence.csv",
+    "issues": "issues.csv"
+  },
+  "statistics": {
+    "filesScanned": 1,
+    "nodes": 16,
+    "edges": 14,
+    "evidence": 7,
+    "issues": 3
+  },
+  "checksums": {
+    "nodes.csv": {
+      "sha256": "55e343688999a7048a086a7ee7cfc1aec344b60094a61f11c220dd8af1081f43",
+      "bytes": 5699
+    },
+    "edges.csv": {
+      "sha256": "1864aecf4b1260e74290240763eee71536bf62435c5b7cc4a0c22cfd3c60cc43",
+      "bytes": 2579
+    },
+    "evidence.csv": {
+      "sha256": "3f301ebd06bf727e5499266d779e08010009cb5b7a94a8600ead2aa49210b410",
+      "bytes": 1976
+    },
+    "issues.csv": {
+      "sha256": "e460dac53be62bf9ed2fd9b51f0988ab617990671c1a7d2cbb59b37ca132f578",
+      "bytes": 717
+    }
+  },
+  "metadata": {
+    "source": "customer-web",
+    "repository": "customer-web",
+    "technology": "Node.js TypeScript Compiler API",
+    "parser": "typescript.createSourceFile",
+    "angularJson": "angular.json",
+    "angularProject": "customer-web",
+    "tsconfig": "tsconfig.app.json",
+    "folders": [
+      "src/app"
+    ],
+    "exclusions": [
+      "src/**/*.spec.ts",
+      "src/**/*.test.ts"
+    ]
+  }
+}

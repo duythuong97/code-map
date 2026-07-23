@@ -1,0 +1,8 @@
+{
+  "type": "dotnet-batch",
+  "source": "order-fulfillment",
+  "database": "ORDER_DB",
+  "executables": ["orderfulfillment.exe", "orderreconcile.exe"],
+  "root": "${SOURCE_ROOT}/order-fulfillment",
+  "output": "${OUTPUT_ROOT}/batch/order-fulfillment"
+}

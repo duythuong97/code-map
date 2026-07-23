@@ -1,0 +1,15 @@
+edge_id,source_node_id,target_node_id,edge_type,graph_layer,raw_operation,confidence,properties_json
+edge:1aa8cd5299e155abe2f1a15b028bf261a68501d9978ffbbed858fd5df91ebd02,angular-service:customer-web:order,api-call:customer-web:PATCH:/order-api/api/orders/{id}/status,CALLS,TECHNICAL,,1,{}
+edge:23741a5eb9b6f553ccdb4fee65a073be1eb6269f499bb5e6659b1085bc5d288c,angular-service:customer-web:order,api-call:customer-web:POST:/order-api/api/shipments/{id}/confirm,CALLS,TECHNICAL,,1,{}
+edge:2a9c0028f2ab4a5aaa58c48df4c46f47c5dba39de3b47ce918f441505678adca,ui-action:customer-web:submitorder,api-call:customer-web:POST:/order-api/api/orders,CALLS,TECHNICAL,,1,{}
+edge:489ef012d7f8a2cfd7587ddefaa466a6b55b254e6d7ff69f489e1adc0994fbb5,angular-service:customer-web:order,api-call:customer-web:GET:/order-api/api/orders/{id},CALLS,TECHNICAL,,1,{}
+edge:4c4e4120ee2f284de0a025a0f7c6a1610ff41142e15d8b5d7eac8590036def2f,angular-service:customer-web:order,api-call:customer-web:POST:/order-api/api/orders,CALLS,TECHNICAL,,1,{}
+edge:4cff9bc2663aed6ff89a71d541355b7b5f857fa45bbffc04c9f439b710575421,angular-project:customer-web:customer-web,screen:customer-web:/orders/{id},CONTAINS,STRUCTURAL,,1,{}
+edge:6c3b5cbebdfb3ba0a3251bbe7bef66ab153b2d5009b48fedbefa2f6ec427b961,screen:customer-web:/orders/new,angular-component:customer-web:createorder,BELONGS_TO,TECHNICAL,,1,{}
+edge:7405a072519657a7b4ad0c23807bdcf16940ae614a6f9677c8d3e0beb10e489c,angular-service:customer-web:order,api-call:customer-web:DELETE:/order-api/api/orders/{id},CALLS,TECHNICAL,,1,{}
+edge:817997d868f186d496777c5459d05d8ffd211508395c41299d7e3fa046341c91,angular-project:customer-web:customer-web,screen:customer-web:/shipments/{id},CONTAINS,STRUCTURAL,,1,{}
+edge:8650fc9397563a6c33e1603235a1a7865649ace9ddc21399f11b5e4642f82eed,screen:customer-web:/orders/new,ui-action:customer-web:submitorder,CONTAINS,STRUCTURAL,,1,{}
+edge:c391c7a9240e3783fdc3ab48057542d39f9efd477762053c71bb577647fe2182,screen:customer-web:/orders/{id},angular-component:customer-web:orderdetail,BELONGS_TO,TECHNICAL,,1,{}
+edge:cd80255e92f230f964d044053e31d69d8705534c7b008bda60e2f7ae0bc517d7,screen:customer-web:/shipments/{id},angular-component:customer-web:shipmentpage,BELONGS_TO,TECHNICAL,,1,{}
+edge:f2d927d71cdba68f897cda05fef0c892b487b438894d1de493925e45beb70191,angular-project:customer-web:customer-web,screen:customer-web:/orders/new,CONTAINS,STRUCTURAL,,1,{}
+edge:f840d3ec43b014db023299448d2672c1ebb4a300d0e613e4fd9c4486adcd7a73,angular-service:customer-web:order,api-call:customer-web:POST:/order-api/api/orders/retry,CALLS,TECHNICAL,,1,{}

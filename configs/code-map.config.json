@@ -1,0 +1,10 @@
+{
+  "db": "../data/code-flow-demo.sqlite",
+  "api": {
+    "url_prefix": "/code-map",
+    "host": "127.0.0.1",
+    "port": 8000,
+    "python_no_site": true,
+    "log_path": "../logs/backend.log"
+  }
+}

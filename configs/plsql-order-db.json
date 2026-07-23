@@ -1,0 +1,10 @@
+{
+  "type": "oracle-plsql",
+  "source": "order-db",
+  "system": "order-db",
+  "database": "ORDER_DB",
+  "schema": "ORDER_APP",
+  "root": "${SOURCE_ROOT}/order-db",
+  "output": "${OUTPUT_ROOT}/plsql/order-db",
+  "localRoutines": ["VALIDATE_LINES"]
+}

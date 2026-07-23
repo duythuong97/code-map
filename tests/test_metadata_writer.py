@@ -1,13 +1,13 @@
 import sqlite3
 import unittest
 
-from db.writer import (
+from application.backend.database.writer import (
     MetadataFact,
     delete_file_result,
     ensure_db_schema,
     replace_metadata_file,
 )
-from extractors.state import acquire_lease, begin_run, get_or_create_file
+from application.backend.database.state import acquire_lease, begin_run, get_or_create_file
 
 
 class MetadataWriterTest(unittest.TestCase):
@@ -157,7 +157,7 @@ class MetadataWriterTest(unittest.TestCase):
                     mtime_ns=2,
                     sha256="changed",
                     rule_context_hash="changed",
-                    handler_version="metadata-v2",
+                    handler_version="metadata-writer",
                 )
         after = self.db.execute(
             "SELECT name_en FROM table_definitions WHERE id='DB:HR.EMPLOYEE'"

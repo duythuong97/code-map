@@ -1,0 +1,8 @@
+{
+  "type": "sql-files",
+  "source": "order-ops",
+  "system": "order-ops",
+  "database": "ORDER_DB",
+  "root": "${SOURCE_ROOT}/order-ops",
+  "output": "${OUTPUT_ROOT}/sql-files/order-ops"
+}

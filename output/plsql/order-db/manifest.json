@@ -1,0 +1,48 @@
+{
+  "contractVersion": "1.0",
+  "extractor": {
+    "name": "plsql-extractor",
+    "version": "1.0.0"
+  },
+  "source": {
+    "sourceKey": "extractor:plsql/order-db",
+    "repositoryKey": "order-db"
+  },
+  "generatedAt": "2026-07-22T23:18:26.213706Z",
+  "files": {
+    "nodes": "nodes.csv",
+    "edges": "edges.csv",
+    "evidence": "evidence.csv",
+    "issues": "issues.csv"
+  },
+  "statistics": {
+    "filesScanned": 1,
+    "nodes": 63,
+    "edges": 120,
+    "evidence": 112,
+    "issues": 2
+  },
+  "checksums": {
+    "nodes.csv": {
+      "sha256": "74fafd907f7201ddb000fc1733fc6f55e2d8720cee8255126403bb95e6777a4a",
+      "bytes": 20849
+    },
+    "edges.csv": {
+      "sha256": "6b74a4965171e885222fcf18c14ce58b25b7698cf183688a448ca2441b482be0",
+      "bytes": 43147
+    },
+    "evidence.csv": {
+      "sha256": "b06f8e5fc4620ecba4bd19708053a96478117d03913545a06b9a10d8fed251a4",
+      "bytes": 29361
+    },
+    "issues.csv": {
+      "sha256": "7dcd7f82383662647ab00768ea4a7ed2f1be5492de1d6a2686cf9b5abc797b87",
+      "bytes": 581
+    }
+  },
+  "metadata": {
+    "source": "order-db",
+    "technology": "Python + ANTLR4 runtime Oracle PL/SQL parser",
+    "parser": "extractors.package_support.oracle_parser.OraclePlsqlParser"
+  }
+}

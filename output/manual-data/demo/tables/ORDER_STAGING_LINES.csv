@@ -1,0 +1,5 @@
+column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
+CUSTOMER_ID,顧客ID,Customer ID,1,NUMBER,false,,
+PRODUCT_ID,商品ID,Product ID,2,NUMBER,false,,
+QUANTITY,数量,Quantity,3,NUMBER,false,,
+UNIT_PRICE,単価,Unit Price,4,NUMBER,false,,

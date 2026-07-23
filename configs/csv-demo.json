@@ -1,0 +1,6 @@
+{
+  "type": "csv-normalizer",
+  "source": "authoritative-csv-demo",
+  "root": "${WORKSPACE_ROOT}/input-data",
+  "output": "${WORKSPACE_ROOT}/output/manual-data/demo"
+}

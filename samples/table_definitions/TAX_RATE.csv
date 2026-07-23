@@ -1,5 +1,0 @@
-schema_name,column_code,column_name_ja,column_name_en,column_description,comment
-FIN,COUNTRY_CODE,国コード,Country code,Tax country code,Accessed through fin_dblink
-FIN,MIN_INCOME,最小所得,Minimum income,Tax bracket lower bound,Accessed through fin_dblink
-FIN,MAX_INCOME,最大所得,Maximum income,Tax bracket upper bound,Accessed through fin_dblink
-FIN,RATE,税率,Rate,Tax rate,Accessed through fin_dblink

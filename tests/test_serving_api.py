@@ -8,9 +8,9 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-import api.app as serving
-from db.writer import ensure_db_schema
-from extractors.state import ensure_state_schema
+import application.backend.api.app as serving
+from application.backend.database.writer import ensure_db_schema
+from application.backend.database.state import ensure_state_schema
 
 
 SOURCE = "SourceFile:source-a:src/pkg.pkb"
@@ -221,7 +221,10 @@ class ServingApiTest(unittest.TestCase):
         outside = self.base / "outside"
         outside.mkdir()
         (outside / "secret.sql").write_text("secret", encoding="utf-8")
-        (self.root_a / "escape").symlink_to(outside, target_is_directory=True)
+        try:
+            (self.root_a / "escape").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"directory symlink unavailable: {exc}")
         cases = (("/private/secret.sql", "invalid_source"), ("../secret.sql", "invalid_source"), ("escape/secret.sql", "invalid_source"), ("missing.sql", "not_found"))
         for index, (source_path, expected) in enumerate(cases):
             relation = f"SECURITY_{index}"
@@ -236,7 +239,7 @@ class ServingApiTest(unittest.TestCase):
         unreadable_path = self.root_a / "unreadable.sql"
         unreadable_path.write_text("private", encoding="utf-8")
         occurrence_id = self._insert_occurrence("UNREADABLE", "unreadable.sql")
-        with patch("api.app.os.access", return_value=False):
+        with patch("application.backend.api.app.os.access", return_value=False):
             payload = self.get_json(
                 f"/api/snippet?from_qname={SOURCE}&to_qname={TABLE}&rel_type=UNREADABLE&occurrence_id={occurrence_id}"
             )

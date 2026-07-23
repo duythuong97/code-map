@@ -1,0 +1,6 @@
+column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
+ORDER_ID,注文ID,Order ID,1,NUMBER,false,,
+CUSTOMER_ID,顧客ID,Customer ID,2,NUMBER,false,,
+STATUS,ステータス,Status,3,VARCHAR2,true,,
+TOTAL_AMOUNT,合計金額,Total Amount,4,NUMBER,true,,
+CREATED_AT,作成日時,Created At,5,TIMESTAMP,false,,

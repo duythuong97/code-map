@@ -1,0 +1,22 @@
+{
+  "type": "angular",
+  "source": "customer-web",
+  "root": "${SOURCE_ROOT}/customer-web",
+  "folders": ["src/app"],
+  "appConfig": "src/assets/appconfig.json",
+  "output": "${OUTPUT_ROOT}/angular/customer-web",
+  "routeChecks": [
+    {
+      "issueType": "API_ROUTE_NOT_MATCHED",
+      "severity": "WARNING",
+      "message": "Legacy route is not matched by any extracted API operation",
+      "rawReference": "/legacy/orders"
+    },
+    {
+      "issueType": "API_ROUTE_AMBIGUOUS",
+      "severity": "WARNING",
+      "message": "Route may match multiple API operations",
+      "rawReference": "GET /api/orders/{id}"
+    }
+  ]
+}

@@ -1,171 +1,119 @@
-# Code Map
+# Code Map — chạy demo
 
-Code Map quét Oracle PL/SQL, XML SQL và SQL nhúng trong C# qua EF/Dapper/ADO.NET; import metadata bảng/cột; lưu graph/lineage vào SQLite; phục vụ qua Flask API + React UI.
+Pipeline đọc code trong `demo-sources/`, tạo CSV graph trong `output/`, rồi insert vào SQLite.
 
-## Cài đặt
+Config nằm trực tiếp trong `configs/`:
+
+- Sáu file `*-*.json` cấu hình standalone extractors, có trường `type`.
+- `code-map.config.json` chỉ cấu hình backend API và SQLite.
+
+## 1. Cài dependency
+
+Yêu cầu: Python 3, Node.js, .NET SDK.
+
+macOS:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cd webapp && npm install && npm run build && cd ..
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-## Cấu hình
+Windows PowerShell:
 
-Project dùng một file `code-map.config.json`:
-
-- `db`: SQLite DB.
-- `api`: Flask/PM2/UI runtime.
-- `imports.csv`: metadata imports độc lập theo DB/schema/encoding/priority.
-- `extractors.sources`: source roots, stable ID, repo, DB/schema, exclusions, rules.
-- `extractors.state`: lease, heartbeat, rotating log.
-
-Rule extractor/owner hợp lệ:
-
-- `oracle_plsql` + `callable_or_file`.
-- `xml_sql` + `file`.
-- `csharp_sql` + `repository_or_project`.
-
-C# map mỗi file tới `.csproj` gần nhất. Class `*Repository`/`*Dao` tạo owner `Repository`; class khác tạo owner `Application`. XML luôn tạo owner `SourceFile`.
-
-Ví dụ rút gọn:
-
-```json
-{
-  "db": "code_map.db",
-  "imports": {
-    "csv": [{
-      "id": "hr-metadata",
-      "path": "metadata/hr",
-      "kind": "table_definitions",
-      "db_name": "OracleHRDB",
-      "schema": "HR",
-      "encoding": "utf-8",
-      "priority": 0
-    }]
-  },
-  "extractors": {
-    "state": {
-      "log_path": "logs/extraction.log",
-      "log_max_bytes": 10485760,
-      "log_backups": 5
-    },
-    "sources": [{
-      "id": "business-source",
-      "path": "src",
-      "repo": "business",
-      "db_name": "OracleHRDB",
-      "schema": "HR",
-      "priority": 0,
-      "exclude": ["**/bin/**", "**/obj/**", "**/.git/**"],
-      "rules": [
-        {"patterns": ["**/*.pkb", "**/*.sql"], "extractor": "oracle_plsql", "owner": "callable_or_file"},
-        {"patterns": ["**/*.xml"], "extractor": "xml_sql", "owner": "file"},
-        {"patterns": ["**/*.cs"], "extractor": "csharp_sql", "owner": "repository_or_project"}
-      ]
-    }]
-  }
-}
+```powershell
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`extractors.reset`, `table_definitions_path`, source/import ID trùng, import roots overlap, rule không hợp lệ đều bị từ chối trước khi mở DB.
+## 2. CSV nằm ở đâu?
 
-## Unified pipeline
+CSV có hai nhóm:
 
-Metadata luôn chạy trước source trong cùng một run/lease:
+```text
+input-data/                         # CSV nhập thủ công
+  tables.csv                        # registry table authoritative
+  tables/                           # mỗi table là một file columns
+    ORDER_HEADER.csv
+    ORDER_LINE.csv
+    BACKORDER.csv
+  jobnet.csv                        # job + thứ tự chạy
+  executable-mappings.csv           # map job sang executable
+  localized-metadata.csv            # metadata bổ sung
 
-```bash
-.venv/bin/python -m extractors.run_all --config code-map.config.json
+output/<loại>/<source>/             # CSV do extractor sinh
+  manifest.json
+  nodes.csv
+  edges.csv
+  evidence.csv
+  issues.csv
 ```
 
-Mặc định incremental:
-
-- `stat()` fast path; không đọc file không đổi.
-- SHA-256 xác nhận content khi stat/context thay đổi.
-- File thành công commit facts + projection trong một transaction.
-- File lỗi giữ facts/fingerprint tốt gần nhất; run sau retry.
-- Full scan chỉ cleanup file thực sự mất sau khi scan source thành công.
-- Một writer được bảo vệ bởi lease + fencing token + heartbeat.
-
-Buộc parse lại file được discover, không truncate DB:
-
-```bash
-.venv/bin/python -m extractors.run_all --config code-map.config.json --rebuild
-```
-
-Incremental theo Git name-status manifest (`A`, `M`, `D`):
-
-```bash
-.venv/bin/python -m extractors.run_all --config code-map.config.json --files-from changed-files.txt
-```
-
-Theo dõi:
-
-- Rotating log tại `extractors.state.log_path`.
-- Run/status/counters/current file tại `extraction_runs`.
-- Work/error/delete attempts tại `extraction_run_files`.
-- Latest fingerprint/error tại `extraction_files`.
-
-## Bootstrap v2 an toàn
-
-Build full staging sibling, validate integrity/projections/API-read queries, checkpoint WAL, xuất `<db>.v2.ready`:
-
-```bash
-.venv/bin/python -m extractors.bootstrap_v2 --config code-map.config.json
-```
-
-Lệnh này không sửa, xóa hoặc rename live DB. Khi lỗi, `<db>.v2.tmp` bị xóa. Cutover chỉ thực hiện bằng controlled operation riêng: dừng API, backup live DB, atomic rename, restart, smoke test.
-
-## CSV metadata
-
-Header được nhận diện nghiêm ngặt; header lạ không được phép replace metadata thành rỗng. Encoding cấu hình explicit: `utf-8`, `utf-8-sig`, `cp932`, `shift_jis`, `euc_jp`.
-
-Ví dụ:
+`tables.csv` chứa metadata table:
 
 ```csv
-table_code,table_name_ja,table_name_en,description,column_code,column_name_ja,column_name_en,column_description
-EMPLOYEES,従業員,Employees,Employee master,EMPLOYEE_ID,従業員ID,Employee ID,Primary key
+database,table_code,table_name_ja,table_name_en
 ```
 
-## API/UI local
+Tên child file dùng `table_code`. Mỗi file chỉ chứa columns. `relation_table` là `table_code` liên quan; để trống nếu không có:
+
+```csv
+column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
+BACKORDER_ID,入荷待ち注文ID,Backorder ID,1,NUMBER,false,,
+ORDER_ID,注文ID,Order ID,2,NUMBER,false,,ORDER_HEADER
+```
+
+## 3. Chạy toàn bộ pipeline
+
+Từ thư mục project trên macOS:
 
 ```bash
-CODE_MAP_CONFIG=code-map.config.json .venv/bin/python api/app.py
+.venv/bin/python scripts/run_demo_pipeline.py --fresh
 ```
 
-Mở `http://127.0.0.1:8000/code-map/`.
+Trên Windows PowerShell:
 
-## Production PM2
+```powershell
+.venv\Scripts\python.exe scripts\run_demo_pipeline.py --fresh
+```
+
+Script thực hiện:
+
+1. Extract Angular.
+2. Extract .NET API.
+3. Extract .NET batch.
+4. Extract Oracle PL/SQL.
+5. Extract SQL files.
+6. Validate mọi CSV package trong `output/`.
+7. Insert CSV thủ công và CSV graph vào SQLite.
+8. Chạy `PRAGMA integrity_check`.
+
+Kết quả:
+
+```text
+data/code-flow-demo.sqlite
+```
+
+`--fresh` xóa DB demo cũ trước khi import. Bỏ option này để cập nhật DB hiện có.
+
+## 4. Kiểm tra dữ liệu
+
+Nếu máy có `sqlite3`:
 
 ```bash
-pm2 delete code-map || true
-pm2 start ecosystem.config.js --update-env
-pm2 save
-pm2 logs code-map --lines 80
+sqlite3 data/code-flow-demo.sqlite "SELECT node_type, COUNT(*) FROM graph_nodes GROUP BY node_type ORDER BY node_type;"
 ```
 
-Smoke test:
+Table và column được insert vào:
 
-```bash
-curl -fsS http://127.0.0.1:8000/code-map/app-config.js
-curl -fsS http://127.0.0.1:8000/code-map/api/graph-contract
+```text
+graph_nodes
+ table_details
+ column_details
 ```
 
-PM2 trên `/Volumes` dùng `python3 -S -c ...` để tránh lỗi quyền đọc `.venv/pyvenv.cfg`.
+## 5. Lỗi thường gặp
 
-## Kiểm thử
-
-```bash
-.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
-cd webapp && npm run build && cd ..
-```
-
-## Cấu trúc
-
-- `common/`: config/path/source decoding.
-- `db/`: entities, state/fact schema, transactional projection writer.
-- `extractors/`: scanner, imports-first coordinator, PL/SQL/XML/C# handlers, staging bootstrap.
-- `api/`: read-only serving layer; không chạy extraction.
-- `webapp/`: React/Vite UI.
-- `samples/`: fixtures/demo.
-- `tests/`: extraction, state, metadata, coordinator, staging regressions.
+- `Missing authoritative CSV files`: kiểm tra `input-data/tables/*.csv` và ba file CSV còn lại trong `input-data/`.
+- `Missing required command: node`: cài Node.js.
+- `Missing required command: dotnet`: cài .NET SDK.
+- Validation lỗi: xem package tương ứng trong `output/` và file `issues.csv`.

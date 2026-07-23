@@ -1,0 +1,54 @@
+{
+  "contractVersion": "1.0",
+  "manifestKind": "authoritative-csv-normalization",
+  "normalizer": {
+    "name": "csv-normalizer",
+    "version": "1.0.0"
+  },
+  "source": {
+    "sourceKey": "authoritative-csv-demo",
+    "repositoryKey": "manual-data"
+  },
+  "generatedAt": "2026-07-22T21:49:55.879543Z",
+  "files": {
+    "tables": "tables.csv",
+    "jobnet": "jobnet.csv",
+    "executableMappings": "executable-mappings.csv",
+    "localizedMetadata": "localized-metadata.csv"
+  },
+  "statistics": {
+    "filesScanned": 5,
+    "tables": 11,
+    "jobnet": 4,
+    "executableMappings": 2,
+    "localizedMetadata": 2,
+    "issues": 0
+  },
+  "checksums": {
+    "tables.csv": {
+      "sha256": "f6ffb3aa36cd2db7462f14ad29c4e0b0ce3377e2dcb7817047a9db437c719bea",
+      "bytes": 677
+    },
+    "jobnet.csv": {
+      "sha256": "e9fc2893f8f56ec0613da47e7cf37f61d145c2bb67f5569198b6c31e45794e6c",
+      "bytes": 515
+    },
+    "executable-mappings.csv": {
+      "sha256": "87af664fef7ac5ffe18548872967702cd59ec76aa03205667e049be466a23510",
+      "bytes": 242
+    },
+    "localized-metadata.csv": {
+      "sha256": "04a6f8107d248c27babd4fc46e6df82567b843176ebf30d122f30cd1d54748c5",
+      "bytes": 346
+    },
+    "semantic-dictionary.csv": {
+      "sha256": "83dd05a766c6a64a7a14108b3623bb3f2b5b2f6448a544e458573b7428960ff1",
+      "bytes": 1614
+    }
+  },
+  "metadata": {
+    "importMode": "import_authoritative",
+    "packageManifestFile": false,
+    "report": "normalization-report.json"
+  }
+}

@@ -2,9 +2,9 @@ import json
 import sqlite3
 import unittest
 
-from db.entities import ExtractionResult, GraphEdge
-from db.writer import delete_file_result, ensure_db_schema, replace_file_result
-from extractors.state import acquire_lease, begin_run, get_or_create_file
+from contract.entities import ExtractionResult, GraphEdge
+from application.backend.database.writer import delete_file_result, ensure_db_schema, replace_file_result
+from application.backend.database.state import acquire_lease, begin_run, get_or_create_file
 
 
 FROM = "Procedure:repo:DB:HR:PKG.RUN"

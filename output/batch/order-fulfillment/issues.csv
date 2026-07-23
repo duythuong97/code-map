@@ -1,0 +1,2 @@
+issue_id,issue_type,severity,source_node_id,raw_reference,database_key,source_path,start_line,message,properties_json
+issue:d7111ea2ec1395dd05f60809,EXECUTABLE_NOT_MAPPED,WARNING,job:batch-system:ORDER_DAILY:UNMAPPED_EXPORT,PartnerExport.exe,,input-data/jobnet.csv,5,Executable not mapped,{}

@@ -1,0 +1,48 @@
+{
+  "contractVersion": "1.0",
+  "extractor": {
+    "name": "dotnet-api-extractor",
+    "version": "2.0.0"
+  },
+  "source": {
+    "sourceKey": "extractor:dotnet-api/order-api",
+    "repositoryKey": "order-api"
+  },
+  "generatedAt": "2026-07-22T22:53:40.7115580\u002B00:00",
+  "files": {
+    "nodes": "nodes.csv",
+    "edges": "edges.csv",
+    "evidence": "evidence.csv",
+    "issues": "issues.csv"
+  },
+  "statistics": {
+    "filesScanned": 1,
+    "nodes": 17,
+    "edges": 37,
+    "evidence": 39,
+    "issues": 6
+  },
+  "checksums": {
+    "nodes.csv": {
+      "sha256": "064a21d7b9bc174cd0c58fef4e38e5ea7860df10a427d93d24ed048795ec7977",
+      "bytes": 10341
+    },
+    "edges.csv": {
+      "sha256": "bc3dca37cb53e353ddfc8245c025ae275912e88cc5fe9fbc8502dc336594c64c",
+      "bytes": 7596
+    },
+    "evidence.csv": {
+      "sha256": "0c90308e4752c007f5c097613d624fedc44bb28a43c083a0f726570f58f097e2",
+      "bytes": 9906
+    },
+    "issues.csv": {
+      "sha256": "284b779c08220aa2bcea5c9cc7796047628663724f9c8041dc4837d3e6eec81a",
+      "bytes": 1541
+    }
+  },
+  "metadata": {
+    "source": "order-api",
+    "technology": "C# Roslyn Workspace/SemanticModel",
+    "parser": "Microsoft.CodeAnalysis.CSharp"
+  }
+}

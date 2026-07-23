@@ -1,0 +1,74 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test PL/SQL migration",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/bin/python",
+			"windows": {
+				"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+			},
+			"args": [
+				"-m",
+				"unittest",
+				"tests.test_plsql_extractor",
+				"tests.test_plsql_coverage_matrix"
+			],
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Validate canonical PL/SQL",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/bin/python",
+			"windows": {
+				"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+			},
+			"args": [
+				"-m",
+				"unittest",
+				"-v",
+				"tests.test_plsql_extractor",
+				"tests.test_plsql_coverage_matrix"
+			],
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "strict-review-tests",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/bin/python",
+			"windows": {
+				"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+			},
+			"args": [
+				"-m",
+				"unittest",
+				"discover",
+				"-s",
+				"tests",
+				"-p",
+				"test_*.py",
+				"-v"
+			],
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "handler-transition-regression",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/bin/python",
+			"windows": {
+				"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+			},
+			"args": [
+				"-m",
+				"unittest",
+				"tests.test_scanner_state.ExtractionTruthTest.test_failed_handler_transition_preserves_old_file_until_replacement_succeeds",
+				"-v"
+			],
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

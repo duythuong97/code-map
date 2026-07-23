@@ -1,11 +1,11 @@
 from pathlib import Path
 import unittest
 
-from extractors.oracle_plsql import OraclePlSqlExtractor
-from extractors.oracle_plsql_antlr_calls import OraclePlSqlAntlrCallExtractor
-from extractors.oracle_plsql_lineage import OraclePlSqlLineageExtractor
-from db import schema as S
-from db.entities import ExtractionContext, ExtractionResult
+from extractors.oracle_plsql.extractor import OraclePlSqlExtractor
+from extractors.oracle_plsql.antlr_calls import OraclePlSqlAntlrCallExtractor
+from extractors.oracle_plsql.lineage import OraclePlSqlLineageExtractor
+from contract import schema as S
+from contract.entities import ExtractionContext, ExtractionResult
 
 ROOT = Path(__file__).resolve().parents[1]
 CTX = ExtractionContext(
@@ -204,6 +204,42 @@ END;
             rels(result, S.REL_INSERTS_INTO),
         )
         self.assertIn((outer, inner), rels(result, S.REL_CALLS))
+
+    def test_scanner_attaches_semantic_to_supported_edges(self):
+        text = """
+CREATE OR REPLACE PACKAGE BODY hr.pkg_semantic AS
+  PROCEDURE run IS
+  BEGIN
+    INSERT INTO hr.audit_log(id, amount)
+    SELECT p.id, p.net_salary FROM hr.payroll_base p;
+    pkg_bonus.apply_bonus();
+  EXCEPTION WHEN NO_DATA_FOUND THEN NULL;
+  END;
+END;
+/"""
+        result = extract_file(
+            Path("semantic.pkb"),
+            "samples/semantic.pkb",
+            text,
+            CTX,
+            [OraclePlSqlExtractor(), OraclePlSqlLineageExtractor()],
+        )
+
+        write = next(edge for edge in result.edges if edge.rel_type == S.REL_INSERTS_INTO)
+        read = next(edge for edge in result.edges if edge.rel_type == S.REL_READS_FROM)
+        call = next(edge for edge in result.edges if edge.rel_type == S.REL_CALLS)
+        handler = next(edge for edge in result.edges if edge.rel_type == "HANDLES_EXCEPTION")
+        derive = next(edge for edge in result.edges if edge.rel_type == "DERIVES_FROM")
+
+        self.assertEqual(write.properties["semantic"]["action"], "WRITE")
+        self.assertEqual(
+            {field["name"] for field in write.properties["semantic"]["fields"]},
+            {"ID", "AMOUNT"},
+        )
+        self.assertEqual(read.properties["semantic"]["action"], "READ")
+        self.assertEqual(call.properties["semantic"]["action"], "CALL")
+        self.assertEqual(handler.properties["semantic"]["handler"], "NO_DATA_FOUND")
+        self.assertEqual(derive.properties["semantic"]["action"], "DERIVE_FIELD")
 
     def test_trigger_body_owns_every_statement(self):
         text = """

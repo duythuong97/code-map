@@ -1,0 +1,7 @@
+{
+  "type": "dotnet-api",
+  "source": "order-api",
+  "database": "ORDER_DB",
+  "root": "${SOURCE_ROOT}/order-api",
+  "output": "${OUTPUT_ROOT}/dotnet-api/order-api"
+}
