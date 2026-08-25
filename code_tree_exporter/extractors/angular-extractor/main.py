@@ -43,15 +43,27 @@ _METHOD_RE = re.compile(
 )
 _ROUTE_RE = re.compile(
     r"\bpath\s*:\s*['\"](?P<path>[^'\"]*)['\"]"
-    r"(?:(?!\}\s*,).)*?\bcomponent\s*:\s*(?P<component>[A-Za-z_]\w*)",
+    r"(?:(?!\}\s*,).)*?\bcomponent\s*:\s*['\"]?(?P<component>[A-Za-z_]\w*)['\"]?",
     re.DOTALL,
 )
 _HTTP_RE = re.compile(
     r"(?:this\.)?(?:http|httpClient)\."
-    r"(?P<method>get|post|put|delete|patch|request)\s*"
-    r"\(\s*(?P<argument>[^,\n;)]+)",
+    r"(?P<method>get|post|put|delete|patch|request)\s*\(",
     re.IGNORECASE,
 )
+_BINDING_RE = re.compile(
+    r"\b(?:const|let|var)\s+"
+    r"(?:(?P<destructure>\{[^{}]+\})|(?P<name>[A-Za-z_]\w*))\s*=\s*"
+    r"(?P<expression>[^;]+);",
+    re.DOTALL,
+)
+_CONFIG_ACCESS_RE = re.compile(
+    r"^(?:this\.)?config(?:\.(?P<property>[A-Za-z_]\w*)|"
+    r"\[\s*['\"](?P<item>[^'\"]+)['\"]\s*\])$"
+)
+_CONFIG_OBJECT_RE = re.compile(r"^(?:this\.)?config$")
+_TEMPLATE_EXPRESSION_RE = re.compile(r"\$\{(?P<expression>[^{}]+)\}")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
 _EVENT_RE = re.compile(
     r"\((?P<event>click|submit|change)\)\s*=\s*"
     r"['\"](?P<handler>[^'\"]+)['\"]",
@@ -83,6 +95,7 @@ def extract(config: dict) -> None:
     repository = str(config.get("repository") or source)
     system_key = str(config.get("system") or source)
     files = configured_files(config, [".ts", ".html"])
+    app_config = _load_app_config(config)
     builder = PackageBuilder(
         f"angular-fallback-{source}",
         f"extractor:angular-fallback/{source}",
@@ -265,6 +278,7 @@ def extract(config: dict) -> None:
                 classes=classes,
                 methods=methods_by_file.get(file.relative, []),
                 project_id=project_id,
+                app_config=app_config,
             )
         elif file.absolute.suffix.lower() == ".html":
             _extract_template_literals(
@@ -288,6 +302,7 @@ def _extract_typescript_literals(
     classes: dict[str, str],
     methods: list[tuple[int, str]],
     project_id: str,
+    app_config: dict[str, str],
 ) -> None:
     for match in _ROUTE_RE.finditer(file.text):
         _, route = normalize_http_route("GET", "/" + match.group("path").strip("/"))
@@ -325,38 +340,40 @@ def _extract_typescript_literals(
 
     for match in _HTTP_RE.finditer(file.text):
         raw_method = match.group("method").upper()
-        argument = match.group("argument").strip()
-        literal = _literal_value(argument)
-        owner_id = _nearest_method(methods, match.start()) or project_id
+        call_arguments = _match_call_arguments(file.text, match.end() - 1)
+        if call_arguments is None:
+            continue
+        arguments = _split_arguments(call_arguments)
+        owner = _nearest_method(methods, match.start())
+        owner_id = owner[1] if owner else project_id
+        bindings = _local_bindings(
+            file.text[owner[0] if owner else 0 : match.start()], app_config
+        )
         line = line_for_offset(file.text, match.start())
-        if not literal:
+        if raw_method == "REQUEST":
+            method_expression = arguments[0] if arguments else ""
+            route_expression = arguments[1] if len(arguments) > 1 else ""
+            method = _resolve_string_expression(
+                method_expression, app_config, bindings
+            ).upper()
+        else:
+            method = raw_method
+            route_expression = arguments[0] if arguments else ""
+        route_literal = _resolve_string_expression(
+            route_expression, app_config, bindings
+        )
+        if not method or not route_literal:
             builder.add_issue(
                 "DYNAMIC_CONFIG_KEY",
                 "WARNING",
                 "Dynamic Angular HTTP URL was not linked",
                 source_node_id=owner_id,
-                raw_reference=argument[:200],
+                raw_reference=call_arguments[:200],
                 source_path=file.relative,
                 start_line=line,
                 properties={"fallback": "angular-fallback"},
             )
             continue
-        method = raw_method
-        route_literal = literal
-        if raw_method == "REQUEST":
-            request_method, separator, request_path = literal.partition(" ")
-            if not separator or not request_method.isalpha():
-                builder.add_issue(
-                    "DYNAMIC_CONFIG_KEY",
-                    "WARNING",
-                    "Http.request method is not a static METHOD path literal",
-                    source_node_id=owner_id,
-                    raw_reference=literal,
-                    source_path=file.relative,
-                    start_line=line,
-                )
-                continue
-            method, route_literal = request_method.upper(), request_path
         try:
             method, route = normalize_http_route(method, route_literal)
         except ValueError:
@@ -479,9 +496,141 @@ def _nearest_owner(
     return candidates[-1] if candidates else None
 
 
-def _nearest_method(methods: list[tuple[int, str]], offset: int) -> str:
-    candidates = [method_id for start, method_id in methods if start <= offset]
-    return candidates[-1] if candidates else ""
+def _nearest_method(
+    methods: list[tuple[int, str]], offset: int
+) -> tuple[int, str] | None:
+    candidates = [method for method in methods if method[0] <= offset]
+    return candidates[-1] if candidates else None
+
+
+def _load_app_config(config: dict) -> dict[str, str]:
+    configured = config.get("appConfig")
+    if not isinstance(configured, str) or not configured:
+        return {}
+    root = Path(config["root"]).resolve()
+    candidate = Path(configured).expanduser()
+    path = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    if path != root and root not in path.parents:
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(item, str) and item
+    }
+
+
+def _local_bindings(text: str, app_config: dict[str, str]) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    for match in _BINDING_RE.finditer(text):
+        expression = match.group("expression").strip()
+        destructure = match.group("destructure")
+        if destructure:
+            if not _CONFIG_OBJECT_RE.fullmatch(expression):
+                continue
+            for item in destructure.strip("{}").split(","):
+                source_name, separator, local_name = item.partition(":")
+                key = source_name.strip()
+                name = (local_name if separator else source_name).strip()
+                if key in app_config and _IDENTIFIER_RE.fullmatch(name):
+                    bindings[name] = app_config[key]
+            continue
+        resolved = _resolve_string_expression(expression, app_config, bindings)
+        name = match.group("name")
+        if name and resolved:
+            bindings[name] = resolved
+    return bindings
+
+
+def _resolve_string_expression(
+    expression: str,
+    app_config: dict[str, str],
+    bindings: dict[str, str],
+) -> str:
+    # ponytail: fallback resolves static config/string bindings; use TypeScript for general expressions.
+    value = expression.strip()
+    literal = _literal_value(value)
+    if literal:
+        return literal
+    access = _CONFIG_ACCESS_RE.fullmatch(value)
+    if access:
+        return app_config.get(access.group("property") or access.group("item"), "")
+    if _IDENTIFIER_RE.fullmatch(value):
+        return bindings.get(value, "")
+    if len(value) >= 2 and value[0] == value[-1] == "`":
+        return _TEMPLATE_EXPRESSION_RE.sub(
+            lambda match: _resolve_string_expression(
+                match.group("expression"), app_config, bindings
+            )
+            or "{id}",
+            value[1:-1],
+        )
+    return ""
+
+
+def _match_call_arguments(text: str, open_paren_index: int) -> str | None:
+    """Return the text between the '(' at open_paren_index and its matching
+    ')', tracking string/template-literal quoting and nested brackets so a
+    nested call like buildUrl('x') doesn't end the scan early. Returns None
+    if the call is unterminated."""
+    depth = 0
+    quote = ""
+    escaped = False
+    index = open_paren_index
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0 and char == ")":
+                return text[open_paren_index + 1 : index]
+        index += 1
+    return None
+
+
+def _split_arguments(value: str) -> list[str]:
+    arguments: list[str] = []
+    start = 0
+    depth = 0
+    quote = ""
+    escaped = False
+    for index, char in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in "'\"`":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            arguments.append(value[start:index].strip())
+            start = index + 1
+    arguments.append(value[start:].strip())
+    return arguments
 
 
 def _literal_value(expression: str) -> str:

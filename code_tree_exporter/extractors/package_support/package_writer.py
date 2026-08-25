@@ -444,6 +444,7 @@ def configured_files(config: dict, suffixes: Iterable[str]) -> list[SourceFile]:
     root = Path(config["root"]).expanduser().resolve()
     folders = config.get("folders") or ["."]
     suffix_set = {suffix.lower() for suffix in suffixes}
+    folder_scopes: list[tuple[Path, str]] = []
     path_databases: dict[Path, str] = {}
     for item in folders:
         folder = item.get("path", ".") if isinstance(item, dict) else item
@@ -452,14 +453,44 @@ def configured_files(config: dict, suffixes: Iterable[str]) -> list[SourceFile]:
         base = root.joinpath(*PurePosixPath(normalized).parts).resolve()
         if base != root and root not in base.parents:
             raise ValueError(f"folder escapes root: {folder}")
-        if base.is_file():
-            path_databases.setdefault(base, database)
-            continue
-        if not base.exists():
-            continue
-        for path in sorted(base.rglob("*")):
-            if path.is_file() and path.suffix.lower() in suffix_set and not excluded_path(path, root):
+        folder_scopes.append((base, database))
+    configured_paths = config.get("files")
+    if isinstance(configured_paths, list):
+        for value in configured_paths:
+            if not isinstance(value, str) or not value:
+                raise ValueError("files[] must contain non-empty paths")
+            normalized = normalize_repository_path(value)
+            path = root.joinpath(*PurePosixPath(normalized).parts).resolve()
+            if path != root and root not in path.parents:
+                raise ValueError(f"file escapes root: {value}")
+            if (
+                path.is_file()
+                and path.suffix.lower() in suffix_set
+                and not excluded_path(path, root)
+            ):
+                database = next(
+                    (
+                        configured_database
+                        for base, configured_database in folder_scopes
+                        if path == base or base in path.parents
+                    ),
+                    "",
+                )
                 path_databases.setdefault(path, database)
+    else:
+        for base, database in folder_scopes:
+            if base.is_file():
+                path_databases.setdefault(base, database)
+                continue
+            if not base.exists():
+                continue
+            for path in sorted(base.rglob("*")):
+                if (
+                    path.is_file()
+                    and path.suffix.lower() in suffix_set
+                    and not excluded_path(path, root)
+                ):
+                    path_databases.setdefault(path, database)
     files = []
     for path, database in sorted(path_databases.items(), key=lambda item: str(item[0])):
         files.append(SourceFile(path, workspace_relative(path, root), path.read_text(encoding="utf-8"), database))

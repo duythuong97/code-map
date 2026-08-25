@@ -11,6 +11,37 @@ from pathlib import Path
 from code_tree_exporter.env_loader import load_dotenv
 
 
+def worker_assembly_path(script_path: Path, project_name: str) -> Path:
+    project = script_path.with_name(project_name)
+    return project.parent / "bin" / "Release" / "net9.0" / (project.stem + ".dll")
+
+
+def ensure_worker_built(
+    script_path: Path, project_name: str, *, dotnet: str
+) -> int:
+    """Build the packaged Roslyn worker if missing/stale. Not safe to call
+    concurrently for the same project_name; callers running sources in
+    parallel must pre-warm each distinct worker sequentially first."""
+    project = script_path.with_name(project_name)
+    assembly = worker_assembly_path(script_path, project_name)
+    sources = [
+        project,
+        *project.parent.glob("*.cs"),
+        *project.parent.parent.joinpath("_roslyn").glob("*.cs"),
+    ]
+    if assembly.is_file() and not any(
+        source.stat().st_mtime_ns > assembly.stat().st_mtime_ns
+        for source in sources
+        if source.is_file()
+    ):
+        return 0
+    build = subprocess.run(
+        [dotnet, "build", str(project), "-c", "Release", "--nologo"],
+        env=_extractor_environment(dotnet, None),
+    )
+    return build.returncode
+
+
 def run_dotnet_extractor(
     *,
     script_path: Path,
@@ -30,27 +61,11 @@ def run_dotnet_extractor(
         parser.error(".NET SDK not found; set CODE_TREE_DOTNET or install dotnet")
     environment = _extractor_environment(dotnet, source_root)
 
-    project = script_path.with_name(project_name)
-    assembly = project.parent / "bin" / "Release" / "net9.0" / (
-        project.stem + ".dll"
-    )
-    sources = [
-        project,
-        *project.parent.glob("*.cs"),
-        *project.parent.parent.joinpath("_roslyn").glob("*.cs"),
-    ]
-    if not assembly.is_file() or any(
-        source.stat().st_mtime_ns > assembly.stat().st_mtime_ns
-        for source in sources
-        if source.is_file()
-    ):
-        build = subprocess.run(
-            [dotnet, "build", str(project), "-c", "Release", "--nologo"],
-            env=environment,
-        )
-        if build.returncode:
-            return build.returncode
+    build_returncode = ensure_worker_built(script_path, project_name, dotnet=dotnet)
+    if build_returncode:
+        return build_returncode
 
+    assembly = worker_assembly_path(script_path, project_name)
     return subprocess.run(
         [dotnet, str(assembly), "--config", str(config_path)],
         env=environment,

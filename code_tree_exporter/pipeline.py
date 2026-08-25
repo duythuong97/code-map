@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
@@ -15,6 +17,7 @@ from .contract.graph_contract import normalize_repository_path
 from .decoding import SourceDecodingError, decode_source, encoding_for
 from .env_loader import load_dotenv
 from .extractors import ExtractorSpec, extractor_spec
+from .extractors.dotnet_runner import ensure_worker_built
 from .graph_package import (
     GraphPackage,
     SourceRecord,
@@ -25,6 +28,16 @@ from .linker import run_linker
 from .v3.catalog import prepare_catalog
 from .v3.hierarchy import enrich_hierarchy
 from .v3.publisher import publish_v3
+
+@dataclass
+class _ExtractionJob:
+    source_name: str
+    spec: ExtractorSpec
+    extractor_config_path: Path
+    extractor_config: dict
+    package_output: Path
+    valid_paths: list[str]
+
 
 _BLOCKED_DIRECTORIES = frozenset(
     {
@@ -100,23 +113,20 @@ def run_pipeline(config_path: Path) -> Path:
         packages_root = temporary_root / "packages"
         prepared_root = temporary_root / "sources"
         packages_root.mkdir()
-        prepared_root.mkdir()
+        jobs: list[_ExtractionJob] = []
         for source in validated_sources:
             source_type = str(source["type"])
             spec = extractor_spec(source_type)
             source_name = str(source["name"])
             prepared_source_root = prepared_root / source_name
-            source_records, valid_paths = _prepare_source(
+            source_records, valid_paths, requires_staging = _prepare_source(
                 root,
-                prepared_source_root,
                 source,
                 spec,
                 default_encoding,
                 graph,
                 max_file_bytes=limits["maxFileBytes"],
             )
-            if spec.config_type == "angular":
-                _copy_angular_metadata(root, prepared_source_root, source)
             for record in source_records:
                 graph.add_source(record)
             if not valid_paths:
@@ -132,21 +142,12 @@ def run_pipeline(config_path: Path) -> Path:
                     )
                 continue
             package_output = packages_root / source_name
-            semantic_project = spec.config_type in {
-                "angular",
-                "dotnet-api",
-                "dotnet-batch",
-            }
-            has_legacy_encoding = any(
-                record.actual_encoding.lower().replace("_", "-")
-                not in {"utf-8", "utf-8-sig", "ascii"}
-                for record in source_records
-            )
-            extractor_root = (
-                root
-                if semantic_project and not has_legacy_encoding
-                else prepared_source_root
-            )
+            extractor_root = root
+            if requires_staging:
+                _stage_decoded_source(root, prepared_source_root, source_records)
+                if spec.config_type == "angular":
+                    _copy_angular_metadata(root, prepared_source_root, source)
+                extractor_root = prepared_source_root
             extractor_config = _extractor_config(
                 config,
                 source,
@@ -165,23 +166,41 @@ def run_pipeline(config_path: Path) -> Path:
                 json.dumps(extractor_config, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            jobs.append(
+                _ExtractionJob(
+                    source_name=source_name,
+                    spec=spec,
+                    extractor_config_path=extractor_config_path,
+                    extractor_config=extractor_config,
+                    package_output=package_output,
+                    valid_paths=valid_paths,
+                )
+            )
+
+        # Sources are independent until merge, so their extractor subprocesses
+        # run concurrently; the .NET worker DLLs are shared build outputs, so
+        # they must be pre-built once, sequentially, before any source of
+        # that type runs in parallel.
+        _prewarm_dotnet_workers(jobs)
+        results = _run_extractors_parallel(jobs, limits["maxParallelExtractors"])
+        for job in jobs:
+            extracted, issues = results[job.source_name]
+            for issue in issues:
+                graph.add_issue(**issue)
+            if not extracted and not allow_partial_extraction:
+                raise ValueError(
+                    f"Extractor failed for source {job.source_name}; "
+                    "set allowPartialExtraction=true to publish a partial graph"
+                )
             api_operations_before = sum(
                 node.get("node_type") == "API_OPERATION"
                 for node in graph.nodes.values()
             )
-            extracted = _run_extractor(
-                spec, extractor_config_path, extractor_config, graph
-            )
-            if not extracted and not allow_partial_extraction:
-                raise ValueError(
-                    f"Extractor failed for source {source_name}; "
-                    "set allowPartialExtraction=true to publish a partial graph"
-                )
-            if package_output.exists():
-                graph.merge_directory(package_output)
+            if job.package_output.exists():
+                graph.merge_directory(job.package_output)
             if (
-                spec.config_type == "dotnet-api"
-                and any(Path(path).suffix.lower() == ".cs" for path in valid_paths)
+                job.spec.config_type == "dotnet-api"
+                and any(Path(path).suffix.lower() == ".cs" for path in job.valid_paths)
                 and sum(
                     node.get("node_type") == "API_OPERATION"
                     for node in graph.nodes.values()
@@ -194,15 +213,15 @@ def run_pipeline(config_path: Path) -> Path:
                     severity="WARNING",
                     source_path=next(
                         path
-                        for path in valid_paths
+                        for path in job.valid_paths
                         if Path(path).suffix.lower() == ".cs"
                     ),
                 )
-            if spec.config_type in {"dotnet-api", "dotnet-batch"}:
+            if job.spec.config_type in {"dotnet-api", "dotnet-batch"}:
                 _run_dotnet_xml_companion(
-                    extractor_config,
-                    packages_root / f"{source_name}-xml",
-                    valid_paths,
+                    job.extractor_config,
+                    packages_root / f"{job.source_name}-xml",
+                    job.valid_paths,
                     graph,
                 )
 
@@ -385,6 +404,9 @@ def _resolved_limits(config: dict) -> dict[str, int]:
         "maxIssuesPerTypePerFile": value("maxIssuesPerTypePerFile", 20),
         "extractorTimeoutSeconds": value("extractorTimeoutSeconds", 300),
         "projectTimeoutSeconds": value("projectTimeoutSeconds", 900),
+        "maxParallelExtractors": value(
+            "maxParallelExtractors", min(os.cpu_count() or 4, 8)
+        ),
     }
 
 
@@ -445,19 +467,19 @@ def _validate_source(value: object, index: int) -> dict:
 
 def _prepare_source(
     root: Path,
-    staging: Path,
     source: dict,
     spec: ExtractorSpec,
     default_encoding: str,
     graph: GraphPackage,
     *,
     max_file_bytes: int,
-) -> tuple[list[SourceRecord], list[str]]:
+) -> tuple[list[SourceRecord], list[str], bool]:
     selected = _selected_files(root, source["folders"], spec.suffixes)
     if spec.config_type in {"dotnet-api", "dotnet-batch"}:
         selected = _expand_dotnet_selection(root, selected)
     records: list[SourceRecord] = []
     valid_paths: list[str] = []
+    requires_staging = False
     preserve_comments = source.get("preserveComments", True) is not False
     for path in selected:
         relative = path.relative_to(root).as_posix()
@@ -500,9 +522,10 @@ def _prepare_source(
             )
             continue
 
-        destination = staging / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(decoded.text, encoding="utf-8", newline="")
+        requires_staging = requires_staging or (
+            decoded.actual_encoding.lower().replace("_", "-")
+            not in {"utf-8", "ascii"}
+        )
         comments = (
             tuple(extract_comments(decoded.text, relative, str(source["type"])))
             if preserve_comments
@@ -525,7 +548,25 @@ def _prepare_source(
             )
         )
         valid_paths.append(relative)
-    return records, valid_paths
+    return records, valid_paths, requires_staging
+
+
+def _stage_decoded_source(
+    root: Path, staging: Path, records: list[SourceRecord]
+) -> None:
+    # ponytail: mixed legacy encodings use a second read; move decoding into extractors if this becomes common.
+    for record in records:
+        relative = record.relative_path
+        source_path = root.joinpath(*PurePosixPath(relative).parts)
+        try:
+            decoded = decode_source(source_path, relative, record.actual_encoding)
+        except SourceDecodingError as exc:
+            raise ValueError(f"Source changed while staging: {relative}") from exc
+        if decoded.raw_sha256 != record.raw_sha256:
+            raise ValueError(f"Source changed while staging: {relative}")
+        destination = staging.joinpath(*PurePosixPath(relative).parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(decoded.text, encoding="utf-8", newline="")
 
 
 def _selected_files(root: Path, folders: list, suffixes: tuple[str, ...]) -> list[Path]:
@@ -879,14 +920,92 @@ def _xml_mapper_queries(root: Path, paths: list[str]) -> list[str]:
     return sorted(queries)
 
 
+_DOTNET_WORKER_PROJECTS = {
+    "dotnet-api": "DotNetApiExtractor.csproj",
+    "dotnet-batch": "DotNetBatchExtractor.csproj",
+}
+
+
+def _prewarm_dotnet_workers(jobs: list[_ExtractionJob]) -> None:
+    """Build each distinct .NET worker DLL once, sequentially, before any
+    source runs in parallel. The worker build writes into a shared bin/
+    output per project; running it concurrently for two sources of the same
+    type would race on that output. A failed build here must abort instead
+    of continuing to the parallel phase: each source's own extractor call
+    would otherwise retry the same build independently once several of them
+    run concurrently, reintroducing the exact race this function exists to
+    prevent."""
+    needed = {job.spec.config_type for job in jobs} & set(_DOTNET_WORKER_PROJECTS)
+    if not needed:
+        return
+    dotnet = os.environ.get("CODE_TREE_DOTNET") or shutil.which("dotnet")
+    if not dotnet:
+        return
+    built: set[str] = set()
+    for job in jobs:
+        config_type = job.spec.config_type
+        if config_type not in needed or config_type in built:
+            continue
+        project_name = _DOTNET_WORKER_PROJECTS[config_type]
+        returncode = ensure_worker_built(job.spec.script, project_name, dotnet=dotnet)
+        if returncode:
+            raise ValueError(
+                f"Failed to build the {config_type} worker ({project_name}, "
+                f"exit code {returncode}); see the dotnet build output above"
+            )
+        built.add(config_type)
+        if built == needed:
+            break
+
+
+def _run_extractors_parallel(
+    jobs: list[_ExtractionJob], max_workers: int
+) -> dict[str, tuple[bool, list[dict[str, object]]]]:
+    if not jobs:
+        return {}
+    workers = max(1, min(max_workers, len(jobs)))
+    results: dict[str, tuple[bool, list[dict[str, object]]]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_name = {
+            executor.submit(
+                _run_extractor,
+                job.spec,
+                job.extractor_config_path,
+                job.extractor_config,
+            ): job.source_name
+            for job in jobs
+        }
+        for future, source_name in future_to_name.items():
+            results[source_name] = future.result()
+    return results
+
+
 def _run_extractor(
-    spec: ExtractorSpec, config_path: Path, config: dict, graph: GraphPackage
-) -> bool:
+    spec: ExtractorSpec, config_path: Path, config: dict
+) -> tuple[bool, list[dict[str, object]]]:
+    issues: list[dict[str, object]] = []
+
+    def add_issue(
+        issue_type: str,
+        message: str,
+        *,
+        severity: str = "ERROR",
+        properties: dict[str, object] | None = None,
+    ) -> None:
+        issues.append(
+            {
+                "issue_type": issue_type,
+                "message": message,
+                "severity": severity,
+                "properties": properties,
+            }
+        )
+
     if spec.config_type == "xml-sql":
         from .extractors.xml_sql.runner import extract
 
         extract(config)
-        return True
+        return True, issues
     env = os.environ.copy()
     command: list[str]
     if spec.config_type == "angular":
@@ -918,15 +1037,15 @@ def _run_extractor(
         )
     except FileNotFoundError as exc:
         if spec.config_type != "angular":
-            graph.add_issue(
+            add_issue(
                 "PARSE_ERROR",
                 f"{spec.config_type} extractor dependency missing: {exc}",
                 properties={"source_key": str(config.get("source") or "")},
             )
-            return False
+            return False, issues
         completed = subprocess.CompletedProcess(command, 127, "", str(exc))
     except subprocess.TimeoutExpired:
-        graph.add_issue(
+        add_issue(
             "TIMEOUT",
             f"{spec.config_type} extractor exceeded {timeout} seconds",
             severity="WARNING",
@@ -935,12 +1054,12 @@ def _run_extractor(
                 "source_key": str(config.get("source") or ""),
             },
         )
-        return False
+        return False, issues
     if completed.returncode and spec.config_type == "angular":
         primary_message = _bounded_subprocess_message(
             completed, "Angular TypeScript parser failed"
         )
-        graph.add_issue(
+        add_issue(
             "SEMANTIC_TREE_UNAVAILABLE",
             f"Angular TypeScript parser unavailable; degraded regex fallback used: {primary_message}",
             severity="WARNING",
@@ -957,7 +1076,7 @@ def _run_extractor(
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
-                graph.add_issue(
+                add_issue(
                     "TIMEOUT",
                     f"Angular fallback extractor exceeded {timeout} seconds",
                     severity="WARNING",
@@ -966,24 +1085,24 @@ def _run_extractor(
                         "source_key": str(config.get("source") or ""),
                     },
                 )
-                return False
+                return False, issues
     if completed.returncode:
         message = _bounded_subprocess_message(completed, "Extractor failed")
-        graph.add_issue(
+        add_issue(
             "PARSE_ERROR",
             f"{spec.config_type} extractor failed: {message}",
             properties={"source_key": str(config.get("source") or "")},
         )
-        return False
+        return False, issues
     output = Path(str(config.get("output") or ""))
     if not (output / "manifest.json").is_file():
-        graph.add_issue(
+        add_issue(
             "PARSE_ERROR",
             f"{spec.config_type} extractor completed without a package manifest",
             properties={"source_key": str(config.get("source") or "")},
         )
-        return False
-    return True
+        return False, issues
+    return True, issues
 
 
 def _bounded_subprocess_message(

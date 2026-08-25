@@ -537,21 +537,35 @@ function callFact(ts, file, call, callRefs) {
 
 function configuredFiles(config, extensions, discovery = discoverAngularProject(config)) {
   const root = discovery.root;
-  const folders = discovery.folders.length ? discovery.folders : ['.'];
   const result = [];
-  for (const folderValue of folders) {
-    const folder = path.resolve(root, folderValue || '.');
-    if (!existsSync(folder)) continue;
-    for (const absolute of walk(folder)) {
-      if (!extensions.includes(path.extname(absolute).toLowerCase())) continue;
-      if (excludedPath(absolute, root, discovery.exclusions)) continue;
-      const text = readFileSync(absolute, 'utf8');
-      result.push({
-        absolute,
-        relative: repoPath(path.relative(root, absolute)),
-        text,
-        sourceFile: textSourceFile(absolute, text),
-      });
+  const seen = new Set();
+  const addFile = absolute => {
+    if (seen.has(absolute)) return;
+    if (!extensions.includes(path.extname(absolute).toLowerCase())) return;
+    if (excludedPath(absolute, root, discovery.exclusions)) return;
+    seen.add(absolute);
+    const text = readFileSync(absolute, 'utf8');
+    result.push({
+      absolute,
+      relative: repoPath(path.relative(root, absolute)),
+      text,
+      sourceFile: textSourceFile(absolute, text),
+    });
+  };
+  // The pipeline already walks and validates the source tree once; reuse
+  // that file list instead of re-walking the whole workspace here. Fall
+  // back to a directory walk only when the extractor runs without it.
+  if (Array.isArray(config.files) && config.files.length) {
+    for (const relative of config.files) {
+      const absolute = path.resolve(root, String(relative));
+      if (existsSync(absolute) && statSync(absolute).isFile()) addFile(absolute);
+    }
+  } else {
+    const folders = discovery.folders.length ? discovery.folders : ['.'];
+    for (const folderValue of folders) {
+      const folder = path.resolve(root, folderValue || '.');
+      if (!existsSync(folder)) continue;
+      for (const absolute of walk(folder)) addFile(absolute);
     }
   }
   result.sort((a, b) => a.relative.localeCompare(b.relative));

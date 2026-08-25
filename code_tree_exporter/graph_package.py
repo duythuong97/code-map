@@ -1010,19 +1010,6 @@ def _write_sqlite_database(
                 properties_json TEXT NOT NULL,
                 package_key TEXT NOT NULL
             );
-            CREATE INDEX idx_nodes_type ON nodes(node_type);
-            CREATE INDEX idx_nodes_qualified_name ON nodes(qualified_name COLLATE NOCASE);
-            CREATE INDEX idx_nodes_package ON nodes(package_key);
-            CREATE INDEX idx_edges_source ON edges(source_node_id);
-            CREATE INDEX idx_edges_target ON edges(target_node_id);
-            CREATE INDEX idx_edges_type ON edges(edge_type);
-            CREATE INDEX idx_edges_package ON edges(package_key);
-            CREATE INDEX idx_evidence_target ON evidence(target_type, target_id);
-            CREATE INDEX idx_evidence_path ON evidence(source_path);
-            CREATE INDEX idx_comments_owner ON comments(owner_node_id);
-            CREATE INDEX idx_issues_source ON issues(source_node_id);
-            CREATE INDEX idx_issues_package ON issues(package_key);
-            CREATE INDEX idx_issues_type ON issues(issue_type, severity);
             CREATE TRIGGER evidence_node_target_insert
             BEFORE INSERT ON evidence
             WHEN NEW.target_type = 'NODE'
@@ -1190,6 +1177,26 @@ def _write_sqlite_database(
                 )
                 for row in rows["issues"]
             ],
+        )
+        # Build indexes after the bulk load instead of maintaining them
+        # row-by-row during executemany; a batch index build is
+        # substantially cheaper for large graphs.
+        connection.executescript(
+            """
+            CREATE INDEX idx_nodes_type ON nodes(node_type);
+            CREATE INDEX idx_nodes_qualified_name ON nodes(qualified_name COLLATE NOCASE);
+            CREATE INDEX idx_nodes_package ON nodes(package_key);
+            CREATE INDEX idx_edges_source ON edges(source_node_id);
+            CREATE INDEX idx_edges_target ON edges(target_node_id);
+            CREATE INDEX idx_edges_type ON edges(edge_type);
+            CREATE INDEX idx_edges_package ON edges(package_key);
+            CREATE INDEX idx_evidence_target ON evidence(target_type, target_id);
+            CREATE INDEX idx_evidence_path ON evidence(source_path);
+            CREATE INDEX idx_comments_owner ON comments(owner_node_id);
+            CREATE INDEX idx_issues_source ON issues(source_node_id);
+            CREATE INDEX idx_issues_package ON issues(package_key);
+            CREATE INDEX idx_issues_type ON issues(issue_type, severity);
+            """
         )
         violations = list(connection.execute("PRAGMA foreign_key_check"))
         if violations:
