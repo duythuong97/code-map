@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-tree-exporter.local/schemas/sqlite-graph/manifest.schema.json",
+  "title": "Code Tree SQLite Graph Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "storage",
+    "extractor",
+    "source",
+    "generatedAt",
+    "outputMode",
+    "packages",
+    "files",
+    "statistics",
+    "checksums",
+    "metadata"
+  ],
+  "properties": {
+    "contractVersion": {"const": "3.0"},
+    "storage": {"const": "sqlite"},
+    "extractor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceKey", "repositoryKey"],
+      "properties": {
+        "sourceKey": {"type": "string", "minLength": 1},
+        "repositoryKey": {"type": "string", "minLength": 1},
+        "revision": {"type": "string"}
+      }
+    },
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "outputMode": {"enum": ["flat", "partitioned"]},
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["database", "scope", "sourceType"],
+        "properties": {
+          "database": {"const": "graph.sqlite"},
+          "scope": {"type": "string", "minLength": 1},
+          "sourceType": {"type": "string"}
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "database",
+        "graphIndex",
+        "memoryManifest"
+      ],
+      "properties": {
+        "database": {"const": "graph.sqlite"},
+        "graphIndex": {"const": "graph-index.json"},
+        "memoryManifest": {"const": "codebase-memory/manifest.json"},
+        "knowledgeManifest": {"const": "knowledge/manifest.json"},
+        "qualityReport": {"const": "quality-report.json"},
+        "qualityReportMarkdown": {"const": "QUALITY_REPORT.md"}
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["filesScanned", "nodes", "edges", "evidence", "issues"],
+      "properties": {
+        "filesScanned": {"type": "integer", "minimum": 0},
+        "nodes": {"type": "integer", "minimum": 0},
+        "edges": {"type": "integer", "minimum": 0},
+        "evidence": {"type": "integer", "minimum": 0},
+        "comments": {"type": "integer", "minimum": 0},
+        "issues": {"type": "integer", "minimum": 0},
+        "ioItems": {"type": "integer", "minimum": 0},
+        "ioLinks": {"type": "integer", "minimum": 0},
+        "flows": {"type": "integer", "minimum": 0},
+        "incompleteFlows": {"type": "integer", "minimum": 0},
+        "resolutionCandidates": {"type": "integer", "minimum": 0},
+        "unresolvedReferences": {"type": "integer", "minimum": 0},
+        "ambiguousIssues": {"type": "integer", "minimum": 0},
+        "lowConfidenceEdges": {"type": "integer", "minimum": 0},
+        "catalogFiles": {"type": "integer", "minimum": 0},
+        "catalogTables": {"type": "integer", "minimum": 0},
+        "catalogColumns": {"type": "integer", "minimum": 0},
+        "catalogRejectedFiles": {"type": "integer", "minimum": 0},
+        "catalogRejectedRows": {"type": "integer", "minimum": 0}
+      }
+    },
+    "checksums": {
+      "type": "object",
+      "required": ["graph.sqlite"],
+      "additionalProperties": false,
+      "properties": {
+        "graph.sqlite": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "bytes"],
+          "properties": {
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "bytes": {"type": "integer", "minimum": 0}
+          }
+        },
+        "quality-report.json": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "bytes"],
+          "properties": {
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "bytes": {"type": "integer", "minimum": 0}
+          }
+        },
+        "QUALITY_REPORT.md": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "bytes"],
+          "properties": {
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "bytes": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "metadata": {"type": "object"}
+  }
+}

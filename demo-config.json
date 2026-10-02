@@ -1,0 +1,59 @@
+{
+  "name": "code-map-demo",
+  "root": "${CODE_MAP_DEMO_ROOT}",
+  "output": "${CODE_TREE_OUTPUT}",
+  "inputData": "${CODE_MAP_INPUT_DATA}",
+  "catalog": {
+    "folder": "${CODE_TREE_CATALOG}",
+    "strict": true
+  },
+  "sources": [
+    {
+      "name": "customer-web",
+      "type": "angular",
+      "system": "code-map-demo",
+      "repository": "customer-web",
+      "folders": ["customer-web/src/app"],
+      "appConfig": "customer-web/src/assets/appconfig.json"
+    },
+    {
+      "name": "order-api",
+      "type": "dotnet-api",
+      "system": "code-map-demo",
+      "repository": "order-api",
+      "folders": ["order-api"],
+      "database": "DB1",
+      "schema": "APP",
+      "sqlDialect": "oracle"
+    },
+    {
+      "name": "order-fulfillment",
+      "type": "dotnet-batch",
+      "system": "code-map-demo",
+      "repository": "order-fulfillment",
+      "folders": ["order-fulfillment"],
+      "database": "DB1",
+      "schema": "APP",
+      "sqlDialect": "oracle"
+    },
+    {
+      "name": "order-db",
+      "type": "oracle-plsql",
+      "system": "code-map-demo",
+      "repository": "order-db",
+      "folders": ["order-db"],
+      "database": "DB1",
+      "schema": "APP",
+      "localRoutines": ["VALIDATE_LINES"]
+    },
+    {
+      "name": "order-ops",
+      "type": "sql-files",
+      "system": "code-map-demo",
+      "repository": "order-ops",
+      "folders": ["order-ops"],
+      "database": "DB1",
+      "schema": "APP"
+    }
+  ]
+}

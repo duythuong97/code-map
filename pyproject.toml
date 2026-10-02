@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-tree-exporter"
+version = "3.0.0"
+description = "Extract source code into enriched SQLite graphs and export queryable Markdown projections"
+requires-python = ">=3.10"
+dependencies = ["antlr4-python3-runtime==4.13.2"]
+
+[project.scripts]
+code-tree-exporter = "code_tree_exporter.cli:main"
+code-tree-export-markdown = "code_tree_exporter.markdown_export:main"
+code-tree-query = "code_tree_exporter.query:main"
+
+[tool.setuptools.packages.find]
+include = ["code_tree_exporter*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+code_tree_exporter = [
+  "contract/*.json",
+  "contract/*.md",
+  "contract/json-schemas/*.json",
+  "extractors/angular-extractor/main.mjs",
+  "extractors/angular-extractor/main.py",
+  "extractors/angular-extractor/package.json",
+  "extractors/dotnet-api-extractor/main.py",
+  "extractors/dotnet-api-extractor/*.cs",
+  "extractors/dotnet-api-extractor/*.csproj",
+  "extractors/dotnet-batch-extractor/main.py",
+  "extractors/dotnet-batch-extractor/*.cs",
+  "extractors/dotnet-batch-extractor/*.csproj",
+  "extractors/plsql-extractor/main.py",
+  "extractors/sql-file-extractor/main.py",
+  "extractors/_roslyn/*.cs",
+  "extractors/package_support/antlr_plsql_generated/*.md",
+  "extractors/package_support/antlr_plsql_generated/LICENSE",
+]

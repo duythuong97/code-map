@@ -1,7 +1,13 @@
+# Local machine configuration
+.env
+.env.*
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
 .venv/
 venv/
 env/
@@ -9,9 +15,12 @@ env/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
 
-# Local databases / generated outputs
+# Generated graphs and local databases
+output/
+.artifacts/
 *.db
 *.db-*
 *.sqlite
@@ -21,20 +30,18 @@ htmlcov/
 
 # Node / frontend
 node_modules/
-application/frontend/node_modules/
 application/frontend/dist/
 application/frontend/.vite/
-extractors/**/bin/
-extractors/**/obj/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment / secrets
-.env
-.env.*
-!.env.example
+# .NET
+bin/
+obj/
+*.user
+*.suo
 
 # OS / editor
 .DS_Store
@@ -43,9 +50,13 @@ pnpm-debug.log*
 !.vscode/settings.json
 !.vscode/tasks.json
 .idea/
+*.swp
 
 # Logs / temp
 *.log
+*.tmp
 tmp/
 temp/
+build/
+dist/
 .playwright-mcp
