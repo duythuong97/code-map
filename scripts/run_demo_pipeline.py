@@ -1,52 +1,38 @@
 #!/usr/bin/env python3
-"""Extract configured sources, validate packages, then import SQLite."""
+"""Extract the demo sources into graph.sqlite, then import it for the UI."""
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from application.runtime_env import project_path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from application.runtime_env import project_path  # noqa: E402
 
 # The interpreter running this script (.venv/bin/python on macOS/Linux,
 # .venv\Scripts\python.exe on Windows); a hardcoded bin/python breaks Windows.
 PYTHON = Path(sys.executable)
+CONFIG = project_path("demo-config.json")
+OUTPUT = project_path("output", "demo")
 DB = project_path("data", "code-flow-demo.sqlite")
-INPUT_ROOT = project_path("input-data")
-OUTPUT_ROOT = project_path("output")
-STEPS = [
-    ("Angular", [PYTHON, project_path("extractors", "angular-extractor", "main.py"), "--config", project_path("configs", "angular-customer-web.json")]),
-    (".NET API", [PYTHON, project_path("extractors", "dotnet-api-extractor", "main.py"), "--config", project_path("configs", "dotnet-api-order-api.json")]),
-    (".NET batch", [PYTHON, project_path("extractors", "dotnet-batch-extractor", "main.py"), "--config", project_path("configs", "dotnet-batch-order-fulfillment.json")]),
-    ("PL/SQL", [PYTHON, project_path("extractors", "plsql-extractor", "main.py"), "--config", project_path("configs", "plsql-order-db.json")]),
-    ("SQL files", [PYTHON, project_path("extractors", "sql-file-extractor", "main.py"), "--config", project_path("configs", "sql-order-ops.json")]),
-    ("Validate CSV", [PYTHON, "-m", "application.backend.cli", "validate", OUTPUT_ROOT]),
-    ("Import SQLite", [PYTHON, "-m", "application.backend.cli", "import", OUTPUT_ROOT, "--db", DB, "--input-root", INPUT_ROOT]),
-    ("SQLite integrity", [PYTHON, "-m", "application.backend.cli", "integrity", "--db", DB]),
-]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fresh", action="store_true", help="Delete the demo SQLite DB before import")
     args = parser.parse_args()
-
-    for command in ("node", "dotnet"):
-        if not shutil.which(command):
-            raise SystemExit(f"Missing required command: {command}")
-    required = [INPUT_ROOT / name for name in ("tables.csv", "jobnet.csv", "executable-mappings.csv", "localized-metadata.csv")]
-    missing = [str(path) for path in required if not path.is_file()]
-    if not list((INPUT_ROOT / "tables").glob("*.csv")):
-        missing.append(str(INPUT_ROOT / "tables/*.csv"))
-    if missing:
-        raise SystemExit("Missing authoritative CSV files: " + ", ".join(missing))
     if args.fresh:
         for suffix in ("", "-shm", "-wal"):
-            (Path(str(DB) + suffix)).unlink(missing_ok=True)
-
-    for label, command in STEPS:
+            Path(str(DB) + suffix).unlink(missing_ok=True)
+    steps = [
+        ("Validate config and runtimes", [PYTHON, "-m", "code_tree_exporter", "validate", "--config", CONFIG]),
+        ("Extract graph", [PYTHON, "-m", "code_tree_exporter", "extract", "--config", CONFIG]),
+        ("Import graph", [PYTHON, "-m", "application.backend.cli", "import-graph", OUTPUT, "--db", DB]),
+        ("SQLite integrity", [PYTHON, "-m", "application.backend.cli", "integrity", "--db", DB]),
+    ]
+    for label, command in steps:
         print(f"\n== {label} ==", flush=True)
         subprocess.run([str(part) for part in command], check=True)
     print(f"\nDone: {DB}")

@@ -1,6 +1,6 @@
 {
   "name": "code-map-demo",
-  "root": "${CODE_MAP_DEMO_ROOT}",
+  "root": "${CODE_MAP_SOURCE_ROOT}",
   "output": "${CODE_TREE_OUTPUT}",
   "inputData": "${CODE_MAP_INPUT_DATA}",
   "catalog": {

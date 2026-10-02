@@ -736,6 +736,23 @@ def validate_imports():
     roots_or_response = _import_roots_from_request()
     if not isinstance(roots_or_response, list):
         return roots_or_response
+    graph_roots = [root for root in roots_or_response if (root / "graph.sqlite").is_file()]
+    if graph_roots:
+        from application.backend.importer.graph_sqlite import inspect_graph
+
+        try:
+            graphs = [inspect_graph(root) for root in graph_roots]
+        except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError) as exc:
+            return error("validation_failed", "Graph validation failed", 400, reason=_safe_error_text(exc))
+        return jsonify({
+            "status": "valid",
+            "package_count": len(graphs),
+            "packages": [
+                {"root": _repo_relative(root), "name": graph["name"], "contract_version": graph["contract_version"],
+                 "packages": graph["packages"], "counts": graph["counts"]}
+                for root, graph in zip(graph_roots, graphs)
+            ],
+        })
     try:
         from application.backend.importer import pipeline
         from application.backend.importer.package_validator import validate_package
@@ -756,6 +773,17 @@ def imports_create():
     roots_or_response = _import_roots_from_request()
     if not isinstance(roots_or_response, list):
         return roots_or_response
+    graph_roots = [root for root in roots_or_response if (root / "graph.sqlite").is_file()]
+    if graph_roots:
+        if len(graph_roots) != 1 or len(roots_or_response) != 1:
+            return error("invalid_request", "Import exactly one extracted graph directory at a time")
+        from application.backend.importer.graph_sqlite import import_graph
+
+        try:
+            counts = import_graph(graph_roots[0], Path(_graph_db_path()), project_path("input-data"))
+        except (OSError, ValueError, RuntimeError, sqlite3.Error, json.JSONDecodeError) as exc:
+            return error("import_failed", "Graph import failed", 400, reason=_safe_error_text(exc))
+        return jsonify({"status":"imported","package_count":1,"counts":counts}), 201
     try:
         from application.backend.importer import pipeline
 
@@ -794,7 +822,7 @@ def _import_roots_from_request():
     for value in raw_roots:
         root = _local_package_root(value)
         if root is None:
-            return error("invalid_path", "Package paths must be absolute directories under the configured project output directory")
+            return error("invalid_path", "Paths must be absolute directories under the configured project output directory")
         roots.append(root)
     roots = list(dict.fromkeys(roots))
     if not roots:

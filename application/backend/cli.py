@@ -1,4 +1,4 @@
-"""CLI for validating and importing CSV graph packages."""
+"""CLI for importing extracted graphs into the serving database."""
 
 from __future__ import annotations
 
@@ -30,6 +30,12 @@ def main() -> int:
     publish.add_argument("root", type=Path)
     publish.add_argument("--db", type=Path, default=project_path("data", "code-flow-demo.sqlite"))
     publish.add_argument("--input-root", type=Path, default=project_path("input-data"))
+    import_graph_parser = commands.add_parser(
+        "import-graph", help="Import a code-tree graph.sqlite (or its output directory)"
+    )
+    import_graph_parser.add_argument("graph", type=Path)
+    import_graph_parser.add_argument("--db", type=Path, default=project_path("data", "code-flow-demo.sqlite"))
+    import_graph_parser.add_argument("--input-root", type=Path, default=project_path("input-data"))
     integrity = commands.add_parser("integrity")
     integrity.add_argument("--db", type=Path, default=project_path("data", "code-flow-demo.sqlite"))
     args = parser.parse_args()
@@ -49,6 +55,10 @@ def main() -> int:
                 }
             )
         )
+    elif args.command == "import-graph":
+        from application.backend.importer.graph_sqlite import import_graph
+
+        print(json.dumps({"status": "imported", "counts": import_graph(args.graph, args.db, args.input_root)}))
     else:
         with closing(sqlite3.connect(args.db)) as db:
             initialize(db)

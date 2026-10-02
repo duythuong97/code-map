@@ -1,4 +1,77 @@
-# Code Tree Exporter
+# Code Map
+
+Repository gồm hai phần:
+
+- **Engine** `code_tree_exporter/` (trước đây là repo code-tree): scan source
+  Angular, .NET API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi graph vào
+  `graph.sqlite`.
+- **Ứng dụng** `application/` (backend Flask + UI React): import
+  `graph.sqlite` vào database phục vụ UI rồi hiển thị flow, lineage, evidence.
+
+```text
+source ──extract──▶ output/<run>/graph.sqlite ──import-graph──▶ data/*.sqlite ──▶ API/UI
+```
+
+## Chạy demo end-to-end
+
+Yêu cầu: Python 3.10+, .NET SDK 9+ (khuyến nghị; xem phần hiệu năng), Node.js
+cho Angular và để build UI.
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm install --prefix code_tree_exporter/extractors/angular-extractor typescript
+cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT và CODE_MAP_SOURCE_ROOT
+.venv/bin/python scripts/run_demo_pipeline.py --fresh
+```
+
+Trên Windows dùng `.venv\Scripts\python.exe`. Script chạy lần lượt `validate`,
+`extract` (ra `output/demo/graph.sqlite`), `import-graph` (vào
+`data/code-flow-demo.sqlite`) và kiểm tra integrity. Lần đầu có .NET, các worker
+được build một lần (vài phút) rồi tái sử dụng.
+
+Chạy UI:
+
+```bash
+npm ci --prefix application/frontend && npm run build --prefix application/frontend
+.venv/bin/python application/backend/api/server.py   # http://127.0.0.1:8000/code-map/
+```
+
+Import một graph khác vào UI:
+
+```bash
+.venv/bin/python -m application.backend.cli import-graph <output-dir-or-graph.sqlite>
+```
+
+API `POST /api/graph/imports` cũng nhận thư mục output (nằm dưới `output/`) chứa
+`graph.sqlite`. Adapter đổi vocabulary của engine sang vocabulary UI
+(`READS_FROM`→`READS`/`REMOTE_READS`, `WRITES_TO`→`INSERTS`/`UPDATES`/`DELETES`/
+`MERGES`, `HANDLES_API`→`HANDLED_BY`), dùng flow đã materialize của engine để
+tạo path đọc/ghi, và lấy tên tiếng Nhật/Anh của bảng, cột từ `input-data/tables*.csv`.
+
+## Hiệu năng: parser SQL trên .NET
+
+Parse Oracle SQL/PL-SQL (ANTLR grammars-v4) là phần nặng nhất. Engine có hai
+backend cho cùng grammar, chọn bằng `CODE_TREE_SQL_PARSER`:
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| `auto` (mặc định) | dùng .NET khi có `dotnet`, nếu không thì Python |
+| `dotnet` | bắt buộc .NET, lỗi nếu không chạy được |
+| `python` | luôn dùng ANTLR Python (chậm) |
+
+- `code_tree_exporter/extractors/_sql/` (`CodeTree.Sql`): port 1:1 facade
+  `oracle_parser.py` và semantic projector sang C#. Offset tính theo code point
+  nên kết quả giống hệt bản Python (`tests/test_dotnet_sql_parity.py`).
+- `extractors/sql-service/`: service JSON-lines cho extractor Python; extractor
+  PL/SQL và SQL file gửi toàn bộ chunk trong một batch, .NET parse song song.
+- Extractor Roslyn (.NET API/batch) gọi `CodeTree.Sql` ngay trong process, không
+  còn bridge sang Python.
+- Worker được build theo major version của SDK đang cài và publish ReadyToRun
+  (fallback build thường nếu publish lỗi; tắt bằng `CODE_TREE_DOTNET_READY_TO_RUN=0`).
+
+Demo (không cache): .NET 3.9s, Python 20.6s; graph sinh ra giống hệt nhau.
+`CODE_TREE_SQL_THREADS` giới hạn số thread parse của service.
 
 Project chạy theo hai bước độc lập. Bước extract đọc source, tạo node/edge và
 ghi vào `graph.sqlite`; bước export Markdown đọc lại database này để tạo
@@ -50,7 +123,7 @@ map header nguồn sang schema chuẩn và có thể compile thành `jobnet.csv`
 ```json
 {
   "name": "order-system",
-  "root": "${CODE_MAP_DEMO_ROOT}",
+  "root": "${CODE_MAP_SOURCE_ROOT}",
   "output": "${CODE_TREE_OUTPUT}",
   "inputData": "${CODE_MAP_INPUT_DATA}",
   "catalog": {
@@ -146,7 +219,8 @@ declaration/literal với confidence tối đa `0.5` và ghi
 
 ### Demo
 
-Repository có sẵn `sample-source/`, `input-data/` và catalog mẫu:
+Repository có sẵn `sample-source/`, `input-data/` và catalog mẫu. Chỉ chạy engine
+(không import vào UI):
 
 ```text
 cp .env.example .env
@@ -159,9 +233,9 @@ Angular) và trả exit code `1` khi thiếu runtime bắt buộc. `extract` cũ
 ngay từ đầu trong trường hợp này thay vì chạy các extractor khác rồi mới báo
 lỗi. Khi có extractor lỗi, thông báo liệt kê mọi source lỗi kèm lý do.
 
-### Hiệu năng parser PL/SQL
+### Cache DFA cho backend Python
 
-Parser ANTLR PL/SQL chạy trên Python mất 5–20 giây cho lần parse đầu tiên trong
+Khi dùng backend Python, parser ANTLR PL/SQL mất 5–20 giây cho lần parse đầu tiên trong
 mỗi process, vì phải dựng DFA dự đoán. Sau lần chạy đầu, DFA được lưu vào cache
 cho từng entry point (`plsql-extractor`, `sql-file-extractor`, bridge SQL của
 .NET, pipeline) nên các lần sau chỉ cần nạp lại. Với demo, thời gian giảm từ
@@ -251,8 +325,15 @@ gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 ## Cấu trúc source
 
 ```text
-code_tree_exporter/     # package, contract, extractor runtimes
-scripts/                # tiện ích repository, không cài thành CLI
+code_tree_exporter/     # engine: package, contract, extractor runtimes
+  extractors/_sql/      # CodeTree.Sql: ANTLR PL/SQL trên .NET
+  extractors/sql-service/  # service JSON-lines cho extractor Python
+application/            # backend API (Flask) + frontend (React)
+  backend/importer/graph_sqlite.py  # import graph.sqlite vào DB phục vụ UI
+sample-source/          # source demo
+input-data/             # CSV thủ công (jobnet, tên JA/EN của bảng, ...)
+examples/v3/catalog/    # catalog demo cho engine
+scripts/                # run_demo_pipeline.py
 cli.py                  # compatibility shim
 pyproject.toml          # build, dependency, package resources
 ```
