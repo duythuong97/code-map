@@ -1,4 +1,0 @@
-column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
-AUDIT_ID,監査ID,Audit ID,1,NUMBER,false,,
-SHIPMENT_ID,出荷ID,Shipment ID,2,NUMBER,false,,SHIPMENT
-STATUS,ステータス,Status,3,VARCHAR2,false,,

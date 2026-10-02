@@ -1,8 +1,0 @@
-{
-  "type": "angular",
-  "source": "customer-web",
-  "root": "${CODE_MAP_SOURCE_ROOT}/customer-web",
-  "folders": ["src/app"],
-  "appConfig": "src/assets/appconfig.json",
-  "output": "${CODE_MAP_PROJECT_ROOT}/output/angular/customer-web"
-}

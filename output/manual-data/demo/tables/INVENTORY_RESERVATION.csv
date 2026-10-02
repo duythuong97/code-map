@@ -1,6 +1,0 @@
-column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
-RESERVATION_ID,引当ID,Reservation ID,1,NUMBER,false,,
-ORDER_ID,注文ID,Order ID,2,NUMBER,false,,ORDER_HEADER
-PRODUCT_ID,商品ID,Product ID,3,NUMBER,false,,
-QUANTITY,数量,Quantity,4,NUMBER,false,,
-STATUS,ステータス,Status,5,VARCHAR2,false,,

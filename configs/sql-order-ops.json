@@ -1,9 +1,0 @@
-{
-  "type": "sql-files",
-  "source": "order-ops",
-  "system": "order-ops",
-  "database": "ORDER_DB",
-  "root": "${CODE_MAP_SOURCE_ROOT}/order-ops",
-  "inputData": "${CODE_MAP_PROJECT_ROOT}/input-data",
-  "output": "${CODE_MAP_PROJECT_ROOT}/output/sql-files/order-ops"
-}

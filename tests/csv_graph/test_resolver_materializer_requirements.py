@@ -8,7 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 from application.backend.importer.pipeline import initialize, materialize, resolve
-from contract.graph_contract import canonical_edge_id
+from code_tree_exporter.contract.graph_contract import canonical_edge_id
 
 
 class ResolverMaterializerRequirementsTest(unittest.TestCase):

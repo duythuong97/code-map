@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
-from contract.graph_contract import (
+from code_tree_exporter.contract.graph_contract import (
     EDGE_TYPES,
     GRAPH_LAYERS,
     GRAPH_ROLES,

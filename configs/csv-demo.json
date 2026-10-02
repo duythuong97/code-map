@@ -1,6 +1,0 @@
-{
-  "type": "csv-normalizer",
-  "source": "authoritative-csv-demo",
-  "root": "${CODE_MAP_PROJECT_ROOT}/input-data",
-  "output": "${CODE_MAP_PROJECT_ROOT}/output/manual-data/demo"
-}

@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 
 from application.backend.config import CSV_ENCODINGS
-from contract.entities import ExtractionContext, MetadataFact
+from application.backend.database.entities import ExtractionContext, MetadataFact
 _FIELD_ALIASES = {
     "db_name", "db", "schema_name", "schema",
     "table_code", "table", "table_name", "mã table",

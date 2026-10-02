@@ -1,7 +1,0 @@
-issue_id,issue_type,severity,source_node_id,raw_reference,database_key,source_path,start_line,message,properties_json
-issue:7c045200f34da3014cb0b3f2,TABLE_NOT_IMPORTED,ERROR,repository:order-api:OrderRepository,ORDER_ARCHIVE_TMP,ORDER_DB,demo-sources/order-api/OrderFlow.cs,136,Table is absent from authoritative catalog,{}
-issue:818a832a31e3b9b5aab4f433,COLUMN_NOT_IMPORTED,WARNING,repository:order-api:OrderRepository,ORDER_HEADER.LEGACY_STATUS,ORDER_DB,demo-sources/order-api/OrderFlow.cs,140,Column is absent from authoritative catalog,{}
-issue:9070fa267e398dcd280904ee,DYNAMIC_SQL,WARNING,repository:order-api:OrderRepository,"$""SELECT * FROM ORDER_APP.{tableName}""",ORDER_DB,demo-sources/order-api/OrderFlow.cs,162,Runtime SQL target cannot be resolved,"{""evaluated"":""SELECT * FROM ORDER_APP.{tableName}"",""expression"":""$\u0022SELECT * FROM ORDER_APP.{tableName}\u0022""}"
-issue:c272bace5063a197899c98c4,PROCEDURE_NOT_FOUND,ERROR,repository:order-api:OrderRepository,PKG_ORDER.SUBMIT_LEGACY,ORDER_DB,demo-sources/order-api/OrderFlow.cs,149,Procedure was not resolved,{}
-issue:d2949cab562bbf214e79abf1,AMBIGUOUS_SYMBOL,WARNING,repository:order-api:OrderRepository,IOrderCalculator.Calculate,ORDER_DB,demo-sources/order-api/OrderFlow.cs,113,IOrderCalculator.Calculate has multiple reachable implementations,{}
-issue:fa56ee4ec34bfb5dcac873a4,COLUMN_NOT_IMPORTED,WARNING,repository:order-api:OrderRepository,ORDER_HEADER.LEGACY_STATUS,ORDER_DB,demo-sources/order-api/OrderFlow.cs,141,Column is absent from authoritative catalog,{}

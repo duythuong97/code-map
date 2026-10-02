@@ -1,4 +1,0 @@
-issue_id,issue_type,severity,source_node_id,raw_reference,database_key,source_path,start_line,message,properties_json
-issue:54fe761c1ba7340aababc6e6,API_ROUTE_NOT_MATCHED,WARNING,,/legacy/orders,,demo-sources/customer-web/src/app/order-flow.ts,86,Legacy route is not matched by any extracted API operation,{}
-issue:855a5c699b122bcf0b4d3239,API_ROUTE_AMBIGUOUS,WARNING,,GET /api/orders/{id},,demo-sources/customer-web/src/app/order-flow.ts,89,Route may match multiple API operations,{}
-issue:d1f45ba871c3f2629bf2f16e,DYNAMIC_CONFIG_KEY,WARNING,angular-service:customer-web:dynamicordercaller,this.config[endpointName],,demo-sources/customer-web/src/app/order-flow.ts,95,Runtime configuration key cannot be resolved,{}

@@ -1,5 +1,0 @@
-jobnet_id,jobnet_name,job_id,job_name,executable_name,arguments,predecessor_job_id
-ORDER_DAILY,Order daily flow,ALLOCATE_ORDERS,Allocate orders,OrderFulfillment.exe,--mode allocate,
-ORDER_DAILY,Order daily flow,CREATE_SHIPMENTS,Create shipments,OrderFulfillment.exe,--mode ship,ALLOCATE_ORDERS
-ORDER_DAILY,Order daily flow,RECONCILE_ORDERS,Reconcile orders,OrderReconcile.exe,--mode reconcile,CREATE_SHIPMENTS
-ORDER_DAILY,Order daily flow,UNMAPPED_EXPORT,Unmapped partner export,PartnerExport.exe,,RECONCILE_ORDERS

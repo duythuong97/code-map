@@ -1,3 +1,0 @@
-issue_id,issue_type,severity,source_node_id,raw_reference,database_key,source_path,start_line,message,properties_json
-issue:4034f76b66782d37bdc2cb4f,DYNAMIC_SQL,INFO,procedure:ORDER_DB:PKG_ORDER:ALLOCATE_ORDER:NUMBER,EXECUTE IMMEDIATE,ORDER_DB,order_flow.sql,140,Dynamic SQL was analyzed with best-effort literal resolution,{}
-issue:5273430aa126a383c3654254,EXTERNAL_OBJECT,INFO,function:ORDER_DB:PKG_ORDER:CALCULATE_TOTAL:NUMBER,TAX_SCHEMA.TAX_RATE@TAX_DB_LINK,ORDER_DB,order_flow.sql,77,Reference is outside selected database scope,{}

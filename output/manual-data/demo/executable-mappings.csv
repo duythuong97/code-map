@@ -1,3 +1,0 @@
-job_system,executable_name,executable_scope,canonical_executable_name,alias
-batch-system,OrderFulfillment.exe,batch-system,orderfulfillment.exe,order-fulfillment
-batch-system,OrderReconcile.exe,batch-system,orderreconcile.exe,order-reconcile

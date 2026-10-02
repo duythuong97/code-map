@@ -1,3 +1,0 @@
-target_type,target_id,field_name,locale,value,source_kind,review_status,author_name,created_at,updated_at
-NODE,column:ORDER_DB:ORDER_HEADER:STATUS,name,en,Order status,IMPORTED,APPROVED,demo,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z
-NODE,table:ORDER_DB:ORDER_HEADER,name,ja,注文,IMPORTED,APPROVED,demo,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z

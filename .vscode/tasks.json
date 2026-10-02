@@ -2,28 +2,14 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Test PL/SQL migration",
-			"type": "process",
-			"command": "${command:python.interpreterPath}",
-			"args": [
-				"-m",
-				"unittest",
-				"tests.test_plsql_extractor",
-				"tests.test_plsql_coverage_matrix"
-			],
-			"problemMatcher": [],
-			"group": "test"
-		},
-		{
-			"label": "Validate canonical PL/SQL",
+			"label": "Test .NET/Python SQL parity",
 			"type": "process",
 			"command": "${command:python.interpreterPath}",
 			"args": [
 				"-m",
 				"unittest",
 				"-v",
-				"tests.test_plsql_extractor",
-				"tests.test_plsql_coverage_matrix"
+				"tests.test_dotnet_sql_parity"
 			],
 			"problemMatcher": [],
 			"group": "test"
@@ -40,19 +26,6 @@
 				"tests",
 				"-p",
 				"test_*.py",
-				"-v"
-			],
-			"problemMatcher": [],
-			"group": "test"
-		},
-		{
-			"label": "handler-transition-regression",
-			"type": "process",
-			"command": "${command:python.interpreterPath}",
-			"args": [
-				"-m",
-				"unittest",
-				"tests.test_scanner_state.ExtractionTruthTest.test_failed_handler_transition_preserves_old_file_until_replacement_succeeds",
 				"-v"
 			],
 			"problemMatcher": [],

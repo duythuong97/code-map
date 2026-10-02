@@ -1,6 +1,6 @@
 import unittest
 
-from contract.graph_contract import (
+from code_tree_exporter.contract.graph_contract import (
     api_operation_id, canonical_edge_id, column_id, normalize_http_route,
     normalize_oracle_identifier, normalize_repository_path, routine_id, sql_file_id,
     table_id, validate_edge_fields, validate_node_fields, validate_properties_json,

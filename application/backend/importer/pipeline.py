@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 from application.backend.importer.package_validator import CSV_HEADERS, validate_package
-from contract.graph_contract import canonical_edge_id, column_id, normalize_http_route, normalize_oracle_identifier, table_id
+from code_tree_exporter.contract.graph_contract import canonical_edge_id, column_id, normalize_http_route, normalize_oracle_identifier, table_id
 
 SCHEMA = """
 PRAGMA foreign_keys=ON;

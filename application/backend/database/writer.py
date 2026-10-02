@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
-from contract.entities import ExtractionResult, MetadataFact
+from application.backend.database.entities import ExtractionResult, MetadataFact
 from application.backend.database.state import Lease, assert_lease, utc_now
 
 DDL = """
