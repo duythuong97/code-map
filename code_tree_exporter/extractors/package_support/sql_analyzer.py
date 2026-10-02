@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from code_tree_exporter.extractors.package_support.oracle_parser import OraclePlsqlParser
+from code_tree_exporter.extractors.package_support.oracle_parser import OraclePlsqlParser, parse_plsql
 
 @dataclass(frozen=True)
 class TableReference:
@@ -35,8 +35,8 @@ class SqlAnalysis:
     classification: str
 
 
-def analyze_sql(text: str) -> SqlAnalysis:
-    parser = OraclePlsqlParser(text)
+def analyze_sql(text: str, parser: OraclePlsqlParser | None = None) -> SqlAnalysis:
+    parser = parser or parse_plsql(text)
     tables = []
     for reference in parser.table_references():
         remote = bool(reference.db_link)

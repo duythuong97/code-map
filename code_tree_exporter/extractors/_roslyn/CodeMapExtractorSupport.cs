@@ -907,6 +907,29 @@ public static class SqlAnalyzer
     static readonly object Gate = new();
     static Process? _process;
 
+    // Close stdin and let the Python bridge exit normally so it can persist its
+    // warmed ANTLR DFA cache; killing it would lose the cache on every run.
+    static SqlAnalyzer() => AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
+
+    public static void Shutdown()
+    {
+        lock (Gate)
+        {
+            if (_process is { HasExited: false } running)
+            {
+                try
+                {
+                    running.StandardInput.Close();
+                    running.WaitForExit(60_000);
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }
+            _process = null;
+        }
+    }
+
     public static SqlAnalysis Analyze(string text)
     {
         lock (Gate)

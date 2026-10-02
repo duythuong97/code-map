@@ -1,0 +1,3 @@
+column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
+SUMMARY_DATE,集計日,Summary Date,1,DATE,false,,
+ORDER_COUNT,注文件数,Order Count,2,NUMBER,false,,

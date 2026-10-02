@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import re
 
 OP_TO_EDGE = {
@@ -140,6 +141,9 @@ class OraclePlsqlParser:
         from antlr4.error.ErrorListener import ErrorListener
         from code_tree_exporter.extractors.package_support.antlr_plsql_generated.PlSqlLexer import PlSqlLexer
         from code_tree_exporter.extractors.package_support.antlr_plsql_generated.PlSqlParser import PlSqlParser
+        from code_tree_exporter.extractors.package_support.antlr_warm_cache import ensure_loaded
+
+        ensure_loaded()
 
         class _ErrorCollector(ErrorListener):
             def __init__(self) -> None:
@@ -504,3 +508,9 @@ class OraclePlsqlParser:
         if not left or not right:
             return None
         return self.text[left.symbol.start : right.symbol.stop + 1]
+
+
+@lru_cache(maxsize=8)
+def parse_plsql(text: str) -> OraclePlsqlParser:
+    """Parse ``text`` once per process; callers only read from the result."""
+    return OraclePlsqlParser(text)

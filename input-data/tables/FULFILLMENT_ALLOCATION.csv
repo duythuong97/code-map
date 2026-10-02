@@ -1,0 +1,4 @@
+column_code,column_name_ja,column_name_en,ordinal_position,data_type,nullable,note,relation_table
+ALLOCATION_ID,割当ID,Allocation ID,1,NUMBER,false,,
+ORDER_ID,注文ID,Order ID,2,NUMBER,false,,ORDER_HEADER
+STATUS,ステータス,Status,3,VARCHAR2,false,,

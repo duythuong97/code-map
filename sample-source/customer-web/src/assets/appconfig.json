@@ -1,0 +1,8 @@
+{
+  "createOrder": "/order-api/api/orders",
+  "getOrderDetail": "/order-api/api/orders",
+  "orderDetail": "/order-api/api/orders",
+  "retryOrder": "/order-api/api/orders/retry",
+  "updateStatus": "/order-api/api/orders",
+  "confirmShipment": "/order-api/api/shipments"
+}

@@ -103,8 +103,11 @@ expression và call arguments bị lược bỏ khỏi semantic tree. Dùng
 `combinedProjection`, `knowledgeChunking` và `maxTreeLines` được lưu vào
 metadata SQLite làm mặc định cho bước export Markdown. `maxTreeLines` chỉ giới
 hạn projection Markdown; `maxFileBytes` ghi
-`FILE_TOO_LARGE` và bỏ riêng file đó. `extractorTimeoutSeconds` giới hạn toàn bộ
-worker; `projectTimeoutSeconds` giới hạn từng lần Roslyn mở solution/project.
+`FILE_TOO_LARGE` và bỏ riêng file đó. `extractorTimeoutSeconds` (mặc định 3600) giới hạn
+toàn bộ worker; `projectTimeoutSeconds` (mặc định 900) giới hạn từng lần Roslyn
+mở solution/project. Config bị từ chối nếu `extractorTimeoutSeconds` nhỏ hơn
+`projectTimeoutSeconds`, vì khi đó worker bị kill trước khi kịp load xong một
+project lớn và source biến mất khỏi graph.
 
 Runtime tùy extractor: Python 3.10+, Node.js + TypeScript cho Angular, .NET SDK
 9+ cho Roslyn. Có thể chỉ định executable không nằm trong `PATH` bằng
@@ -140,6 +143,36 @@ declaration/literal với confidence tối đa `0.5` và ghi
 `SEMANTIC_TREE_UNAVAILABLE`.
 
 ## Chạy
+
+### Demo
+
+Repository có sẵn `sample-source/`, `input-data/` và catalog mẫu:
+
+```text
+cp .env.example .env
+python3 -m code_tree_exporter validate --config "$PWD/demo-config.json"
+python3 -m code_tree_exporter extract --config "$PWD/demo-config.json"
+```
+
+`validate` kiểm tra cả runtime ngoài (`dotnet` cho source `.NET`, `node` cho
+Angular) và trả exit code `1` khi thiếu runtime bắt buộc. `extract` cũng dừng
+ngay từ đầu trong trường hợp này thay vì chạy các extractor khác rồi mới báo
+lỗi. Khi có extractor lỗi, thông báo liệt kê mọi source lỗi kèm lý do.
+
+### Hiệu năng parser PL/SQL
+
+Parser ANTLR PL/SQL chạy trên Python mất 5–20 giây cho lần parse đầu tiên trong
+mỗi process, vì phải dựng DFA dự đoán. Sau lần chạy đầu, DFA được lưu vào cache
+cho từng entry point (`plsql-extractor`, `sql-file-extractor`, bridge SQL của
+.NET, pipeline) nên các lần sau chỉ cần nạp lại. Với demo, thời gian giảm từ
+khoảng 21s xuống khoảng 6.5s, output không đổi.
+
+- `CODE_TREE_CACHE_DIR`: đổi thư mục cache (mặc định `~/.cache/code-tree`, hoặc
+  `%LOCALAPPDATA%\code-tree\cache` trên Windows).
+- `CODE_TREE_ANTLR_CACHE=0`: tắt cache.
+
+Cache tự bị bỏ qua khi grammar, phiên bản ANTLR runtime hoặc Python thay đổi.
+Mỗi file cache khoảng 20–30 MB; có thể xóa bất cứ lúc nào.
 
 ### 1. Extract graph vào SQLite
 

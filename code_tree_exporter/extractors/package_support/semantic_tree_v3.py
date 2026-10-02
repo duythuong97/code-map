@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from code_tree_exporter.extractors.package_support.oracle_parser import OraclePlsqlParser
+from code_tree_exporter.extractors.package_support.oracle_parser import parse_plsql
 from code_tree_exporter.extractors.package_support.package_writer import line_for_offset
 from code_tree_exporter.extractors.package_support.sql_analyzer import analyze_sql
 
@@ -67,7 +67,7 @@ class _PlsqlProjector:
         self.text = _standalone_routine_text(text)
         self.source_path = source_path
         self.base_line = base_line
-        self.parser = OraclePlsqlParser(self.text)
+        self.parser = parse_plsql(self.text)
         self.antlr = self.parser._antlr_parser
         self.calls = self.parser.calls()
 

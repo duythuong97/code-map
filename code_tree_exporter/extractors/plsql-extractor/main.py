@@ -38,6 +38,7 @@ from code_tree_exporter.extractors.package_support.package_writer import (
 )
 from code_tree_exporter.extractors.package_support.oracle_parser import (
     OraclePlsqlParser,
+    parse_plsql,
     ParsedCallReference,
     ParsedRoutineDeclaration,
 )
@@ -205,8 +206,8 @@ def _extract_file(
     local_routines: set[str],
     semantic_detail: str,
 ) -> None:
-    parser = OraclePlsqlParser(text)
-    full_analysis = analyze_sql(text)
+    parser = parse_plsql(text)
+    full_analysis = analyze_sql(text, parser)
     if parser.syntax_errors:
         details = "; ".join(
             f"line {line}:{column} {message}"

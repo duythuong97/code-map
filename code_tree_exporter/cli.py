@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "validate":
             result = validate_pipeline_config(Path(args.config))
             print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
+            return 0 if result["valid"] else 1
         if args.list_source_types:
             print("\n".join(supported_source_types()))
             return 0

@@ -85,6 +85,13 @@ def run_pipeline(config_path: Path) -> Path:
         raise ValueError("outputMode must be 'flat' or 'partitioned'")
     limits = _resolved_limits(config)
     allow_partial_extraction = config.get("allowPartialExtraction") is True
+    missing_runtimes = _missing_required_runtimes(check_runtimes(validated_sources))
+    if missing_runtimes and not allow_partial_extraction:
+        # Fail before decoding/staging anything instead of after other
+        # extractors have already spent minutes.
+        raise ValueError(
+            "Missing runtime for configured sources: " + "; ".join(missing_runtimes)
+        )
     graph = GraphPackage()
     for source in validated_sources:
         graph.register_source(
@@ -183,15 +190,22 @@ def run_pipeline(config_path: Path) -> Path:
         # that type runs in parallel.
         _prewarm_dotnet_workers(jobs)
         results = _run_extractors_parallel(jobs, limits["maxParallelExtractors"])
+        failures = [
+            _failure_summary(job.source_name, issues)
+            for job in jobs
+            for extracted, issues in (results[job.source_name],)
+            if not extracted
+        ]
+        if failures and not allow_partial_extraction:
+            raise ValueError(
+                f"{len(failures)} of {len(jobs)} extractor(s) failed; "
+                "set allowPartialExtraction=true to publish a partial graph:\n"
+                + "\n".join(failures)
+            )
         for job in jobs:
             extracted, issues = results[job.source_name]
             for issue in issues:
                 graph.add_issue(**issue)
-            if not extracted and not allow_partial_extraction:
-                raise ValueError(
-                    f"Extractor failed for source {job.source_name}; "
-                    "set allowPartialExtraction=true to publish a partial graph"
-                )
             api_operations_before = sum(
                 node.get("node_type") == "API_OPERATION"
                 for node in graph.nodes.values()
@@ -289,8 +303,12 @@ def validate_pipeline_config(config_path: Path) -> dict[str, object]:
             "columns": len(catalog.columns),
             "issues": len(catalog.issues),
         } if catalog else None
+    runtimes = check_runtimes(validated_sources)
+    missing_runtimes = _missing_required_runtimes(runtimes)
     return {
-        "valid": True,
+        "valid": not missing_runtimes,
+        "missingRuntimes": missing_runtimes,
+        "runtimes": runtimes,
         "version": "3.0",
         "name": str(config.get("name") or root.name),
         "root": str(root),
@@ -301,6 +319,39 @@ def validate_pipeline_config(config_path: Path) -> dict[str, object]:
         "limits": limits,
         "catalog": catalog_summary,
     }
+
+
+def check_runtimes(sources: list[dict]) -> dict[str, dict[str, object]]:
+    """Report the external runtimes the configured source types need."""
+    types = {str(source["type"]) for source in sources}
+    result: dict[str, dict[str, object]] = {}
+    if types & set(_DOTNET_WORKER_PROJECTS):
+        dotnet = os.environ.get("CODE_TREE_DOTNET") or shutil.which("dotnet")
+        result["dotnet"] = {
+            "required": True,
+            "found": bool(dotnet),
+            "path": dotnet or "",
+            "hint": "" if dotnet else "Install .NET SDK 9+ or set CODE_TREE_DOTNET",
+        }
+    if "angular" in types:
+        node = os.environ.get("CODE_TREE_NODE") or shutil.which("node")
+        result["node"] = {
+            "required": False,
+            "found": bool(node),
+            "path": node or "",
+            "hint": ""
+            if node
+            else "Install Node.js or set CODE_TREE_NODE; Angular falls back to a degraded regex scanner",
+        }
+    return result
+
+
+def _missing_required_runtimes(runtimes: dict[str, dict[str, object]]) -> list[str]:
+    return [
+        f"{name}: {info['hint']}"
+        for name, info in runtimes.items()
+        if info["required"] and not info["found"]
+    ]
 
 
 def _load_config(path: Path) -> dict:
@@ -397,17 +448,27 @@ def _resolved_limits(config: dict) -> dict[str, int]:
         owner = {key: limits.get(key, config.get(key, default))}
         return _positive_int(owner, key, default, minimum=minimum)
 
-    return {
+    result = {
         "maxTreeLines": value("maxTreeLines", 20_000, 10),
         "maxFileBytes": value("maxFileBytes", 10 * 1024 * 1024, 1024),
         "maxEvidenceSnippetChars": value("maxEvidenceSnippetChars", 500),
         "maxIssuesPerTypePerFile": value("maxIssuesPerTypePerFile", 20),
-        "extractorTimeoutSeconds": value("extractorTimeoutSeconds", 300),
+        "extractorTimeoutSeconds": value("extractorTimeoutSeconds", 3600),
         "projectTimeoutSeconds": value("projectTimeoutSeconds", 900),
         "maxParallelExtractors": value(
             "maxParallelExtractors", min(os.cpu_count() or 4, 8)
         ),
     }
+    # extractorTimeoutSeconds kills the whole worker; if it is shorter than the
+    # time one Roslyn project may take to load, big solutions are always cut off
+    # and the source silently disappears from the graph.
+    if result["extractorTimeoutSeconds"] < result["projectTimeoutSeconds"]:
+        raise ValueError(
+            "extractorTimeoutSeconds "
+            f"({result['extractorTimeoutSeconds']}) must be >= projectTimeoutSeconds "
+            f"({result['projectTimeoutSeconds']})"
+        )
+    return result
 
 
 def _validate_data_paths(config: dict, sources: list[dict], output: Path) -> None:
@@ -585,36 +646,48 @@ def _selected_files(root: Path, folders: list, suffixes: tuple[str, ...]) -> lis
         paths = (
             [candidate]
             if candidate.is_file()
-            else candidate.rglob("*") if candidate.is_dir() else []
+            else _walk_files(candidate) if candidate.is_dir() else []
         )
         for path in paths:
+            if path.suffix.lower() not in suffix_set:
+                continue
             resolved = path.resolve()
             if resolved != root and root not in resolved.parents:
                 raise ValueError(f"source file escapes root: {path}")
-            if (
-                path.is_file()
-                and path.suffix.lower() in suffix_set
-                and not (_BLOCKED_DIRECTORIES & {part.lower() for part in path.parts})
-            ):
+            # Only directories below root are filtered: a root that itself lives
+            # under e.g. D:/build/... must not exclude every file.
+            if path.is_file() and not _in_blocked_directory(resolved, root):
                 result.add(path)
     return sorted(result, key=lambda path: path.relative_to(root).as_posix())
 
 
+def _walk_files(directory: Path):
+    """Yield files below ``directory`` without descending into blocked folders
+    (node_modules, bin, obj, .git, ...); rglob would walk them all first."""
+    for current, directories, files in os.walk(directory):
+        directories[:] = [
+            name for name in directories if name.lower() not in _BLOCKED_DIRECTORIES
+        ]
+        base = Path(current)
+        for name in files:
+            yield base / name
+
+
+def _in_blocked_directory(resolved: Path, root: Path) -> bool:
+    return bool(
+        _BLOCKED_DIRECTORIES
+        & {part.lower() for part in resolved.relative_to(root).parts[:-1]}
+    )
+
+
 def _expand_dotnet_selection(root: Path, selected: list[Path]) -> list[Path]:
     result = set(selected)
-    for path in root.rglob("*"):
-        is_msbuild_file = _safe_source_file(
-            path, root, {".props", ".targets", ".proj", ".rsp"}
-        )
-        is_dotnet_config = (
-            path.is_file()
-            and path.name.lower() in {"global.json", "nuget.config"}
-            and not (
-                _BLOCKED_DIRECTORIES
-                & {part.lower() for part in path.relative_to(root).parts}
-            )
-        )
-        if is_msbuild_file or is_dotnet_config:
+    msbuild_suffixes = {".props", ".targets", ".proj", ".rsp"}
+    for path in _walk_files(root):
+        if path.suffix.lower() in msbuild_suffixes:
+            if _safe_source_file(path, root, msbuild_suffixes):
+                result.add(path)
+        elif path.name.lower() in {"global.json", "nuget.config"} and path.is_file():
             result.add(path)
     projects: list[Path] = [
         path for path in selected if path.suffix.lower() == ".csproj"
@@ -637,8 +710,10 @@ def _expand_dotnet_selection(root: Path, selected: list[Path]) -> list[Path]:
             continue
         seen_projects.add(project)
         result.add(project)
-        for path in project.parent.rglob("*"):
-            if _safe_source_file(
+        for path in _walk_files(project.parent):
+            if path.suffix.lower() in {
+                ".cs", ".xml", ".config", ".json"
+            } and _safe_source_file(
                 path, root, {".cs", ".xml", ".config", ".json"}
             ):
                 result.add(path)
@@ -665,10 +740,7 @@ def _safe_source_file(path: Path, root: Path, suffixes: set[str]) -> bool:
         resolved.is_file()
         and (resolved == root or root in resolved.parents)
         and resolved.suffix.lower() in suffixes
-        and not (
-            _BLOCKED_DIRECTORIES
-            & {part.lower() for part in resolved.relative_to(root).parts}
-        )
+        and not _in_blocked_directory(resolved, root)
     )
 
 
@@ -818,7 +890,9 @@ def _extractor_config(
     result["folders"] = _staged_folders(source["folders"])
     if spec.config_type == "angular":
         result.setdefault("appConfig", "")
-        result["_typescriptPath"] = _typescript_path(Path(global_config["root"]))
+        result["_typescriptPath"] = _typescript_path(
+            Path(global_config["root"]), source["folders"]
+        )
     if spec.config_type in {"dotnet-api", "dotnet-batch"}:
         result["xmlMapperQueries"] = _xml_mapper_queries(staging_root, valid_paths)
     return result
@@ -1105,6 +1179,18 @@ def _run_extractor(
     return True, issues
 
 
+def _failure_summary(source_name: str, issues: list[dict[str, object]]) -> str:
+    reasons = [
+        str(issue.get("message") or "")
+        for issue in issues
+        if issue.get("issue_type") in {"PARSE_ERROR", "TIMEOUT"}
+    ]
+    reason = (reasons[-1] if reasons else "unknown error").strip()
+    if len(reason) > 2_000:
+        reason = reason[-2_000:]
+    return f"  - {source_name}: {reason}"
+
+
 def _bounded_subprocess_message(
     completed: subprocess.CompletedProcess[str], fallback: str
 ) -> str:
@@ -1113,19 +1199,30 @@ def _bounded_subprocess_message(
     return message if len(message) <= maximum else message[: maximum - 1] + "…"
 
 
-def _typescript_path(root: Path) -> str:
-    candidates = [
-        root / "node_modules" / "typescript",
-        Path(__file__).resolve().parent
-        / "extractors"
-        / "angular-extractor"
-        / "node_modules"
-        / "typescript",
-    ]
+def _typescript_path(root: Path, folders: list | None = None) -> str:
+    """Resolve TypeScript like Node does: the nearest node_modules walking up
+    from each source folder, then root and the packaged extractor. A recursive
+    ``**/node_modules`` glob over every repository is far too slow."""
+    candidates: list[Path] = []
+    for raw in folders or []:
+        relative = raw.get("path", ".") if isinstance(raw, dict) else raw
+        current = (root / str(relative)).resolve()
+        while current == root or root in current.parents:
+            candidates.append(current / "node_modules" / "typescript")
+            if current == root:
+                break
+            current = current.parent
     candidates.extend(
-        path.parent for path in root.glob("**/node_modules/typescript/package.json")
+        [
+            root / "node_modules" / "typescript",
+            Path(__file__).resolve().parent
+            / "extractors"
+            / "angular-extractor"
+            / "node_modules"
+            / "typescript",
+        ]
     )
     for candidate in candidates:
-        if candidate.exists():
+        if (candidate / "package.json").is_file():
             return str(candidate)
     return "typescript"
