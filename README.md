@@ -36,6 +36,17 @@ py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+Cài TypeScript cho Angular extractor (chỉ cần một lần):
+
+```bash
+npm install --prefix extractors/angular-extractor
+```
+
+`TYPESCRIPT_PATH` chỉ cần khi muốn dùng một bản TypeScript khác.
+
+Để chạy demo, đặt `CODE_MAP_SOURCE_ROOT` trong `.env` trỏ tới thư mục
+`demo-sources` của checkout này, ví dụ `CODE_MAP_SOURCE_ROOT=/path/to/code-map/demo-sources`.
+
 ## 2. CSV nằm ở đâu?
 
 CSV có hai nhóm:

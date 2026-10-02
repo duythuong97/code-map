@@ -16,6 +16,8 @@ htmlcov/
 *.db-*
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 
 # Node / frontend
 node_modules/

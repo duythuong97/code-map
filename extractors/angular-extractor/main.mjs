@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Evidence paths are written relative to the code-map checkout when the
+// scanned root lives inside it (demo-sources), otherwise relative to root.
+const WORKSPACE_ROOT = path.resolve(__dirname, '../..');
 const VERSION = '2.0.0';
 
 const CSV_HEADERS = {
@@ -20,8 +23,8 @@ const CSV_HEADERS = {
 function main() {
   const configPath = argValue('--config');
   if (!configPath) throw new Error('Missing --config');
-  const ts = loadTypeScript();
   const config = loadConfig(configPath);
+  const ts = loadTypeScript(config.root);
   extract(ts, config);
 }
 
@@ -30,13 +33,32 @@ function argValue(name) {
   return index >= 0 ? process.argv[index + 1] : '';
 }
 
-function loadTypeScript() {
-  if (!process.env.TYPESCRIPT_PATH) throw new Error('Missing required environment variable: TYPESCRIPT_PATH');
-  try {
-    return require(process.env.TYPESCRIPT_PATH);
-  } catch {
-    throw new Error(`Cannot load TypeScript from TYPESCRIPT_PATH: ${process.env.TYPESCRIPT_PATH}`);
+let cachedTypeScript;
+
+// TYPESCRIPT_PATH wins when set; otherwise resolve `typescript` the way Node
+// does from the extractor (npm install in extractors/angular-extractor), the
+// scanned source root, and the working directory.
+function loadTypeScript(sourceRoot) {
+  if (cachedTypeScript) return cachedTypeScript;
+  const configured = process.env.TYPESCRIPT_PATH;
+  const attempts = configured
+    ? [[require, configured]]
+    : [
+        [require, 'typescript'],
+        ...(sourceRoot ? [[createRequire(path.join(sourceRoot, 'package.json')), 'typescript']] : []),
+        [createRequire(path.join(process.cwd(), 'package.json')), 'typescript'],
+      ];
+  for (const [load, specifier] of attempts) {
+    try {
+      cachedTypeScript = load(specifier);
+      return cachedTypeScript;
+    } catch {
+      // try the next location
+    }
   }
+  throw new Error(configured
+    ? `Cannot load TypeScript from TYPESCRIPT_PATH: ${configured}`
+    : 'TypeScript not found: run `npm install` in extractors/angular-extractor or set TYPESCRIPT_PATH');
 }
 
 function loadConfig(configPath) {

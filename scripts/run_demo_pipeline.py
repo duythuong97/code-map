@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from application.runtime_env import project_path
 
-PYTHON = project_path(".venv", "bin", "python")
+# The interpreter running this script (.venv/bin/python on macOS/Linux,
+# .venv\Scripts\python.exe on Windows); a hardcoded bin/python breaks Windows.
+PYTHON = Path(sys.executable)
 DB = project_path("data", "code-flow-demo.sqlite")
 INPUT_ROOT = project_path("input-data")
 OUTPUT_ROOT = project_path("output")
