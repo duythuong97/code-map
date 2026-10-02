@@ -26,6 +26,7 @@ from code_tree_exporter.extractors.package_support.package_writer import (
     stable_node_id,
     unresolved_id,
 )
+from code_tree_exporter.extractors.package_support.oracle_parser import prefetch_plsql
 from code_tree_exporter.extractors.package_support.sql_analyzer import analyze_sql
 from code_tree_exporter.extractors.package_support.semantic_tree import attach_sql_semantic_tree
 from code_tree_exporter.extractors.package_support.sql_loader import extract_sql_loader
@@ -83,6 +84,11 @@ def extract(config: dict) -> None:
         },
     )
     builder.files_scanned = len(files)
+    prefetch_plsql(
+        file.text
+        for file in files
+        if (file.database or default_database) and file.absolute.suffix.lower() != ".ctl"
+    )
 
     for file in files:
         database = file.database or default_database

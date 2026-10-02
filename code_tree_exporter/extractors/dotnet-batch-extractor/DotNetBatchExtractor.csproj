@@ -1,13 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <CodeTreeTargetFramework Condition="'$(CodeTreeTargetFramework)' == ''">net9.0</CodeTreeTargetFramework>
+    <TargetFramework>$(CodeTreeTargetFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <TieredPGO>true</TieredPGO>
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../_roslyn/CodeMapExtractorSupport.cs" Link="CodeMapExtractorSupport.cs" />
     <Compile Include="../_roslyn/DotNetWorkspace.cs" Link="DotNetWorkspace.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../_sql/CodeTree.Sql.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Build" Version="17.13.26" ExcludeAssets="runtime" />

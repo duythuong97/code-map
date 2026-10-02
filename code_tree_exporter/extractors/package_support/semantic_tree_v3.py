@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from code_tree_exporter.extractors.package_support.oracle_parser import parse_plsql
+from code_tree_exporter.extractors.package_support.oracle_parser import _parse_python
 from code_tree_exporter.extractors.package_support.package_writer import line_for_offset
 from code_tree_exporter.extractors.package_support.sql_analyzer import analyze_sql
 
@@ -15,7 +15,13 @@ def plsql_steps(
     detail: str = "summary",
 ) -> list[dict]:
     """Project ANTLR syntax into nested behavior facts; deliberately not a CFG."""
-    steps = _PlsqlProjector(builder, owner_id, text, source_path, base_line).steps()
+    from code_tree_exporter.extractors.package_support import dotnet_sql
+
+    remote = dotnet_sql.steps(text, source_path, base_line)
+    if remote is not None:
+        steps = _resolve_remote_refs(builder, owner_id, remote)
+    else:
+        steps = _PlsqlProjector(builder, owner_id, text, source_path, base_line).steps()
     if detail == "full":
         return steps
     if detail == "summary":
@@ -43,6 +49,23 @@ def sql_facts(builder, owner_id: str, text: str, source_path: str, base_line: in
     return sorted(facts, key=lambda fact: (fact["source"]["line"], fact["type"], fact["label"]))
 
 
+def _resolve_remote_refs(builder, owner_id: str, facts):
+    """Link the .NET projector's ``_ref`` markers to graph nodes, exactly as
+    ``_PlsqlProjector._calls`` and ``sql_facts`` do in-process."""
+    if isinstance(facts, list):
+        return [_resolve_remote_refs(builder, owner_id, item) for item in facts]
+    if not isinstance(facts, dict):
+        return facts
+    result = {key: _resolve_remote_refs(builder, owner_id, value) for key, value in facts.items() if key != "_ref"}
+    reference = facts.get("_ref")
+    if reference:
+        target = _edge_target(builder, owner_id, reference["name"], set(reference["edge_types"]))
+        result["resolution"] = "resolved" if target else "unresolved"
+        if target:
+            result["ref_node_id"] = target
+    return result
+
+
 def analysis_notes(builder, owner_id: str, source_path: str, fallback_line: int) -> list[dict]:
     issues = [issue for issue in builder.issues.values() if issue["source_node_id"] == owner_id]
     return [
@@ -67,7 +90,8 @@ class _PlsqlProjector:
         self.text = _standalone_routine_text(text)
         self.source_path = source_path
         self.base_line = base_line
-        self.parser = parse_plsql(self.text)
+        # The Python projector walks the ANTLR tree, so it needs the in-process parser.
+        self.parser = _parse_python(self.text)
         self.antlr = self.parser._antlr_parser
         self.calls = self.parser.calls()
 

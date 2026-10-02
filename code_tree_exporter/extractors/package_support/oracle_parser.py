@@ -510,7 +510,100 @@ class OraclePlsqlParser:
         return self.text[left.symbol.start : right.symbol.stop + 1]
 
 
+class RemoteOraclePlsqlParser:
+    """Read-only view over a parse made by the .NET SQL service.
+
+    Exposes the same query methods as ``OraclePlsqlParser`` (the .NET analyzer
+    is a port of it) but no ANTLR tree; tree walks happen in .NET.
+    """
+
+    def __init__(self, text: str, summary: dict):
+        self.text = text
+        self.syntax_errors = tuple(tuple(error) for error in summary["syntax_errors"])
+        self._summary = summary
+        self._signatures = {
+            (item["start"], item["end"]): item["signature"] for item in summary["routines"]
+        }
+
+    def package_name(self) -> str | None:
+        return self._summary["package_name"]
+
+    def routines(self) -> list[ParsedRoutineDeclaration]:
+        return [
+            ParsedRoutineDeclaration(
+                item["kind"], item["name"], item["parameter_block"], item["start"], item["end"]
+            )
+            for item in self._summary["routines"]
+        ]
+
+    def routine_signature(self, routine: ParsedRoutineDeclaration) -> str:
+        return self._signatures[(routine.start, routine.end)]
+
+    def triggers(self) -> list[ParsedTriggerDeclaration]:
+        return [
+            ParsedTriggerDeclaration(item["name"], item["table_name"], item["start"], item["end"])
+            for item in self._summary["triggers"]
+        ]
+
+    def synonyms(self) -> list[ParsedSynonymDeclaration]:
+        return [
+            ParsedSynonymDeclaration(item["name"], item["target_name"], item["start"])
+            for item in self._summary["synonyms"]
+        ]
+
+    def views(self) -> list[ParsedViewDeclaration]:
+        return [
+            ParsedViewDeclaration(
+                item["kind"], item["name"], item["start"], item["body_start"], item["end"]
+            )
+            for item in self._summary["views"]
+        ]
+
+    def script_classification(self) -> str:
+        return self._summary["script_classification"]
+
+    def table_references(self) -> list[ParsedSqlReference]:
+        return [
+            ParsedSqlReference(
+                item["object_name"], item["operation"], item["relation"], item["start"], item["db_link"]
+            )
+            for item in self._summary["tables"]
+        ]
+
+    def sequences(self) -> list[ParsedSequenceReference]:
+        return [
+            ParsedSequenceReference(item["object_name"], item["operation"], item["start"])
+            for item in self._summary["sequences"]
+        ]
+
+    def calls(self) -> list[ParsedCallReference]:
+        return [ParsedCallReference(item["object_name"], item["start"]) for item in self._summary["calls"]]
+
+    def dynamic_sql_offsets(self) -> list[int]:
+        return list(self._summary["dynamic_offsets"])
+
+    def has_executable_statement(self) -> bool:
+        return self._summary["has_executable_statement"]
+
+
+def parse_plsql(text: str) -> OraclePlsqlParser | RemoteOraclePlsqlParser:
+    """Parse ``text`` once per process with the configured backend
+    (``CODE_TREE_SQL_PARSER``); callers only read from the result."""
+    from code_tree_exporter.extractors.package_support import dotnet_sql
+
+    summary = dotnet_sql.summary(text)
+    if summary is not None:
+        return RemoteOraclePlsqlParser(text, summary)
+    return _parse_python(text)
+
+
+def prefetch_plsql(texts) -> None:
+    """Hint that ``texts`` will be parsed; the .NET backend parses them in parallel."""
+    from code_tree_exporter.extractors.package_support import dotnet_sql
+
+    dotnet_sql.prefetch(texts)
+
+
 @lru_cache(maxsize=8)
-def parse_plsql(text: str) -> OraclePlsqlParser:
-    """Parse ``text`` once per process; callers only read from the result."""
+def _parse_python(text: str) -> OraclePlsqlParser:
     return OraclePlsqlParser(text)

@@ -5,7 +5,8 @@
     Grammar/PlSql*.cs are generated; see Grammar/REGENERATE.md.
   -->
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <CodeTreeTargetFramework Condition="'$(CodeTreeTargetFramework)' == ''">net9.0</CodeTreeTargetFramework>
+    <TargetFramework>$(CodeTreeTargetFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>CodeTree.Sql</RootNamespace>

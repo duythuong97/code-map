@@ -81,6 +81,8 @@ class AntlrWarmCacheTests(unittest.TestCase):
             environment = os.environ | {
                 "CODE_TREE_CACHE_DIR": cache,
                 "CODE_TREE_ANTLR_CACHE_PROFILE": "test",
+                "CODE_TREE_ANTLR_CACHE": "1",
+                "CODE_TREE_SQL_PARSER": "python",
             }
 
             def run() -> str:

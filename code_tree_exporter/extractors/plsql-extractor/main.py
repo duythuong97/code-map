@@ -39,6 +39,7 @@ from code_tree_exporter.extractors.package_support.package_writer import (
 from code_tree_exporter.extractors.package_support.oracle_parser import (
     OraclePlsqlParser,
     parse_plsql,
+    prefetch_plsql,
     ParsedCallReference,
     ParsedRoutineDeclaration,
 )
@@ -117,7 +118,7 @@ def extract(config: dict) -> None:
         _VERSION,
         {
             "source": source,
-            "technology": "Python + ANTLR4 runtime Oracle PL/SQL parser",
+            "technology": "ANTLR4 Oracle PL/SQL parser (.NET service or Python runtime)",
             "parser": "extractors.package_support.oracle_parser.OraclePlsqlParser",
             "semanticDetail": semantic_detail,
             "extractorContract": "3.0",
@@ -142,29 +143,30 @@ def extract(config: dict) -> None:
         database_key=database,
     )
 
+    units = []
     for file in files:
-        file_database = file.database or database
         chunks = re.split(r'(?m)^\s*/\s*$', file.text)
         base_line = 1
         for chunk in chunks:
-            if not chunk.strip():
-                base_line += chunk.count('\n') + 1
-                continue
-            # Prepend newlines so line_for_offset returns absolute line numbers
-            padded = '\n' * (base_line - 1) + chunk
-            _extract_file(
-                builder,
-                file.relative,
-                padded,
-                file_database,
-                schema,
-                repository,
-                system_key,
-                catalog,
-                local_routines,
-                semantic_detail,
-            )
+            if chunk.strip():
+                # Prepend newlines so line_for_offset returns absolute line numbers
+                units.append((file, '\n' * (base_line - 1) + chunk))
             base_line += chunk.count('\n') + 1
+    # One parallel batch on the .NET backend; a no-op for the Python parser.
+    prefetch_plsql(padded for _, padded in units)
+    for file, padded in units:
+        _extract_file(
+            builder,
+            file.relative,
+            padded,
+            file.database or database,
+            schema,
+            repository,
+            system_key,
+            catalog,
+            local_routines,
+            semantic_detail,
+        )
 
     for node in config.get("supplementalNodes", []):
         builder.add_node(

@@ -902,72 +902,29 @@ public sealed class Catalog
            && columns.Contains(ExtractorRuntime.OracleIdentifier(column));
 }
 
+/// <summary>
+/// Oracle SQL analysis for embedded SQL strings, in-process on the shared
+/// CodeTree.Sql library (the same analyzer the Python extractors use through
+/// the SQL service). Offsets are returned as UTF-16 indexes into the input.
+/// </summary>
 public static class SqlAnalyzer
 {
-    static readonly object Gate = new();
-    static Process? _process;
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SqlAnalysis> Cache = new(StringComparer.Ordinal);
 
-    // Close stdin and let the Python bridge exit normally so it can persist its
-    // warmed ANTLR DFA cache; killing it would lose the cache on every run.
-    static SqlAnalyzer() => AppDomain.CurrentDomain.ProcessExit += (_, _) => Shutdown();
+    public static SqlAnalysis Analyze(string text) => Cache.GetOrAdd(text, Compute);
 
-    public static void Shutdown()
+    static SqlAnalysis Compute(string text)
     {
-        lock (Gate)
-        {
-            if (_process is { HasExited: false } running)
-            {
-                try
-                {
-                    running.StandardInput.Close();
-                    running.WaitForExit(60_000);
-                }
-                catch (InvalidOperationException)
-                {
-                }
-            }
-            _process = null;
-        }
-    }
-
-    public static SqlAnalysis Analyze(string text)
-    {
-        lock (Gate)
-        {
-            var process = Process();
-            process.StandardInput.WriteLine(JsonSerializer.Serialize(new { text }));
-            process.StandardInput.Flush();
-            var response = process.StandardOutput.ReadLine();
-            if (response is null)
-            {
-                var error = process.StandardError.ReadToEnd();
-                _process = null;
-                throw new InvalidOperationException($"Oracle SQL parser stopped unexpectedly: {error}");
-            }
-            return JsonSerializer.Deserialize<SqlAnalysis>(response)
-                ?? throw new InvalidOperationException("Oracle SQL parser returned an empty analysis");
-        }
-    }
-
-    static Process Process()
-    {
-        if (_process is { HasExited: false }) return _process;
-        var python = Environment.GetEnvironmentVariable("CODE_TREE_PYTHON")
-            ?? Environment.GetEnvironmentVariable("PYTHON")
-            ?? (OperatingSystem.IsWindows() ? "python" : "python3");
-        var script = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "package_support", "sql_analyzer_cli.py"));
-        if (!File.Exists(script)) throw new FileNotFoundException("Oracle SQL parser bridge not found", script);
-        _process = System.Diagnostics.Process.Start(new ProcessStartInfo
-        {
-            FileName = python,
-            ArgumentList = { script },
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        }) ?? throw new InvalidOperationException("Could not start Oracle SQL parser");
-        return _process;
+        var parse = new CodeTree.Sql.OracleSqlParse(text);
+        var analysis = CodeTree.Sql.OracleSqlAnalysis.From(parse);
+        int Utf16(int offset) => parse.Source.ToUtf16(offset);
+        return new SqlAnalysis(
+            analysis.Tables.Select(item => new TableReference(item.ObjectName, item.Operation, item.EdgeType, Utf16(item.Start), item.Remote, item.DbLink)).ToList(),
+            analysis.Calls.Select(item => new ProcedureReference(item.ObjectName, Utf16(item.Start))).ToList(),
+            analysis.Sequences.Select(item => new SequenceReference(item.ObjectName, item.Operation, Utf16(item.Start))).ToList(),
+            analysis.DynamicOffsets.Select(Utf16).ToList(),
+            analysis.ParseErrorOffsets.Select(Utf16).ToList(),
+            analysis.Recognized);
     }
 }
 

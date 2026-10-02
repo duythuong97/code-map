@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from code_tree_exporter.env_loader import load_dotenv
 
 def worker_assembly_path(script_path: Path, project_name: str) -> Path:
     project = script_path.with_name(project_name)
-    return project.parent / "bin" / "Release" / "net9.0" / (project.stem + ".dll")
+    return project.parent / "bin" / "codetree" / (project.stem + ".dll")
 
 
 def ensure_worker_built(
@@ -24,22 +25,81 @@ def ensure_worker_built(
     parallel must pre-warm each distinct worker sequentially first."""
     project = script_path.with_name(project_name)
     assembly = worker_assembly_path(script_path, project_name)
+    extractors = project.parent.parent
     sources = [
         project,
         *project.parent.glob("*.cs"),
-        *project.parent.parent.joinpath("_roslyn").glob("*.cs"),
+        *extractors.joinpath("_roslyn").glob("*.cs"),
+        *extractors.joinpath("_sql").rglob("*.cs"),
+        *extractors.joinpath("_sql").glob("*.csproj"),
     ]
-    if assembly.is_file() and not any(
-        source.stat().st_mtime_ns > assembly.stat().st_mtime_ns
-        for source in sources
-        if source.is_file()
+    environment = _extractor_environment(dotnet, None)
+    # Target the installed SDK's runtime: ReadyToRun code compiled for an
+    # older major version is discarded when the app rolls forward.
+    framework = f"net{max(9, _sdk_major(dotnet, environment) or 9)}.0"
+    stamp = assembly.parent / ".target-framework"
+    if (
+        assembly.is_file()
+        and stamp.is_file()
+        and stamp.read_text(encoding="utf-8").strip() == framework
+        and not any(
+            source.stat().st_mtime_ns > assembly.stat().st_mtime_ns
+            for source in sources
+            if source.is_file()
+        )
     ):
         return 0
-    build = subprocess.run(
-        [dotnet, "build", str(project), "-c", "Release", "--nologo"],
-        env=_extractor_environment(dotnet, None),
-    )
-    return build.returncode
+    common = [
+        "-c", "Release", f"-p:CodeTreeTargetFramework={framework}",
+        "-o", str(assembly.parent), "--nologo",
+    ]
+    rid = _runtime_identifier()
+    returncode = 1
+    if rid and os.environ.get("CODE_TREE_DOTNET_READY_TO_RUN", "1") != "0":
+        # ReadyToRun precompiles the worker (and the large generated PL/SQL
+        # parser) so each run skips most JIT work.
+        returncode = subprocess.run(
+            [
+                dotnet, "publish", str(project), *common, "-r", rid,
+                "--self-contained", "false", "-p:PublishReadyToRun=true",
+            ],
+            env=environment,
+        ).returncode
+        if returncode:
+            print(
+                f"warning: ReadyToRun publish of {project.name} failed; using a plain build",
+                file=sys.stderr,
+            )
+    if returncode:
+        returncode = subprocess.run(
+            [dotnet, "build", str(project), *common], env=environment
+        ).returncode
+    if returncode == 0:
+        stamp.write_text(framework, encoding="utf-8")
+    return returncode
+
+
+def _sdk_major(dotnet: str, environment: dict[str, str]) -> int | None:
+    try:
+        result = subprocess.run(
+            [dotnet, "--version"],
+            cwd=Path(__file__).resolve().parent,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        return int(result.stdout.strip().split(".", 1)[0]) if result.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _runtime_identifier() -> str | None:
+    machine = platform.machine().lower()
+    arch = {"x86_64": "x64", "amd64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
+    system = {"linux": "linux", "darwin": "osx", "win32": "win"}.get(sys.platform)
+    return f"{system}-{arch}" if arch and system else None
 
 
 def run_dotnet_extractor(
@@ -86,6 +146,11 @@ def _config_root(config: dict[str, object]) -> Path | None:
         return None
     path = Path(value).expanduser()
     return path.resolve() if path.is_dir() else None
+
+
+def dotnet_environment(dotnet: str, source_root: Path | None = None) -> dict[str, str]:
+    """Environment for running a packaged .NET worker with ``dotnet``."""
+    return _extractor_environment(dotnet, source_root)
 
 
 def _extractor_environment(

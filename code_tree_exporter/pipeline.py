@@ -994,6 +994,8 @@ def _xml_mapper_queries(root: Path, paths: list[str]) -> list[str]:
     return sorted(queries)
 
 
+_SQL_SOURCE_TYPES = frozenset({"oracle-plsql", "sql-files", "dotnet-api", "dotnet-batch"})
+
 _DOTNET_WORKER_PROJECTS = {
     "dotnet-api": "DotNetApiExtractor.csproj",
     "dotnet-batch": "DotNetBatchExtractor.csproj",
@@ -1009,11 +1011,22 @@ def _prewarm_dotnet_workers(jobs: list[_ExtractionJob]) -> None:
     would otherwise retry the same build independently once several of them
     run concurrently, reintroducing the exact race this function exists to
     prevent."""
-    needed = {job.spec.config_type for job in jobs} & set(_DOTNET_WORKER_PROJECTS)
-    if not needed:
-        return
+    types = {job.spec.config_type for job in jobs}
+    needed = types & set(_DOTNET_WORKER_PROJECTS)
     dotnet = os.environ.get("CODE_TREE_DOTNET") or shutil.which("dotnet")
     if not dotnet:
+        return
+    if types & _SQL_SOURCE_TYPES:
+        from .extractors.package_support import dotnet_sql
+
+        if dotnet_sql.backend() != "python":
+            try:
+                dotnet_sql.ensure_built(dotnet)
+            except dotnet_sql.SqlServiceError:
+                if dotnet_sql.backend() == "dotnet":
+                    raise
+                # auto: each extractor falls back to the Python parser.
+    if not needed:
         return
     built: set[str] = set()
     for job in jobs:
