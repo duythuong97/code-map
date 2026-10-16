@@ -26,6 +26,7 @@ from .graph_package import (
     validate_output_directory,
 )
 from .linker import run_linker
+from .rag_export import write_rag_database
 from .v3.catalog import prepare_catalog
 from .v3.hierarchy import enrich_hierarchy
 from .v3.publisher import publish_v3
@@ -271,6 +272,13 @@ def run_pipeline(config_path: Path) -> Path:
         del graph
         gc.collect()
         publish_v3(final_staging, catalog=catalog, config=config)
+        if config.get("ragExport", True) is not False:
+            write_rag_database(
+                final_staging / "graph.sqlite",
+                final_staging / "codemap-rag.sqlite",
+                input_root=_existing_input_root(config),
+                source_root=root,
+            )
         replace_directory(final_staging, output)
     return output
 

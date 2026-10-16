@@ -1,0 +1,142 @@
+{
+  "name": "codemap-graph-rag",
+  "displayName": "Code Map Graph RAG",
+  "description": "Ask business questions about your code: @codemap answers from the Code Map graph (APIs, tables, batch jobs, business dictionary) with file:line evidence.",
+  "version": "0.1.0",
+  "publisher": "codemap",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["AI", "Chat", "Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["workspaceContains:**/codemap-rag.sqlite", "onStartupFinished"],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "codemap.chat",
+        "name": "codemap",
+        "fullName": "Code Map",
+        "description": "Ask about business flows, tables, APIs and batch jobs",
+        "isSticky": true,
+        "commands": [
+          { "name": "impact", "description": "What reads, writes or depends on this table / API / procedure" },
+          { "name": "flow", "description": "End-to-end flow from a screen, API or job down to the data" },
+          { "name": "explain", "description": "Business role of the active file (or selection)" },
+          { "name": "gaps", "description": "Business terms, jobs and references the graph cannot connect" }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "codemap_query",
+        "displayName": "Code Map: query graph",
+        "toolReferenceName": "codemap",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(type-hierarchy)",
+        "userDescription": "Find the business concepts, code, tables and jobs related to a question.",
+        "modelDescription": "Searches the Code Map knowledge graph of this codebase (screens, APIs, methods, PL/SQL, SQL files, tables, columns, batch jobs) together with the business dictionary (business terms in Vietnamese/English/Japanese and their code aliases). Returns numbered facts with file:line evidence. Use it for questions about business meaning, data lineage (who reads or writes a table), end-to-end flows and batch jobs, before reading source files.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "question": { "type": "string", "description": "The question or the names to look up, in any language." },
+            "mode": { "type": "string", "enum": ["ask", "impact", "flow"], "description": "ask (default): related facts; impact: who depends on the named item; flow: follow calls/data downstream." }
+          },
+          "required": ["question"]
+        }
+      },
+      {
+        "name": "codemap_file_context",
+        "displayName": "Code Map: file context",
+        "toolReferenceName": "codemapFile",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(file-code)",
+        "userDescription": "What the graph knows about a source file: its APIs, methods, tables it touches and business terms.",
+        "modelDescription": "Returns what the Code Map graph knows about one source file: the nodes declared in it (APIs, methods, procedures, screens), the tables and APIs they reach, the batch jobs that start them and the business terms linked to them, with file:line evidence.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "Workspace-relative or absolute path of the source file." }
+          },
+          "required": ["path"]
+        }
+      }
+    ],
+    "commands": [
+      { "command": "codemap.runExtract", "title": "Run Extract (rebuild graph)", "category": "Code Map" },
+      { "command": "codemap.reload", "title": "Reload Graph Database", "category": "Code Map" },
+      { "command": "codemap.selectDatabase", "title": "Select Graph Database…", "category": "Code Map" },
+      { "command": "codemap.status", "title": "Show Graph Status", "category": "Code Map" }
+    ],
+    "configuration": {
+      "title": "Code Map",
+      "properties": {
+        "codemap.databasePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to codemap-rag.sqlite. Empty: the first codemap-rag.sqlite found in the workspace."
+        },
+        "codemap.sourceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Folder the evidence paths are relative to. Empty: the root recorded by the extract, then the workspace folders."
+        },
+        "codemap.extract.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "Extract config JSON (the one passed to `code_tree_exporter extract --config`)."
+        },
+        "codemap.extract.enginePath": {
+          "type": "string",
+          "default": "",
+          "description": "Folder containing the code_tree_exporter package (the code-map repository)."
+        },
+        "codemap.extract.python": {
+          "type": "string",
+          "default": "python",
+          "description": "Python executable used to run the extract."
+        },
+        "codemap.retrieval.maxNodes": {
+          "type": "number",
+          "default": 40,
+          "minimum": 5,
+          "maximum": 200,
+          "description": "Maximum graph nodes put into one answer's context."
+        },
+        "codemap.retrieval.hops": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "How far to walk the graph from the matched nodes."
+        },
+        "codemap.retrieval.maxContextChars": {
+          "type": "number",
+          "default": 16000,
+          "minimum": 2000,
+          "description": "Character budget of the facts sent to the model."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "node esbuild.mjs && tsc -p tsconfig.test.json && node --test --test-force-exit out/test/*.test.js",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license -o codemap-graph-rag.vsix",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "sql.js": "1.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.0",
+    "@types/sql.js": "1.4.9",
+    "@types/vscode": "1.95.0",
+    "@vscode/vsce": "3.6.0",
+    "esbuild": "0.25.5",
+    "typescript": "5.8.3"
+  }
+}

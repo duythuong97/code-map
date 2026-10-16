@@ -120,6 +120,27 @@ không đổi stable/numeric ID của graph V2. Config chạy mẫu là
 [`demo-config.json`](demo-config.json); bốn CSV bootstrap nằm trong
 [`examples/v3/catalog`](examples/v3/catalog).
 
+## Graph RAG trong VS Code
+
+Mỗi lần extract đều ghi thêm `codemap-rag.sqlite` cạnh `graph.sqlite`. File này
+gồm graph đã lược gọn và dữ liệu nghiệp vụ trong `inputData`: từ điển nghiệp vụ,
+tên bảng/cột ja/en, jobnet. Kèm theo là chỉ mục từ khoá. Muốn tắt thì đặt
+`"ragExport": false` trong config. Nếu đã có output thì tạo lại bằng:
+
+```bash
+python -m code_tree_exporter rag-export --graph output/demo --input-data input-data
+```
+
+Extension `vscode-extension/` đọc file này và trả lời bằng model chat của VS Code:
+`@codemap hủy đơn hàng ghi vào bảng nào?`, `/impact`, `/flow`, `/explain`,
+`/gaps`. Ngoài ra có tool `#codemap` cho Agent mode. Cách build và cài xem
+[vscode-extension/README.md](vscode-extension/README.md).
+
+Đo trên nopCommerce (17.585 node, 83.485 cạnh):
+- Xuất file: 14 giây, file 47MB (graph gốc 223MB).
+- Mỗi câu hỏi: 13–72 ms.
+- RAM của extension: 47–107MB.
+
 ## V3 bootstrap
 
 Khởi tạo catalog bằng bốn file:

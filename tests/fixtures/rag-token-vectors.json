@@ -1,0 +1,103 @@
+[
+ {
+  "text": "Hủy đơn hàng",
+  "tokens": [
+   "huy",
+   "don",
+   "hang"
+  ],
+  "compact": "huydonhang"
+ },
+ {
+  "text": "CreateOrderComponent",
+  "tokens": [
+   "create",
+   "order",
+   "component"
+  ],
+  "compact": "createordercomponent"
+ },
+ {
+  "text": "注文明細 Order_Header",
+  "tokens": [
+   "注文",
+   "文明",
+   "明細",
+   "order",
+   "header"
+  ],
+  "compact": "注文明細orderheader"
+ },
+ {
+  "text": "POST /api/minimal/orders",
+  "tokens": [
+   "post",
+   "api",
+   "minimal",
+   "orders"
+  ],
+  "compact": "postapiminimalorders"
+ },
+ {
+  "text": "HTTPServerError",
+  "tokens": [
+   "http",
+   "server",
+   "error"
+  ],
+  "compact": "httpservererror"
+ },
+ {
+  "text": "Trạng thái đơn hàng là gì?",
+  "tokens": [
+   "trang",
+   "thai",
+   "don",
+   "hang"
+  ],
+  "compact": "trangthaidonhanglagi"
+ },
+ {
+  "text": "ĐƠN HÀNG",
+  "tokens": [
+   "don",
+   "hang"
+  ],
+  "compact": "donhang"
+ },
+ {
+  "text": "PKG_ORDER.CREATE_ORDER",
+  "tokens": [
+   "pkg",
+   "order",
+   "create",
+   "order"
+  ],
+  "compact": "pkgordercreateorder"
+ },
+ {
+  "text": "ステータス",
+  "tokens": [
+   "ステ",
+   "テー",
+   "ータ",
+   "タス"
+  ],
+  "compact": "ステータス"
+ },
+ {
+  "text": "a b of the 3",
+  "tokens": [],
+  "compact": "abofthe3"
+ },
+ {
+  "text": "café_au_lait2Go",
+  "tokens": [
+   "cafe",
+   "au",
+   "lait2",
+   "go"
+  ],
+  "compact": "cafeaulait2go"
+ }
+]

@@ -33,6 +33,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_parser.add_argument("--config", required=True)
 
+    rag_parser = commands.add_parser(
+        "rag-export",
+        description="Write codemap-rag.sqlite (graph + business data) for the VS Code extension.",
+    )
+    rag_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
+    rag_parser.add_argument("--input-data", help="Folder with semantic-dictionary.csv, tables.csv, jobnet.csv ...")
+    rag_parser.add_argument("--source-root", help="Folder the evidence paths are relative to.")
+    rag_parser.add_argument("--out", help="Output file (default: codemap-rag.sqlite next to graph.sqlite).")
+
     catalog_parser = commands.add_parser(
         "catalog", description="Inspect and validate incoming catalog files."
     )
@@ -60,6 +69,20 @@ def main(argv: list[str] | None = None) -> int:
                 Path(args.path), encoding=str(args.encoding)
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "rag-export":
+            from .rag_export import write_rag_database
+            from .sqlite_graph import resolve_database_path
+
+            graph = resolve_database_path(Path(args.graph))
+            output = Path(args.out) if args.out else graph.with_name("codemap-rag.sqlite")
+            counts = write_rag_database(
+                graph,
+                output,
+                input_root=Path(args.input_data) if args.input_data else None,
+                source_root=Path(args.source_root).resolve() if args.source_root else None,
+            )
+            print(json.dumps({"output": str(output), "counts": counts}, ensure_ascii=False))
             return 0
         if args.command == "validate":
             result = validate_pipeline_config(Path(args.config))
