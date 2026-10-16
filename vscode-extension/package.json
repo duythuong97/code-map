@@ -9,9 +9,16 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "categories": ["AI", "Chat", "Other"],
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["workspaceContains:**/codemap-rag.sqlite", "onStartupFinished"],
+  "activationEvents": [
+    "workspaceContains:**/codemap-rag.sqlite",
+    "onStartupFinished"
+  ],
   "contributes": {
     "chatParticipants": [
       {
@@ -21,10 +28,22 @@
         "description": "Ask about business flows, tables, APIs and batch jobs",
         "isSticky": true,
         "commands": [
-          { "name": "impact", "description": "What reads, writes or depends on this table / API / procedure" },
-          { "name": "flow", "description": "End-to-end flow from a screen, API or job down to the data" },
-          { "name": "explain", "description": "Business role of the active file (or selection)" },
-          { "name": "gaps", "description": "Business terms, jobs and references the graph cannot connect" }
+          {
+            "name": "impact",
+            "description": "What reads, writes or depends on this table / API / procedure"
+          },
+          {
+            "name": "flow",
+            "description": "End-to-end flow from a screen, API or job down to the data"
+          },
+          {
+            "name": "explain",
+            "description": "Business role of the active file (or selection)"
+          },
+          {
+            "name": "gaps",
+            "description": "Business terms, jobs and references the graph cannot connect"
+          }
         ]
       }
     ],
@@ -40,10 +59,23 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "question": { "type": "string", "description": "The question or the names to look up, in any language." },
-            "mode": { "type": "string", "enum": ["ask", "impact", "flow"], "description": "ask (default): related facts; impact: who depends on the named item; flow: follow calls/data downstream." }
+            "question": {
+              "type": "string",
+              "description": "The question or the names to look up, in any language."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "ask",
+                "impact",
+                "flow"
+              ],
+              "description": "ask (default): related facts; impact: who depends on the named item; flow: follow calls/data downstream."
+            }
           },
-          "required": ["question"]
+          "required": [
+            "question"
+          ]
         }
       },
       {
@@ -57,17 +89,49 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "description": "Workspace-relative or absolute path of the source file." }
+            "path": {
+              "type": "string",
+              "description": "Workspace-relative or absolute path of the source file."
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         }
       }
     ],
     "commands": [
-      { "command": "codemap.runExtract", "title": "Run Extract (rebuild graph)", "category": "Code Map" },
-      { "command": "codemap.reload", "title": "Reload Graph Database", "category": "Code Map" },
-      { "command": "codemap.selectDatabase", "title": "Select Graph Database…", "category": "Code Map" },
-      { "command": "codemap.status", "title": "Show Graph Status", "category": "Code Map" }
+      {
+        "command": "codemap.runExtract",
+        "title": "Run Extract (rebuild graph)",
+        "category": "Code Map"
+      },
+      {
+        "command": "codemap.reload",
+        "title": "Reload Graph Database",
+        "category": "Code Map"
+      },
+      {
+        "command": "codemap.selectDatabase",
+        "title": "Select Graph Database…",
+        "category": "Code Map"
+      },
+      {
+        "command": "codemap.status",
+        "title": "Show Graph Status",
+        "category": "Code Map"
+      },
+      {
+        "command": "codemap.showMap",
+        "title": "Show Map…",
+        "category": "Code Map",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "codemap.showMapForFile",
+        "title": "Show This File in Code Map",
+        "category": "Code Map"
+      }
     ],
     "configuration": {
       "title": "Code Map",
@@ -118,6 +182,20 @@
           "description": "Character budget of the facts sent to the model."
         }
       }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codemap.showMapForFile",
+          "group": "navigation@90"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codemap.showMapForFile",
+          "when": "editorIsOpen"
+        }
+      ]
     }
   },
   "scripts": {
@@ -129,6 +207,7 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
+    "cytoscape": "3.30.4",
     "sql.js": "1.13.0"
   },
   "devDependencies": {

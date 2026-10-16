@@ -32,7 +32,14 @@ class Uri {
   static file(file: string) {
     return new Uri(file);
   }
+  static joinPath(base: Uri, ...parts: string[]) {
+    return new Uri(path.join(base.fsPath, ...parts));
+  }
+  toString() {
+    return this.fsPath;
+  }
 }
+const panels: { html: string; posted: any[]; receive?: (message: unknown) => unknown }[] = [];
 class Position {
   constructor(readonly line: number, readonly character: number) {}
 }
@@ -60,6 +67,10 @@ const fakeVscode = {
     constructor(readonly base: Uri, readonly pattern: string) {}
   },
   StatusBarAlignment: { Left: 1 },
+  ViewColumn: { One: 1, Beside: -2 },
+  Range: class {
+    constructor(readonly startLine: number, readonly startCharacter: number, readonly endLine: number, readonly endCharacter: number) {}
+  },
   ConfigurationTarget: { Global: 1, Workspace: 2 },
   ChatRequestTurn: class {},
   ChatResponseTurn: class {},
@@ -75,6 +86,29 @@ const fakeVscode = {
     showWarningMessage: async () => undefined,
     showInformationMessage: async () => undefined,
     activeTextEditor: undefined as any,
+    opened: [] as any[],
+    showTextDocument: async (uri: Uri, options: any) => fakeVscode.window.opened.push({ uri, options }),
+    setStatusBarMessage: () => undefined,
+    createWebviewPanel: () => {
+      const record: (typeof panels)[number] = { html: "", posted: [] };
+      panels.push(record);
+      return {
+        title: "",
+        reveal() {},
+        onDidDispose() {},
+        webview: {
+          cspSource: "vscode-resource:",
+          asWebviewUri: (uri: Uri) => uri,
+          set html(value: string) {
+            record.html = value;
+          },
+          onDidReceiveMessage(listener: (message: unknown) => unknown) {
+            record.receive = listener;
+          },
+          postMessage: async (message: unknown) => record.posted.push(message),
+        },
+      };
+    },
   },
   workspace: {
     workspaceFolders: [{ uri: Uri.file(path.join(repo, "examples", "sample-source")) }],
@@ -131,6 +165,7 @@ describe("extension (bundled, fake VS Code host)", () => {
     const storage = fs.mkdtempSync(path.join(os.tmpdir(), "codemap-storage-"));
     loadExtension().activate({
       subscriptions: [],
+      extensionUri: Uri.file(extensionRoot),
       globalStorageUri: Uri.file(storage),
       asAbsolutePath: (relative: string) => path.join(extensionRoot, relative),
     });
@@ -139,7 +174,10 @@ describe("extension (bundled, fake VS Code host)", () => {
   it("registers the participant, both tools and the commands", () => {
     assert.ok(registered.participant);
     assert.deepEqual([...registered.tools.keys()].sort(), ["codemap_file_context", "codemap_query"]);
-    for (const command of ["codemap.runExtract", "codemap.reload", "codemap.selectDatabase", "codemap.status"]) {
+    for (const command of [
+      "codemap.runExtract", "codemap.reload", "codemap.selectDatabase", "codemap.status",
+      "codemap.showMap", "codemap.showMapForFile", "codemap.showMapOf",
+    ]) {
       assert.ok(registered.commands.has(command), command);
     }
   });
@@ -148,6 +186,7 @@ describe("extension (bundled, fake VS Code host)", () => {
     const sent: any[] = [];
     const markdown: string[] = [];
     const references: any[] = [];
+    const buttons: any[] = [];
     const result = await registered.participant.handler(
       {
         prompt: "hủy đơn hàng ghi vào bảng nào?",
@@ -160,7 +199,12 @@ describe("extension (bundled, fake VS Code host)", () => {
         },
       },
       { history: [] },
-      { markdown: (value: string) => markdown.push(value), progress() {}, reference: (value: any) => references.push(value), button() {} },
+      {
+        markdown: (value: string) => markdown.push(value),
+        progress() {},
+        reference: (value: any) => references.push(value),
+        button: (value: any) => buttons.push(value),
+      },
       { isCancellationRequested: false },
     );
     assert.match(sent[0].content, /\[C1\] Cancel order \/ Hủy đơn hàng/);
@@ -170,6 +214,27 @@ describe("extension (bundled, fake VS Code host)", () => {
     assert.ok(references.length > 0);
     assert.ok(references.every((reference) => fs.existsSync(reference.uri.fsPath)), "references resolve to real files");
     assert.ok(result.metadata);
+    assert.ok(buttons.some((button) => button.command === "codemap.showMapOf" && button.arguments[0].ids.length > 0));
+  });
+
+  it("draws the map in a webview and opens code from it", async () => {
+    await registered.commands.get("codemap.showMap")("ORDER_HEADER");
+    const panel = panels.at(-1)!;
+    assert.match(panel.html, /Content-Security-Policy/);
+    assert.match(panel.html, /dist\/map\.js/);
+    assert.ok(fs.existsSync(path.join(extensionRoot, "dist", "map.js")));
+    await panel.receive!({ type: "ready" });
+    const graph = panel.posted.find((message) => message.type === "graph").graph;
+    const table = graph.nodes.find((node: any) => node.name === "ORDER_HEADER");
+    assert.deepEqual(graph.focus, [table.id]);
+    assert.ok(graph.edges.some((edge: any) => edge.category === "write"));
+    const writer = graph.nodes.find((node: any) => node.file && node.type === "PROCEDURE");
+    await panel.receive!({ type: "open", file: writer.file, line: writer.line });
+    const opened = fakeVscode.window.opened.at(-1);
+    assert.ok(fs.existsSync(opened.uri.fsPath));
+    assert.equal(opened.options.selection.startLine, writer.line - 1);
+    await panel.receive!({ type: "expand", id: table.id });
+    assert.equal(panel.posted.at(-1).merge, true);
   });
 
   it("explains the active file with /explain", async () => {

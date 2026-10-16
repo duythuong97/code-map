@@ -7,7 +7,8 @@ Repository gồm ba phần (code-tree đã gộp vào đây):
   `codemap-rag.sqlite`.
 - **`web/`**: backend Flask và UI React. Đọc thẳng output của extract và hiển
   thị flow, lineage, evidence.
-- **`vscode-extension/`**: `@codemap` trong VS Code Chat (Graph RAG).
+- **`vscode-extension/`**: `@codemap` trong VS Code Chat (Graph RAG) và map
+  luồng nghiệp vụ vẽ ngay trong VS Code.
 
 Thư mục dùng chung: `shared/` (fixtures và hợp đồng dữ liệu giữa các phần),
 `examples/` (source demo, input-data, catalog, `demo-config.json`) và

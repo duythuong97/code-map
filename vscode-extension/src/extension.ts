@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { registerChat } from "./chat";
+import { MapPanel } from "./mapPanel";
 import { DATABASE_NAME, expandWorkspace, GraphService } from "./graphService";
 import { registerTools } from "./tools";
 
@@ -61,8 +62,62 @@ export function activate(context: vscode.ExtensionContext): void {
       log.show(true);
     }),
     vscode.commands.registerCommand("codemap.runExtract", () => runExtract(graph, refreshStatus)),
+    vscode.commands.registerCommand("codemap.showMap", (query?: string) => showMap(context, graph, query)),
+    vscode.commands.registerCommand("codemap.showMapForFile", (uri?: vscode.Uri) => showMapForFile(context, graph, uri)),
+    // Used by the "Mở map" button under @codemap answers: the nodes the answer cited.
+    vscode.commands.registerCommand("codemap.showMapOf", async (args: { ids: number[]; focus: number[]; title: string }) => {
+      const retriever = await graph.ready();
+      if (retriever && args?.ids?.length) MapPanel.show(context, graph, args.title, retriever.mapAmong(args.ids, args.focus));
+    }),
   );
   void refreshStatus();
+}
+
+async function showMap(context: vscode.ExtensionContext, graph: GraphService, query?: string): Promise<void> {
+  const retriever = await graph.ready();
+  if (!retriever) {
+    void vscode.window.showWarningMessage(`Code Map: no ${DATABASE_NAME} loaded. Run the extract first.`);
+    return;
+  }
+  const text =
+    query ??
+    (await vscode.window.showInputBox({
+      prompt: "Bảng, API, màn hình, job hoặc thuật ngữ nghiệp vụ",
+      placeHolder: "ORDER_HEADER · hủy đơn hàng · POST /api/orders",
+    }));
+  if (!text?.trim()) return;
+  const found = retriever.findNodes(text, 15);
+  if (!found.length) {
+    void vscode.window.showInformationMessage(`Code Map: nothing matches "${text}".`);
+    return;
+  }
+  let seed = found[0];
+  if (found.length > 1 && query === undefined) {
+    const picked = await vscode.window.showQuickPick(
+      found.map((node) => ({
+        label: node.name,
+        description: node.type,
+        detail: [node.names, node.file && `${node.file}${node.line ? `:${node.line}` : ""}`].filter(Boolean).join("  ·  "),
+        node,
+      })),
+      { placeHolder: "Vẽ map quanh node nào?", matchOnDescription: true, matchOnDetail: true },
+    );
+    if (!picked) return;
+    seed = picked.node;
+  }
+  MapPanel.show(context, graph, seed.name, retriever.mapGraph([seed.id], { hops: 2, maxNodes: 60 }));
+}
+
+async function showMapForFile(context: vscode.ExtensionContext, graph: GraphService, uri?: vscode.Uri): Promise<void> {
+  const retriever = await graph.ready();
+  const file = uri?.fsPath ?? vscode.window.activeTextEditor?.document.uri.fsPath;
+  if (!retriever || !file) return;
+  const declared = retriever.retrieve("", { mode: "file", file: graph.toGraphPath(file), maxNodes: 20, hops: 1 }).seeds;
+  if (!declared.length) {
+    void vscode.window.showInformationMessage(`Code Map: the graph has nothing declared in ${path.basename(file)}.`);
+    return;
+  }
+  MapPanel.show(context, graph, path.basename(file), retriever.mapGraph(declared.map((node) => node.id), { hops: 1, maxNodes: 60 }));
 }
 
 async function runExtract(graph: GraphService, refreshStatus: () => Promise<void>): Promise<void> {

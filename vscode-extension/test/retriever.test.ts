@@ -96,6 +96,20 @@ for (const engine of ["node:sqlite", "sql.js"] as const) {
       assert.match(context.text, /PartnerExport\.exe/);
     });
 
+    it("builds a layered map around a node and of an answer's facts", () => {
+      const table = retriever.findNodes("ORDER_HEADER", 1)[0];
+      const map = retriever.mapGraph([table.id], { hops: 1, direction: "in", maxNodes: 30 });
+      assert.deepEqual(map.focus, [table.id]);
+      assert.ok(map.edges.some((edge) => edge.category === "write" && edge.dst === table.id && edge.type === "WRITES_TO"));
+      assert.ok(map.nodes.every((node) => node.layer >= 0 && node.layer <= 4));
+      assert.equal(map.nodes.find((node) => node.id === table.id)?.layer, 4);
+      const context = retriever.retrieve("Allocate orders job", { mode: "flow" });
+      const among = retriever.mapAmong(context.nodes.map((node) => node.id), context.seeds.map((node) => node.id));
+      assert.ok(among.edges.some((edge) => edge.category === "business" && edge.type === "INVOKES"));
+      const ids = new Set(among.nodes.map((node) => node.id));
+      assert.ok(among.edges.every((edge) => ids.has(edge.src) && ids.has(edge.dst)));
+    });
+
     it("respects the context budget", () => {
       const context = retriever.retrieve("order", { maxContextChars: 2000 });
       assert.ok(context.text.length <= 2100);

@@ -54,7 +54,32 @@ Trong Chat:
 - `@codemap /gaps`: thuật ngữ chưa nối được với code, job không tìm thấy chương trình, lỗi extractor.
 
 Câu trả lời trích dẫn dữ kiện `[N3]`, `[E2]`, `[C1]`, có danh sách tham chiếu mở
-thẳng tới dòng code.
+thẳng tới dòng code, và nút **Mở map** để vẽ đúng các dữ kiện đó.
+
+## Map
+
+- **Code Map: Show Map…**: gõ tên bảng, API, màn hình, job hoặc thuật ngữ nghiệp
+  vụ (vd. `hủy đơn hàng`), chọn node, map vẽ phạm vi 2 bước quanh nó.
+- **Show This File in Code Map**: chuột phải trong editor, vẽ các node khai báo
+  trong file và những gì chúng chạm tới.
+- Nút **Mở map** dưới câu trả lời của `@codemap`.
+
+Map chia cột theo tầng: màn hình/job → API/batch → code ứng dụng → code DB →
+bảng. Màu cạnh: cam là ghi, xanh là đọc, xám là gọi, tím là batch. Node hiện
+thêm tên nghiệp vụ (ja/en/vi).
+
+Thao tác trên map:
+
+| Thao tác | Kết quả |
+|---|---|
+| Nhấp node hoặc cạnh | Mở code đúng dòng |
+| Nhấp đúp node | Mở rộng thêm 1 bước |
+| **Impact** | Ai đọc, ghi, phụ thuộc vào node đang chọn |
+| **Flow** | Đi xuôi từ node đang chọn xuống dữ liệu |
+| **Hỏi** | Hỏi `@codemap` về node đang chọn |
+
+Có thể lọc theo loại cạnh. Mỗi lần chỉ vẽ tối đa khoảng 60 node quanh điểm
+đang xem, nên repo lớn vẫn mượt: trên nopCommerce dựng map mất khoảng 20–40 ms.
 
 Trong Agent mode, model tự gọi tool `#codemap` (truy vấn graph) và
 `#codemapFile` (dữ kiện của một file) khi cần.

@@ -95,6 +95,13 @@ async function handle(
     throw error;
   }
   addReferences(graph, context, stream);
+  if (context.nodes.length) {
+    stream.button({
+      command: "codemap.showMapOf",
+      title: "Mở map",
+      arguments: [{ ids: context.nodes.map((node) => node.id), focus: context.seeds.map((node) => node.id), title: question.slice(0, 60) }],
+    });
+  }
   return { metadata: followupMetadata(context) };
 }
 

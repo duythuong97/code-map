@@ -54,6 +54,36 @@ export interface Reference {
   line: number | null;
 }
 
+/** A node as the map draws it. */
+export interface MapNode {
+  id: number;
+  type: string;
+  name: string;
+  label: string;
+  names: string;
+  file: string | null;
+  line: number | null;
+  layer: number;
+}
+
+export interface MapEdge {
+  id: number;
+  src: number;
+  dst: number;
+  type: string;
+  operation: string;
+  category: "write" | "read" | "call" | "business" | "structure" | "other";
+  file: string | null;
+  line: number | null;
+}
+
+export interface MapGraph {
+  nodes: MapNode[];
+  edges: MapEdge[];
+  focus: number[];
+  truncated: boolean;
+}
+
 export interface GraphContext {
   text: string;
   seeds: GraphNode[];
@@ -246,6 +276,73 @@ export class Retriever {
     return result;
   }
 
+  /** Seed nodes for a free-text query (business terms and names), best first. */
+  findNodes(query: string, limit = 20): GraphNode[] {
+    const scores = this.termSeeds(query);
+    const bonus = Math.max(1, 0.8 * Math.max(0, ...scores.values()));
+    for (const concept of this.matchConcepts(query)) {
+      for (const id of concept.linked) scores.set(id, (scores.get(id) ?? 0) + bonus);
+    }
+    const ids = [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => id);
+    const byId = new Map(this.nodes(ids).map((node) => [node.id, node]));
+    return ids.map((id) => byId.get(id)).filter((node): node is GraphNode => !!node);
+  }
+
+  /** The map around some nodes: a bounded walk in the given direction plus the edges between what it reached. */
+  mapGraph(
+    seedIds: number[],
+    options: { hops?: number; direction?: "in" | "out" | "both"; maxNodes?: number } = {},
+  ): MapGraph {
+    const maxNodes = options.maxNodes ?? 60;
+    const { nodeIds, edges } = this.expand(seedIds, options.hops ?? 1, maxNodes, options.direction ?? "both");
+    return this.mapOf([...nodeIds], edges, seedIds, nodeIds.size >= maxNodes);
+  }
+
+  /** The map of exactly these nodes (e.g. the facts an answer cited) and the edges among them. */
+  mapAmong(ids: number[], focus: number[] = []): MapGraph {
+    const unique = [...new Set(ids)].slice(0, 300);
+    if (!unique.length) return { nodes: [], edges: [], focus: [], truncated: false };
+    const marks = placeholders(unique.length);
+    const edges = this.db
+      .all(
+        `SELECT id, src, dst, type, operation, file, line, snippet FROM edges WHERE src IN (${marks}) AND dst IN (${marks}) LIMIT 2000`,
+        [...unique, ...unique],
+      )
+      .map(toEdge);
+    return this.mapOf(unique, edges, focus, false);
+  }
+
+  private mapOf(ids: number[], edges: GraphEdge[], focus: number[], truncated: boolean): MapGraph {
+    const nodes = this.nodes(ids).map((node) => ({
+      id: node.id,
+      type: node.type,
+      name: node.name,
+      label: displayName(node),
+      names: node.names,
+      file: node.file,
+      line: node.line,
+      layer: LAYER[node.type] ?? 2,
+    }));
+    const present = new Set(nodes.map((node) => node.id));
+    return {
+      nodes,
+      edges: edges
+        .filter((edge) => present.has(edge.src) && present.has(edge.dst))
+        .map((edge) => ({
+          id: edge.id,
+          src: edge.src,
+          dst: edge.dst,
+          type: edge.type,
+          operation: edge.operation,
+          category: edgeCategory(edge.type),
+          file: edge.file,
+          line: edge.line,
+        })),
+      focus: focus.filter((id) => present.has(id)),
+      truncated,
+    };
+  }
+
   private expand(seeds: number[], hops: number, maxNodes: number, direction: "in" | "out" | "both") {
     const nodeIds = new Set<number>(seeds);
     const edges = new Map<number, GraphEdge>();
@@ -430,6 +527,24 @@ export function queryTerms(question: string): string[] {
     }
   }
   return [...terms].slice(0, 80);
+}
+
+// Left-to-right layers of the map: entry points, application code, database code, data.
+const LAYER: Record<string, number> = {
+  JOB_NETWORK: 0, JOB: 0, SCREEN: 0, UI_ACTION: 0, ANGULAR_COMPONENT: 0, ANGULAR_PROJECT: 0,
+  EXECUTABLE: 1, EXECUTABLE_ENTRY_POINT: 1, COMMAND_MODE: 1, API_OPERATION: 1, API_CALL_REFERENCE: 1, ANGULAR_SERVICE: 1,
+  API_APPLICATION: 1, CONTROLLER: 2, SERVICE: 2, REPOSITORY: 2, METHOD: 2, CSHARP_TYPE: 2, FILE: 2,
+  PLSQL_PACKAGE: 3, PROCEDURE: 3, FUNCTION: 3, LOCAL_ROUTINE: 3, TRIGGER: 3, SQL_FILE: 3, INLINE_SQL: 3, LOADER_CONTROL: 3,
+  TABLE: 4, VIEW: 4, COLUMN: 4, SEQUENCE: 4, EXTERNAL_DATABASE_OBJECT: 4, DATABASE_LINK: 4, DATABASE_SCHEMA: 4, DATABASE: 4,
+};
+
+export function edgeCategory(type: string): MapEdge["category"] {
+  if (["WRITES_TO", "INSERTS", "UPDATES", "DELETES", "MERGES", "WRITES", "LOADS_INTO"].includes(type)) return "write";
+  if (["READS_FROM", "READS", "REMOTE_READS"].includes(type)) return "read";
+  if (["CALLS", "CALLS_API", "HANDLES_API", "HANDLED_BY", "TRIGGERS", "RESOLVES_TO", "ENTRY_IN"].includes(type)) return "call";
+  if (["STARTS", "INVOKES", "DEPENDS_ON"].includes(type)) return "business";
+  if (["CONTAINS", "BELONGS_TO", "PROJECT_REFERENCE"].includes(type)) return "structure";
+  return "other";
 }
 
 /** True when an alias hit is just the label words glued together ("donhang" from "don", "hang"). */
