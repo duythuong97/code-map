@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
+ExtractorRuntime.Phase("process start");
 var configPath = Args.Value(args, "--config") ?? throw new ArgumentException("Missing --config");
 using var document = ExtractorRuntime.LoadConfig(configPath);
 var config = document.RootElement;
@@ -24,6 +25,7 @@ if (sqlDialect is not ("auto" or "oracle" or "none" or "off"))
 var catalog = Catalog.Load(inputRoot, database);
 var mapperQueries = StringArray(config, "xmlMapperQueries").ToHashSet(StringComparer.Ordinal);
 var workspaceSnapshot = await DotNetWorkspaceLoader.LoadAsync(config, root);
+ExtractorRuntime.Phase("workspace loaded");
 var files = workspaceSnapshot.Files;
 var csFiles = files.Where(file => file.SyntaxTree is not null).ToList();
 
@@ -65,6 +67,7 @@ foreach (var project in projects)
     foreach (var reference in project.ProjectReferences)
         if (projectsById.TryGetValue(reference, out var target)) builder.AddEdge(project.Id, target.Id, "PROJECT_REFERENCE", "STRUCTURAL");
 
+ExtractorRuntime.Phase("projects");
 var classesByIdentity = new Dictionary<string, (string Name, SourceFile File, TypeDeclarationSyntax Syntax, string? ProjectId)>(StringComparer.Ordinal);
 var classIdentityByDeclaration = new Dictionary<string, string>(StringComparer.Ordinal);
 var classIdentityByMemberDeclaration = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -83,6 +86,7 @@ foreach (var file in csFiles)
     }
 }
 
+ExtractorRuntime.Phase("classes");
 var endpoints = new List<EndpointInfo>();
 foreach (var file in csFiles)
 {
@@ -91,14 +95,17 @@ foreach (var file in csFiles)
     endpoints.AddRange(NetFrameworkSupport.ExtractRouteConfig(file, model));
 }
 var apiOperationIds = BuildApiOperationIds(application, endpoints, projects);
+ExtractorRuntime.Phase("endpoints");
 
-var invocationEdges = new List<InvocationInfo>();
-foreach (var file in csFiles)
+// Binding every call site is the costliest step; files are independent, so
+// bind them in parallel (results keep file order).
+var invocationEdges = ExtractorRuntime.ParallelMap(csFiles, file =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
     var visibleClassNames = ExtractorRuntime.CompilationIndex(model.Compilation).VisibleTypeNames();
-    invocationEdges.AddRange(ExtractorRuntime.InvocationEdges(file, model, visibleClassNames));
-}
+    return ExtractorRuntime.InvocationEdges(file, model, visibleClassNames);
+});
+ExtractorRuntime.Phase("invocations");
 var mapperReferences = FindMapperReferences(csFiles, compilationByTree, projects, mapperQueries);
 
 var dataAccessClasses = mapperReferences.Select(reference => reference.OwnerClass).ToHashSet(StringComparer.Ordinal);
@@ -121,6 +128,7 @@ foreach (var file in csFiles)
     }
 }
 
+ExtractorRuntime.Phase("mapper/data access");
 var endpointControllerKeys = endpoints.Select(endpoint => endpoint.File is null || string.IsNullOrEmpty(endpoint.ControllerIdentity)
     ? endpoint.Controller
     : ScopedClassIdentity(endpoint.ControllerIdentity, endpoint.File, ProjectForFile(endpoint.File, projects))).ToHashSet(StringComparer.Ordinal);
@@ -199,9 +207,12 @@ foreach (var file in csFiles)
     }
 }
 
+ExtractorRuntime.Phase("method nodes");
 AddInterfaceImplementationEdges(builder, csFiles, compilationByTree, methodNodeIdsByDeclaration);
+ExtractorRuntime.Phase("interface implementation edges");
 AddTypeReferenceEdges(builder, csFiles, compilationByTree, projects, classIdentityByDeclaration, classNodeIds, methodNodeIdsByDeclaration);
 
+ExtractorRuntime.Phase("nodes and methods");
 foreach (var reference in mapperReferences)
 {
     if (!methodNodeIdsByDeclaration.TryGetValue((reference.File.SyntaxTree!, reference.OwnerMethodStart), out var ownerMethodId)) continue;
@@ -261,6 +272,7 @@ foreach (var endpoint in endpoints)
     }
 }
 
+ExtractorRuntime.Phase("endpoint edges");
 foreach (var invocation in invocationEdges)
 {
     var sourceMethodId = SourceMethodNodeId(invocation.File, invocation.Start, methodNodeIdsByDeclaration);
@@ -271,6 +283,7 @@ foreach (var invocation in invocationEdges)
     builder.AddEvidence("EDGE", edgeId, invocation.File.RelativePath, line, line, "CALL", ExtractorRuntime.LineText(invocation.File, line));
 }
 
+ExtractorRuntime.Phase("call edges");
 foreach (var file in csFiles)
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
@@ -341,7 +354,9 @@ foreach (var file in csFiles)
 
 AttachApiSemanticTrees(builder, endpoints, csFiles, methodNodeIdsByDeclaration, compilationByTree, apiOperationIds);
 AttachMethodSemanticTrees(builder, csFiles, methodNodeIdsByDeclaration, compilationByTree);
+ExtractorRuntime.Phase("sql and semantic trees");
 builder.Write(output);
+ExtractorRuntime.Phase("write package");
 
 static string? SourceMethodNodeId(SourceFile file, int offset, IReadOnlyDictionary<(SyntaxTree Tree, int Start), string> methodNodeIds)
 {
@@ -385,11 +400,20 @@ static void AddInterfaceImplementationEdges(PackageBuilder builder, IEnumerable<
 
 static void AddTypeReferenceEdges(PackageBuilder builder, IEnumerable<SourceFile> files, IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilations, List<ProjectInfo> projects, IReadOnlyDictionary<string, string> classIdentityByDeclaration, IReadOnlyDictionary<string, string> classNodeIds, IReadOnlyDictionary<(SyntaxTree Tree, int Start), string> methodNodeIds)
 {
-    foreach (var file in files.Where(file => file.SyntaxTree is not null))
+    // Resolve in parallel (read-only), then add to the builder in file order.
+    var references = ExtractorRuntime.ParallelMap(files.Where(file => file.SyntaxTree is not null).ToList(), file => TypeReferences(file));
+    foreach (var reference in references)
+    {
+        var edgeId = builder.AddEdge(reference.SourceId, reference.TargetId, "USES", rawOperation: reference.Target, properties: new Dictionary<string, object> { ["reference_kind"] = reference.Kind });
+        builder.AddEvidence("EDGE", edgeId, reference.File.RelativePath, reference.Line, reference.Line, "TYPE_REFERENCE", ExtractorRuntime.LineText(reference.File, reference.Line));
+    }
+
+    IEnumerable<(string SourceId, string TargetId, string Target, string Kind, SourceFile File, int Line)> TypeReferences(SourceFile file)
     {
         var model = SemanticModelFor(compilations, file.SyntaxTree!);
         foreach (var syntax in file.SyntaxTree!.GetRoot().DescendantNodes().OfType<TypeSyntax>())
         {
+            if (CannotNameRepositoryType(syntax)) continue;
             var symbol = model.GetTypeInfo(syntax).Type as INamedTypeSymbol;
             var targetIdentity = symbol?.DeclaringSyntaxReferences
                 .Select(reference => classIdentityByDeclaration.GetValueOrDefault(DeclarationIdentity(reference.SyntaxTree, reference.Span.Start)))
@@ -405,12 +429,16 @@ static void AddTypeReferenceEdges(PackageBuilder builder, IEnumerable<SourceFile
                 sourceId = classNodeIds.GetValueOrDefault(ownerIdentity);
             }
             if (string.IsNullOrEmpty(sourceId) || sourceId == targetId) continue;
-            var edgeId = builder.AddEdge(sourceId, targetId, "USES", rawOperation: symbol!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), properties: new Dictionary<string, object> { ["reference_kind"] = syntax.Parent?.Kind().ToString() ?? "TypeSyntax" });
-            var line = ExtractorRuntime.LineForOffset(file, syntax.SpanStart);
-            builder.AddEvidence("EDGE", edgeId, file.RelativePath, line, line, "TYPE_REFERENCE", ExtractorRuntime.LineText(file, line));
+            yield return (sourceId, targetId, symbol!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), syntax.Parent?.Kind().ToString() ?? "TypeSyntax", file, ExtractorRuntime.LineForOffset(file, syntax.SpanStart));
         }
     }
 }
+
+static bool CannotNameRepositoryType(TypeSyntax syntax)
+    // Built-in, array, pointer and tuple types are never a named type declared
+    // in this repository, so binding them cannot produce a USES edge. Names
+    // must still be bound: an identifier expression's type is what USES records.
+    => syntax is PredefinedTypeSyntax or ArrayTypeSyntax or PointerTypeSyntax or TupleTypeSyntax or FunctionPointerTypeSyntax;
 
 static List<MapperReference> FindMapperReferences(IEnumerable<SourceFile> files, IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilations, List<ProjectInfo> projects, ISet<string> knownQueries)
 {

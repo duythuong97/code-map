@@ -51,6 +51,7 @@ public static class DotNetWorkspaceLoader
                     && !ExtractorRuntime.IsExcludedSourcePath(projectPath, root))
                     projectPaths.Add(projectPath);
 
+        ExtractorRuntime.Phase("msbuild locator");
         var diagnostics = new List<string>();
         var projectTimeoutSeconds = ProjectTimeoutSeconds(config);
         var solutionDirectory = solutionPaths.Count == 1
@@ -63,7 +64,7 @@ public static class DotNetWorkspaceLoader
             Path.GetFileName(configuredOutput));
         Directory.CreateDirectory(workspaceOutput);
         var outputDirectory = EnsureTrailingSeparator(workspaceOutput);
-        using var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>
+        var properties = new Dictionary<string, string>
         {
             ["Configuration"] = "Release",
             ["DesignTimeBuild"] = "true",
@@ -73,7 +74,15 @@ public static class DotNetWorkspaceLoader
             ["SolutionDir"] = EnsureTrailingSeparator(solutionDirectory),
             ["OutputPath"] = outputDirectory,
             ["OutDir"] = outputDirectory,
-        });
+        };
+        // Extra global MSBuild properties, "Name=Value;Name2=Value2".
+        foreach (var pair in (Environment.GetEnvironmentVariable("CODE_TREE_MSBUILD_PROPERTIES") ?? string.Empty)
+                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = pair.IndexOf('=');
+            if (separator > 0) properties[pair[..separator].Trim()] = pair[(separator + 1)..].Trim();
+        }
+        using var workspace = MSBuildWorkspace.Create(properties);
         workspace.SkipUnrecognizedProjects = true;
         workspace.WorkspaceFailed += (_, eventArgs) =>
         {
@@ -106,6 +115,7 @@ public static class DotNetWorkspaceLoader
                 workspace, projectPath, projectTimeoutSeconds, diagnostics);
         }
 
+        ExtractorRuntime.Phase("msbuild open solution/projects");
         var filesByPath = new Dictionary<string, SourceFile>(ExtractorRuntime.PathComparer);
         var compilationByTree = new Dictionary<SyntaxTree, CSharpCompilation>();
         var projectInfos = new List<WorkspaceProjectInfo>();
@@ -186,6 +196,7 @@ public static class DotNetWorkspaceLoader
                 references));
         }
 
+        ExtractorRuntime.Phase("compilations and syntax trees");
         var looseFiles = new List<SourceFile>();
         foreach (var path in configuredCs.OrderBy(path => path, ExtractorRuntime.PathComparer))
         {

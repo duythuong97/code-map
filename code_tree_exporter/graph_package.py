@@ -450,6 +450,11 @@ class GraphPackage:
             if edge.get("edge_type") == "CONTAINS"
             and edge.get("graph_layer") == "STRUCTURAL"
         }
+        # Comments grouped by file once (insertion order kept); scanning every
+        # comment for every file was quadratic on repositories with many files.
+        comments_by_path: dict[str, list[dict[str, str]]] = {}
+        for comment in self.comments.values():
+            comments_by_path.setdefault(comment["source_path"], []).append(comment)
         for record in self.source_records:
             file_id = stable_node_id("file", record.source_key, record.relative_path)
             declarations = [
@@ -463,9 +468,8 @@ class GraphPackage:
             ):
                 if node_id != file_id and node_id not in structural_children:
                     self._add_edge(file_id, node_id, "CONTAINS", "STRUCTURAL")
-            for comment in self.comments.values():
-                if comment["source_path"] != record.relative_path:
-                    continue
+            by_start = sorted(declarations, key=lambda item: item[1])
+            for comment in comments_by_path.get(record.relative_path, ()):
                 start_line = int(comment["start_line"])
                 end_line = int(comment["end_line"])
                 containing = [
@@ -481,9 +485,7 @@ class GraphPackage:
                     owner = next(
                         (
                             node_id
-                            for node_id, line, _ in sorted(
-                                declarations, key=lambda item: item[1]
-                            )
+                            for node_id, line, _ in by_start
                             if end_line <= line <= end_line + 2
                         ),
                         file_id,

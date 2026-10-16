@@ -50,11 +50,12 @@ sealed record StringEvaluation(string Value, bool IsDynamic);
 public sealed class CompilationIndex
 {
     readonly Compilation _compilation;
-    readonly Dictionary<SyntaxTree, SemanticModel> _semanticModels = new();
+    // Concurrent: per-file analysis runs in parallel (ExtractorRuntime.ParallelMap).
+    readonly System.Collections.Concurrent.ConcurrentDictionary<SyntaxTree, SemanticModel> _semanticModels = new();
     readonly Lazy<IReadOnlyList<INamedTypeSymbol>> _declaredTypes;
     readonly Lazy<HashSet<string>> _visibleTypeNames;
     readonly Lazy<HashSet<string>> _visibleClassNames;
-    readonly Dictionary<ISymbol, IReadOnlyList<IMethodSymbol>> _interfaceImplementations = new(SymbolEqualityComparer.Default);
+    readonly System.Collections.Concurrent.ConcurrentDictionary<ISymbol, IReadOnlyList<IMethodSymbol>> _interfaceImplementations = new(SymbolEqualityComparer.Default);
 
     public CompilationIndex(Compilation compilation)
     {
@@ -74,12 +75,7 @@ public sealed class CompilationIndex
 
     public SemanticModel SemanticModel(SyntaxTree tree)
     {
-        if (!_semanticModels.TryGetValue(tree, out var model))
-        {
-            model = _compilation.GetSemanticModel(tree);
-            _semanticModels[tree] = model;
-        }
-        return model;
+        return _semanticModels.GetOrAdd(tree, value => _compilation.GetSemanticModel(value));
     }
 
     public IReadOnlyList<IMethodSymbol> InterfaceImplementations(IMethodSymbol symbol)
@@ -212,6 +208,39 @@ public static class ExtractorRuntime
             }
         }
         return files;
+    }
+
+    static readonly int AnalysisThreads =
+        int.TryParse(Environment.GetEnvironmentVariable("CODE_TREE_DOTNET_THREADS"), out var configuredThreads) && configuredThreads > 0
+            ? configuredThreads
+            : Math.Max(1, Environment.ProcessorCount / 2);
+
+    /// <summary>Runs <paramref name="work"/> for every item on up to
+    /// CODE_TREE_DOTNET_THREADS threads (default: half the cores) and returns
+    /// the results flattened in input order, so output stays deterministic.
+    /// Work must only read shared state; callers apply results to the
+    /// (single-threaded) package builder afterwards.</summary>
+    public static List<TResult> ParallelMap<TItem, TResult>(IReadOnlyList<TItem> items, Func<TItem, IEnumerable<TResult>> work)
+    {
+        var results = new List<TResult>[items.Count];
+        Parallel.For(0, items.Count, new ParallelOptions { MaxDegreeOfParallelism = AnalysisThreads },
+            index => results[index] = work(items[index]).ToList());
+        var flattened = new List<TResult>();
+        foreach (var part in results) flattened.AddRange(part);
+        return flattened;
+    }
+
+    static readonly System.Diagnostics.Stopwatch PhaseClock = System.Diagnostics.Stopwatch.StartNew();
+    static readonly bool PhaseTimings = Environment.GetEnvironmentVariable("CODE_TREE_TIMINGS") == "1";
+
+    /// <summary>With CODE_TREE_TIMINGS=1, logs time and memory since the
+    /// previous phase to stderr (diagnostics for large repositories).</summary>
+    public static void Phase(string name)
+    {
+        if (!PhaseTimings) return;
+        Console.Error.WriteLine(
+            $"[timing] {name}: {PhaseClock.Elapsed.TotalSeconds:F1}s, managed {GC.GetTotalMemory(false) / 1048576}MB, working set {Environment.WorkingSet / 1048576}MB");
+        PhaseClock.Restart();
     }
 
     static readonly HashSet<string> PrunedDirectories = new(StringComparer.OrdinalIgnoreCase)
@@ -389,7 +418,8 @@ public static class ExtractorRuntime
     public static IEnumerable<InvocationInfo> InvocationEdges(SourceFile file, SemanticModel model, IReadOnlyCollection<string> knownClasses)
     {
         if (file.SyntaxTree is null) yield break;
-        var classes = new HashSet<string>(knownClasses, StringComparer.Ordinal);
+        // Reuse the shared (read-only) set instead of copying it for every file.
+        var classes = knownClasses as HashSet<string> ?? new HashSet<string>(knownClasses, StringComparer.Ordinal);
         foreach (var invocation in file.SyntaxTree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             var sourceClass = SourceClassForNode(invocation);
@@ -511,14 +541,17 @@ public static class ExtractorRuntime
         var name = InvocationName(invocation);
         var args = invocation.ArgumentList.Arguments;
         if (args.Count == 0) return false;
+        // Syntactic name check first: evaluating the route argument binds it
+        // semantically, which is expensive when done for every call site.
+        var isMapMethods = name.Equals("MapMethods", StringComparison.Ordinal) && args.Count >= 2;
+        if (!isMapMethods && name is not ("MapGet" or "MapPost" or "MapPut" or "MapPatch" or "MapDelete")) return false;
         if (!TryEvaluateStringExpression(args[0].Expression, model, out var routeValue) || routeValue.IsDynamic) return false;
         if (name.Equals("MapGet", StringComparison.Ordinal)) methods = new[] { "GET" };
         else if (name.Equals("MapPost", StringComparison.Ordinal)) methods = new[] { "POST" };
         else if (name.Equals("MapPut", StringComparison.Ordinal)) methods = new[] { "PUT" };
         else if (name.Equals("MapPatch", StringComparison.Ordinal)) methods = new[] { "PATCH" };
         else if (name.Equals("MapDelete", StringComparison.Ordinal)) methods = new[] { "DELETE" };
-        else if (name.Equals("MapMethods", StringComparison.Ordinal) && args.Count >= 2) methods = ReadHttpMethods(args[1].Expression, model).ToArray();
-        else return false;
+        else methods = ReadHttpMethods(args[1].Expression, model).ToArray();
         route = routeValue.Value;
         return methods.Count > 0;
     }
