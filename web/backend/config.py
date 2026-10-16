@@ -21,7 +21,7 @@ def load_app_config(path: str | Path) -> dict[str, Any]:
     config = load_json_config(path)
     if "api" not in config:
         return config
-    return {**config["api"], "db": config["db"]}
+    return {**config["api"], "graph_output": config["graph_output"], "knowledge_db": config["knowledge_db"]}
 
 
 

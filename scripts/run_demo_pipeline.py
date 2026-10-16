@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the demo sources into graph.sqlite, then import it for the UI."""
+"""Extract the demo sources; the web app and the VS Code extension read the output folder directly."""
 from __future__ import annotations
 
 import argparse
@@ -18,28 +18,21 @@ from web.runtime_env import project_path  # noqa: E402
 PYTHON = Path(sys.executable)
 CONFIG = project_path("examples", "demo-config.json")
 OUTPUT = project_path("output", "demo")
-DB = project_path("data", "code-flow-demo.sqlite")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fresh", action="store_true", help="Delete the demo SQLite DB before import")
-    args = parser.parse_args()
-    if args.fresh:
-        for suffix in ("", "-shm", "-wal"):
-            Path(str(DB) + suffix).unlink(missing_ok=True)
+    parser.parse_args()
     steps = [
         ("Validate config and runtimes", [PYTHON, "-m", "code_tree_exporter", "validate", "--config", CONFIG]),
         ("Extract graph", [PYTHON, "-m", "code_tree_exporter", "extract", "--config", CONFIG]),
-        ("Import graph", [PYTHON, "-m", "web.backend.cli", "import-graph", OUTPUT, "--db", DB]),
-        ("SQLite integrity", [PYTHON, "-m", "web.backend.cli", "integrity", "--db", DB]),
     ]
     # code_tree_exporter lives in extractor/, the web backend in web/.
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT / "extractor"), str(ROOT), os.environ.get("PYTHONPATH", "")])}
     for label, command in steps:
         print(f"\n== {label} ==", flush=True)
         subprocess.run([str(part) for part in command], check=True, env=env)
-    print(f"\nDone: {DB}")
+    print(f"\nDone: {OUTPUT} (graph.sqlite, codemap-web.sqlite for the web app, codemap-rag.sqlite for VS Code)")
     return 0
 
 

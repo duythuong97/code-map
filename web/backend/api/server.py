@@ -31,11 +31,11 @@ def main() -> None:
     port = int(APP_CONFIG["port"])
     log_path = configure_backend_logging(APP_CONFIG)
     logging.getLogger("code_map.backend").info(
-        "starting backend server host=%s port=%s prefix=%s db=%s log_path=%s",
+        "starting backend server host=%s port=%s prefix=%s graph_output=%s log_path=%s",
         host,
         port,
         APP_CONFIG.get("url_prefix", ""),
-        APP_CONFIG.get("db", ""),
+        APP_CONFIG.get("graph_output", ""),
         log_path or "disabled",
     )
     serve(app, host=host, port=port)

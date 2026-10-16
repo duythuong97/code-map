@@ -1,4 +1,10 @@
-"""Flask blueprint backed by the CSV graph database."""
+"""Graph API over the extract output.
+
+Reads ``codemap-web.sqlite`` from the configured output folder (read-only)
+and keeps what people add (notes, business-term mappings) in a separate
+knowledge database attached as ``kn``. Temporary views give the queries the
+table names they have always used.
+"""
 from __future__ import annotations
 
 import hmac
@@ -6,7 +12,7 @@ import json
 import os
 import re
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -15,31 +21,104 @@ from flask import Blueprint, current_app, jsonify, request
 from web.runtime_env import project_path, required_absolute_path, required_env
 
 bp = Blueprint("graph_api", __name__, url_prefix=required_env("CODE_MAP_GRAPH_API_PREFIX"))
-DB_PATH = project_path("data", "code-flow-demo.sqlite")
-OUTPUT_ROOT = project_path("output")
+WEB_DATABASE_NAME = "codemap-web.sqlite"
+# meta.schema_version written by code_tree_exporter/rag_export.py (RAG_SCHEMA_VERSION).
+WEB_SCHEMA_VERSION = "2"
 SOURCE_ROOT = required_absolute_path("CODE_MAP_SOURCE_ROOT")
 SAFE_SOURCE_ROOTS = (SOURCE_ROOT,)
 KNOWLEDGE_STATUSES = {"draft","pending","approved","rejected"}
 KNOWLEDGE_MAX_BYTES = 16_384
 SEMANTIC_MAX_BYTES = 4_096
-MAX_IMPORT_BODY_BYTES = int(required_env("CODE_MAP_MAX_CONTENT_LENGTH"))
 FLOW_MODES = {"1","W","R","E"}
 WRITE_TERMINALS = {"INSERTS","UPDATES","DELETES","MERGES","WRITES"}
 READ_TERMINALS = {"READS","REMOTE_READS"}
 FLOW_INTERMEDIATE = {"CALLS_API","STARTS","CALLS","HANDLED_BY","RESOLVES_TO","TRIGGERS"}
 
+KNOWLEDGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kn.graph_knowledge(knowledge_id INTEGER PRIMARY KEY,target_id TEXT NOT NULL,body TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('draft','pending','approved','rejected')),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS kn.graph_knowledge_target ON graph_knowledge(target_id);
+CREATE TABLE IF NOT EXISTS kn.semantic_mappings(target_id TEXT PRIMARY KEY,semantic_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN('approved','rejected')),source_kind TEXT NOT NULL DEFAULT 'USER',
+  author_name TEXT NOT NULL DEFAULT '',confidence REAL NOT NULL DEFAULT 1.0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TEMP VIEW graph_knowledge AS SELECT * FROM kn.graph_knowledge;
+-- A person's mapping wins over the dictionary's alias links for the same node.
+CREATE TEMP VIEW graph_business_semantic_mappings AS
+  SELECT target_id,semantic_id,status,source_kind,author_name,confidence,created_at,updated_at FROM kn.semantic_mappings
+  UNION ALL
+  SELECT l.target_id,l.semantic_id,'approved','DICTIONARY_ALIAS','',0.9,'',''
+  FROM main.graph_business_semantic_links l
+  WHERE NOT EXISTS (SELECT 1 FROM kn.semantic_mappings m WHERE m.target_id=l.target_id);
+"""
+
+
+class GraphNotReady(Exception):
+    def __init__(self, path: Path, message: str = "") -> None:
+        super().__init__(message or f"{path} not found")
+        self.message = message
+
+
+def _has_table(db: sqlite3.Connection, name: str) -> bool:
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def graph_output() -> Path:
+    try:
+        return Path(current_app.config["CODE_MAP_GRAPH_OUTPUT"])
+    except (RuntimeError, KeyError):
+        return project_path("output", "demo")
+
+
+def knowledge_db() -> Path:
+    try:
+        return Path(current_app.config["CODE_MAP_KNOWLEDGE_DB"])
+    except (RuntimeError, KeyError):
+        return project_path("data", "knowledge.sqlite")
+
+
 @contextmanager
 def connection():
+    """codemap-web.sqlite (read-only, per request so a new extract can replace it) + knowledge db."""
+    path = graph_output() / WEB_DATABASE_NAME
+    if not path.is_file():
+        raise GraphNotReady(path)
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
     try:
-        db_path = current_app.config.get("CODE_MAP_GRAPH_DB_PATH", DB_PATH)
-    except RuntimeError:
-        db_path = DB_PATH
-    db = sqlite3.connect(db_path); db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys=ON")
-    try:
+        version = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() if _has_table(db, "meta") else None
+        if not version or version[0] != WEB_SCHEMA_VERSION:
+            raise GraphNotReady(path, f"{path} was written by an older extract; run the extract (or rag-export) again")
+        knowledge = knowledge_db()
+        knowledge.parent.mkdir(parents=True, exist_ok=True)
+        db.execute("ATTACH DATABASE ? AS kn", (str(knowledge),))
+        db.executescript(KNOWLEDGE_SCHEMA)
         yield db
     finally:
         db.close()
+
+
+@bp.app_errorhandler(GraphNotReady)
+def graph_not_ready(exc: GraphNotReady):
+    return error(
+        "graph_not_ready",
+        exc.message or "No extract output found. Run the extract (python -m code_tree_exporter extract) and point CODE_MAP_GRAPH_OUTPUT at its output folder.",
+        503,
+    )
+
+
+def _semantic_tree(node_id: str) -> object:
+    """semantic_tree is only in graph.sqlite (it can be megabytes per node)."""
+    path = graph_output() / "graph.sqlite"
+    if not path.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as graph:
+            row = graph.execute("SELECT properties_json FROM nodes WHERE stable_id=?", (node_id,)).fetchone()
+    except sqlite3.Error:
+        return None
+    return _json(row[0], {}).get("semantic_tree") if row else None
 
 def error(code: str, message: str, status: int = 400, **details: Any):
     return jsonify({"error": {"code": code, "message": message, "details": details or {}}}), status
@@ -138,7 +217,9 @@ def _semantic_tokens(value: object) -> set[str]:
 
 def _semantic_context(node: sqlite3.Row, localization: list[sqlite3.Row]) -> tuple[str, set[str]]:
     properties = _json(node["properties_json"], {})
-    tree = properties.get("semantic_tree") or {}
+    tree = properties.get("semantic_tree") or _semantic_tree(node["node_id"]) or {}
+    if not isinstance(tree, dict):
+        tree = {}
     raw = " ".join(str(value or "") for value in (
         node["technical_name"], node["qualified_name"], node["default_display_name"],
         tree.get("label"), tree.get("summary"), *(row["value"] for row in localization),
@@ -221,18 +302,6 @@ def _semantic_suggestions(db: sqlite3.Connection, target_id: str, locale: str, l
             "status":"suggested","reasons":reasons,
         })
     return sorted(suggestions,key=lambda item:(-item["confidence"],item["label"].lower(),item["semantic_id"]))[:limit]
-
-def _table_exists(db: sqlite3.Connection, table: str) -> bool:
-    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type IN('table','view') AND name=?", (table,)).fetchone())
-
-def graph_db_ready(db: sqlite3.Connection | None = None) -> bool:
-    if db is not None:
-        return _table_exists(db, "graph_nodes") and _table_exists(db, "graph_edges")
-    try:
-        with connection() as check_db:
-            return graph_db_ready(check_db)
-    except sqlite3.Error:
-        return False
 
 def _safe_relative_path(value: object) -> str | None:
     text = str(value or "").strip().replace("\\", "/")
@@ -342,7 +411,9 @@ def graph_contract():
 @bp.get("/stats")
 def stats():
     with connection() as db:
-        return jsonify({name: db.execute(f"SELECT COUNT(*) FROM graph_{name}").fetchone()[0] for name in ("nodes","edges","evidence","issues","paths")})
+        stats={name: db.execute(f"SELECT COUNT(*) FROM graph_{name}").fetchone()[0] for name in ("nodes","edges","evidence","issues","paths")}
+        stats["generated_at"]=(db.execute("SELECT value FROM meta WHERE key='generated_at'").fetchone() or [""])[0]
+        return jsonify(stats)
 
 @bp.get("/search")
 def search():
@@ -535,12 +606,19 @@ def detail():
             "impacts":len(impacts),"paths":len(paths)
         }
         locale=(request.args.get("locale") or "en").strip().lower() or "en"
-        properties=_json(node_item.get("properties_json"),{})
+        properties=_with_semantic_tree(target_id,node_item)
         tree_target_ids=_semantic_tree_target_ids(target_id,properties.get("semantic_tree"))
         business_semantics=_business_semantic_rows(db,target_id,locale)
         tree_business_semantics=_semantic_tree_business_semantics(db,tree_target_ids,locale)
         tree_nodes={row["node_id"]:dict(row) for row in _rows_by_ids(db,"graph_nodes","node_id",tree_target_ids)}
         return jsonify({"target_type":"NODE","node":node_item,"properties":properties,"business_semantics":business_semantics,"semantic_tree_business_semantics":tree_business_semantics,"semantic_tree_nodes":tree_nodes,"incoming":incoming,"outgoing":outgoing,"columns":columns,"table_context":table_context,"impacts":impacts,"paths":paths,"issues":issues,"counts":counts})
+
+def _with_semantic_tree(target_id: str, node_item: dict) -> dict:
+    properties=_json(node_item.get("properties_json"),{})
+    tree=_semantic_tree(target_id)
+    if tree is not None:
+        properties["semantic_tree"]=tree
+    return properties
 
 def _node_detail_summary(db, target_id: str, node_item: dict) -> dict:
     """Node detail without relation/impact/path lists (relations=0).
@@ -574,7 +652,7 @@ def _node_detail_summary(db, target_id: str, node_item: dict) -> dict:
         "paths":count("SELECT count(*) FROM graph_paths WHERE actor_node_id=?"),
     }
     locale=(request.args.get("locale") or "en").strip().lower() or "en"
-    properties=_json(node_item.get("properties_json"),{})
+    properties=_with_semantic_tree(target_id,node_item)
     tree_target_ids=_semantic_tree_target_ids(target_id,properties.get("semantic_tree"))
     return {
         "target_type":"NODE","node":node_item,"properties":properties,
@@ -617,7 +695,7 @@ def business_semantic_mapping(target_id):
             return error("invalid_semantic_mapping","Existing node and approved semantic required")
         db.execute(
             """
-            INSERT INTO graph_business_semantic_mappings(target_id,semantic_id,status,source_kind,author_name,confidence)
+            INSERT INTO kn.semantic_mappings(target_id,semantic_id,status,source_kind,author_name,confidence)
             VALUES(?,?,'approved','USER',?,1.0)
             ON CONFLICT(target_id) DO UPDATE SET semantic_id=excluded.semantic_id,status='approved',source_kind='USER',
               author_name=excluded.author_name,confidence=1.0,updated_at=datetime('now')
@@ -792,144 +870,6 @@ def knowledge():
             target=body["target_id"] if isinstance(body["target_id"],str) else ""
             exists=db.execute("SELECT 1 FROM graph_nodes WHERE node_id=? UNION ALL SELECT 1 FROM graph_edges WHERE edge_id=? LIMIT 1",(target,target)).fetchone()
             if body["status"] not in KNOWLEDGE_STATUSES or not text.strip() or len(text.encode("utf-8"))>KNOWLEDGE_MAX_BYTES or not exists: return error("invalid_knowledge","Existing target, bounded body and valid status required")
-            row=db.execute("INSERT INTO graph_knowledge(target_id,body,status) VALUES(?,?,?) RETURNING *",(target,text.strip(),body["status"])).fetchone(); db.commit()
+            row=db.execute("INSERT INTO kn.graph_knowledge(target_id,body,status) VALUES(?,?,?) RETURNING *",(target,text.strip(),body["status"])).fetchone(); db.commit()
             return jsonify(dict(row)),201
         return jsonify([dict(row) for row in db.execute("SELECT * FROM graph_knowledge WHERE target_id=? ORDER BY knowledge_id", (request.args.get("target_id", ""),))])
-
-@bp.post("/imports/validate")
-def validate_imports():
-    roots_or_response = _import_roots_from_request()
-    if not isinstance(roots_or_response, list):
-        return roots_or_response
-    graph_roots = [root for root in roots_or_response if (root / "graph.sqlite").is_file()]
-    if graph_roots:
-        from web.backend.importer.graph_sqlite import inspect_graph
-
-        try:
-            graphs = [inspect_graph(root) for root in graph_roots]
-        except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError) as exc:
-            return error("validation_failed", "Graph validation failed", 400, reason=_safe_error_text(exc))
-        return jsonify({
-            "status": "valid",
-            "package_count": len(graphs),
-            "packages": [
-                {"root": _repo_relative(root), "name": graph["name"], "contract_version": graph["contract_version"],
-                 "packages": graph["packages"], "counts": graph["counts"]}
-                for root, graph in zip(graph_roots, graphs)
-            ],
-        })
-    try:
-        from web.backend.importer import pipeline
-        from web.backend.importer.package_validator import validate_package
-
-        input_root = project_path("examples", "input-data")
-        allowed_ids = pipeline.validation_ids(roots_or_response, input_root)
-        packages = [validate_package(root, allowed_ids, workspace_root=SOURCE_ROOT) for root in roots_or_response]
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        return error("validation_failed", "Import package validation failed", 400, reason=_safe_error_text(exc))
-    return jsonify({
-        "status":"valid",
-        "package_count":len(packages),
-        "packages":[_package_summary(package, root) for package, root in zip(packages, roots_or_response)],
-    })
-
-@bp.post("/imports")
-def imports_create():
-    roots_or_response = _import_roots_from_request()
-    if not isinstance(roots_or_response, list):
-        return roots_or_response
-    graph_roots = [root for root in roots_or_response if (root / "graph.sqlite").is_file()]
-    if graph_roots:
-        if len(graph_roots) != 1 or len(roots_or_response) != 1:
-            return error("invalid_request", "Import exactly one extracted graph directory at a time")
-        from web.backend.importer.graph_sqlite import import_graph
-
-        try:
-            counts = import_graph(graph_roots[0], Path(_graph_db_path()), project_path("examples", "input-data"))
-        except (OSError, ValueError, RuntimeError, sqlite3.Error, json.JSONDecodeError) as exc:
-            return error("import_failed", "Graph import failed", 400, reason=_safe_error_text(exc))
-        return jsonify({"status":"imported","package_count":1,"counts":counts}), 201
-    try:
-        from web.backend.importer import pipeline
-
-        input_root = project_path("examples", "input-data")
-        counts = pipeline.import_roots(roots_or_response, Path(_graph_db_path()), input_root=input_root, evidence_root=SOURCE_ROOT)
-    except (OSError, ValueError, RuntimeError, sqlite3.Error, json.JSONDecodeError) as exc:
-        return error("import_failed", "Import package execution failed", 400, reason=_safe_error_text(exc))
-    return jsonify({"status":"imported","package_count":len(roots_or_response),"counts":counts}), 201
-
-def _graph_db_path() -> Path:
-    try:
-        return Path(current_app.config.get("CODE_MAP_GRAPH_DB_PATH", DB_PATH))
-    except RuntimeError:
-        return DB_PATH
-
-def _import_roots_from_request():
-    if request.content_length is not None and request.content_length > MAX_IMPORT_BODY_BYTES:
-        return error("body_too_large", "Request body exceeds configured limit", 413)
-    if request.files:
-        return error("unsupported_upload", "File upload imports are not supported; provide local package paths", 400)
-    if not request.is_json:
-        return error("unsupported_upload", "JSON body with local package paths is required", 400)
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
-        return error("invalid_request", "JSON object with local package paths is required")
-    raw_roots: list[object] = []
-    for key in ("roots", "paths", "package_paths", "packagePaths"):
-        value = body.get(key)
-        if isinstance(value, list):
-            raw_roots.extend(value)
-    for key in ("root", "path", "package_path", "packagePath"):
-        value = body.get(key)
-        if value:
-            raw_roots.append(value)
-    roots=[]
-    for value in raw_roots:
-        root = _local_package_root(value)
-        if root is None:
-            return error("invalid_path", "Paths must be absolute directories under the configured project output directory")
-        roots.append(root)
-    roots = list(dict.fromkeys(roots))
-    if not roots:
-        return error("invalid_request", "At least one local package path is required")
-    return roots[:25]
-
-def _local_package_root(value: object) -> Path | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    raw = Path(text).expanduser()
-    if not raw.is_absolute():
-        return None
-    path = raw.resolve()
-    return path if path.is_relative_to(OUTPUT_ROOT) and path.is_dir() else None
-
-def _package_summary(package: dict[str, object], root: Path) -> dict[str, object]:
-    manifest = dict(package.get("manifest") or {})
-    return {
-        "root":_repo_relative(root),
-        "package_id":manifest.get("packageId"),
-        "source_id":manifest.get("sourceId"),
-        "contract_version":manifest.get("contractVersion"),
-        "counts":manifest.get("counts", {}),
-    }
-
-def _repo_relative(path: Path) -> str:
-    return path.resolve().relative_to(OUTPUT_ROOT).as_posix()
-
-def _safe_error_text(exc: BaseException) -> str:
-    text = str(exc) or exc.__class__.__name__
-    text = text.replace(str(OUTPUT_ROOT), "<output-root>")
-    return re.sub(r"/[^\s:'\"]+", "<path>", text)
-
-@bp.get("/imports")
-def imports_list():
-    with connection() as db:
-        return jsonify([dict(row) for row in db.execute("SELECT source_id,package_id,created_at FROM graph_sources ORDER BY source_id")])
-
-@bp.get("/imports/<run_id>")
-def imports_detail(run_id):
-    with connection() as db:
-        row=db.execute("SELECT source_id,package_id,created_at FROM graph_sources WHERE source_id=?",(run_id,)).fetchone()
-        if not row: return error("import_not_found","Import not found",404)
-        return jsonify(dict(row))

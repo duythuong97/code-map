@@ -35,12 +35,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rag_parser = commands.add_parser(
         "rag-export",
-        description="Write codemap-rag.sqlite (graph + business data) for the VS Code extension.",
+        description="Write codemap-rag.sqlite (VS Code) and codemap-web.sqlite (web app) from graph.sqlite.",
     )
     rag_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
     rag_parser.add_argument("--input-data", help="Folder with semantic-dictionary.csv, tables.csv, jobnet.csv ...")
     rag_parser.add_argument("--source-root", help="Folder the evidence paths are relative to.")
-    rag_parser.add_argument("--out", help="Output file (default: codemap-rag.sqlite next to graph.sqlite).")
+    rag_parser.add_argument("--out", help="VS Code file (default: codemap-rag.sqlite next to graph.sqlite).")
+    rag_parser.add_argument("--web-out", help="Web app file (default: codemap-web.sqlite next to --out).")
 
     catalog_parser = commands.add_parser(
         "catalog", description="Inspect and validate incoming catalog files."
@@ -79,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             counts = write_rag_database(
                 graph,
                 output,
+                web_path=Path(args.web_out) if args.web_out else None,
                 input_root=Path(args.input_data) if args.input_data else None,
                 source_root=Path(args.source_root).resolve() if args.source_root else None,
             )

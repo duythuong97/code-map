@@ -27,7 +27,11 @@ import unicodedata
 from contextlib import closing
 from pathlib import Path
 
-RAG_SCHEMA_VERSION = "1"
+from .serving_tables import add_business_edge, add_business_node, finish_serving_tables, write_serving_tables
+
+RAG_SCHEMA_VERSION = "2"
+DATABASE_NAME = "codemap-rag.sqlite"
+WEB_DATABASE_NAME = "codemap-web.sqlite"
 MAX_DOC_CHARS = 600
 MAX_SNIPPET_CHARS = 240
 MAX_DOC_TERMS = 40
@@ -114,28 +118,40 @@ def write_rag_database(
     graph_path: Path,
     output_path: Path,
     *,
+    web_path: Path | None = None,
     input_root: Path | None = None,
     source_root: Path | None = None,
 ) -> dict[str, int]:
-    """Build ``output_path`` from the engine ``graph.sqlite`` at ``graph_path``."""
+    """Build ``output_path`` (VS Code) and ``web_path`` (web app, default
+    ``codemap-web.sqlite`` next to it) from the engine ``graph.sqlite``.
+
+    They are separate files because the web tables use long string ids and
+    full evidence; folded into one file the extension would load ~6x more.
+    """
+    web_path = web_path or output_path.with_name(WEB_DATABASE_NAME)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_name(output_path.name + ".tmp")
+    web_temporary = web_path.with_name(web_path.name + ".tmp")
     temporary.unlink(missing_ok=True)
+    web_temporary.unlink(missing_ok=True)
     with closing(sqlite3.connect(f"{graph_path.resolve().as_uri()}?mode=ro", uri=True)) as graph, closing(
         sqlite3.connect(temporary)
-    ) as rag:
+    ) as rag, closing(sqlite3.connect(web_temporary)) as web:
         graph.row_factory = sqlite3.Row
         rag.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;" + _SCHEMA)
-        with rag:
+        web.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;")
+        with rag, web:
             ids = _copy_nodes(graph, rag)
             _copy_edges(graph, rag, ids)
             _copy_flows(graph, rag, ids)
             _copy_issues(graph, rag, ids)
             business = _BusinessData(input_root)
-            _add_names(rag, business)
-            _add_jobs(rag, business)
+            write_serving_tables(graph, web, business.root)
+            _names_from_localization(rag, web)
+            _add_jobs(rag, web, business)
             _index_terms(rag)
             _add_concepts(rag, business)
+            _concept_links_for_web(rag, web)
             metadata = {
                 "schema_version": RAG_SCHEMA_VERSION,
                 "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -144,12 +160,16 @@ def write_rag_database(
                 "input_data": str(input_root or ""),
             }
             rag.executemany("INSERT INTO meta VALUES(?,?)", [(k, str(v)) for k, v in metadata.items()])
+            web.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            web.executemany("INSERT INTO meta VALUES(?,?)", [(k, str(v)) for k, v in metadata.items()])
+        finish_serving_tables(web)
         rag.executescript(_INDEXES + "ANALYZE;")
         counts = {
             table: rag.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in ("nodes", "edges", "terms", "concepts", "concept_links", "flows", "issues")
         }
     temporary.replace(output_path)
+    web_temporary.replace(web_path)
     return counts
 
 
@@ -255,52 +275,21 @@ class _BusinessData:
             return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(handle)]
 
 
-def _add_names(rag: sqlite3.Connection, business: _BusinessData) -> None:
-    """Attach ja/en/vi business names to TABLE and COLUMN nodes (matched by code, any database)."""
-    names: dict[tuple[str, ...], list[str]] = {}
-    for table in business.rows("tables.csv"):
-        code = table.get("table_code", "").upper()
-        if not code:
-            continue
-        key = (code,)
-        for locale in ("ja", "en", "vi"):
-            if table.get(f"table_name_{locale}"):
-                names.setdefault(key, []).append(f"{locale}:{table[f'table_name_{locale}']}")
-        for column in business.rows(f"tables/{table.get('table_code', '')}.csv"):
-            column_key = (code, column.get("column_code", "").upper())
-            for locale in ("ja", "en", "vi"):
-                if column.get(f"column_name_{locale}"):
-                    names.setdefault(column_key, []).append(f"{locale}:{column[f'column_name_{locale}']}")
-    for row in business.rows("localized-metadata.csv"):
-        if row.get("field_name") != "name" or row.get("review_status", "approved") == "rejected":
-            continue
-        parts = row.get("target_id", "").split(":")
-        if parts[0] == "table" and len(parts) >= 3:
-            key = (parts[-1].upper(),)
-        elif parts[0] == "column" and len(parts) >= 4:
-            key = (parts[-2].upper(), parts[-1].upper())
-        else:
-            continue
-        value = f"{row.get('locale', '')}:{row.get('value', '')}"
-        if value not in names.get(key, []):
-            names.setdefault(key, []).append(value)
-    if not names:
-        return
-    updates = []
-    for node_id, node_type, name, qualified in rag.execute(
-        "SELECT id, type, name, qualified_name FROM nodes WHERE type IN ('TABLE','COLUMN')"
+def _names_from_localization(rag: sqlite3.Connection, web: sqlite3.Connection) -> None:
+    """nodes.names ("ja:注文; en:Order Header") from graph_localization, for the search index."""
+    order = {"ja": 0, "en": 1, "vi": 2}
+    names: dict[str, list[tuple[int, str]]] = {}
+    for target, locale, value in web.execute(
+        "SELECT target_id, locale, value FROM graph_localization WHERE field_name='name' AND lower(review_status) <> 'rejected'"
     ):
-        if node_type == "TABLE":
-            key = (name.upper(),)
-        else:
-            parts = qualified.split(".")
-            key = (parts[-2].upper() if len(parts) >= 2 else "", name.upper())
-        if key in names:
-            updates.append(("; ".join(names[key]), node_id))
-    rag.executemany("UPDATE nodes SET names=? WHERE id=?", updates)
+        names.setdefault(target, []).append((order.get(locale, 9), f"{locale}:{value}"))
+    rag.executemany(
+        "UPDATE nodes SET names=? WHERE stable_id=?",
+        [("; ".join(value for _, value in sorted(values)), target) for target, values in names.items()],
+    )
 
 
-def _add_jobs(rag: sqlite3.Connection, business: _BusinessData) -> None:
+def _add_jobs(rag: sqlite3.Connection, web: sqlite3.Connection, business: _BusinessData) -> None:
     """Add JOB_NETWORK/JOB nodes from jobnet.csv and link jobs to the code they start."""
     jobs = business.rows("jobnet.csv")
     if not jobs:
@@ -324,14 +313,18 @@ def _add_jobs(rag: sqlite3.Connection, business: _BusinessData) -> None:
     next_issue = (rag.execute("SELECT max(id) FROM issues").fetchone()[0] or 0) + 1
     created: dict[str, int] = {}
 
-    def node(stable_id: str, node_type: str, name: str, doc: str = "") -> int:
+    stable = {node_id: stable_id for node_id, stable_id in rag.execute("SELECT id, stable_id FROM nodes")}
+
+    def node(stable_id: str, node_type: str, name: str, doc: str = "", properties: dict | None = None) -> int:
         nonlocal next_id
         if stable_id not in created:
             created[stable_id] = next_id
+            stable[next_id] = stable_id
             rag.execute(
                 "INSERT INTO nodes(id,stable_id,type,name,qualified_name,file,line,doc) VALUES(?,?,?,?,?,?,?,?)",
                 (next_id, stable_id, node_type, name, stable_id, "jobnet.csv", None, doc),
             )
+            add_business_node(web, stable_id, node_type, name, properties or {})
             next_id += 1
         return created[stable_id]
 
@@ -341,13 +334,15 @@ def _add_jobs(rag: sqlite3.Connection, business: _BusinessData) -> None:
             "INSERT INTO edges VALUES(?,?,?,?,?,?,?,?,?)",
             (next_edge, src, dst, edge_type, "BUSINESS", operation, "jobnet.csv", None, None),
         )
+        # The web vocabulary has no INVOKES; a job running a command mode is a CALLS there.
+        add_business_edge(web, stable[src], stable[dst], "CALLS" if edge_type == "INVOKES" else edge_type, operation)
         next_edge += 1
 
     job_ids: dict[tuple[str, str], int] = {}
     for row in jobs:
         network = node(f"job-network:{row['jobnet_id']}", "JOB_NETWORK", row.get("jobnet_name") or row["jobnet_id"])
         doc = f"{row.get('executable_name', '')} {row.get('arguments', '')}".strip()
-        job = node(f"job:{row['jobnet_id']}:{row['job_id']}", "JOB", row.get("job_name") or row["job_id"], doc)
+        job = node(f"job:{row['jobnet_id']}:{row['job_id']}", "JOB", row.get("job_name") or row["job_id"], doc, row)
         job_ids[(row["jobnet_id"], row["job_id"])] = job
         edge(network, job, "CONTAINS")
         executable = compact(Path(row.get("executable_name", "")).stem)
@@ -366,10 +361,15 @@ def _add_jobs(rag: sqlite3.Connection, business: _BusinessData) -> None:
         if mode is not None:
             edge(job, mode, "INVOKES", row.get("arguments", ""))
         if not candidates:
+            message = f"Job {row['job_id']} runs {row.get('executable_name')} but no scanned executable matches it"
             rag.execute(
                 "INSERT INTO issues VALUES(?,?,?,?,?,?,?)",
-                (next_issue, job, "JOB_EXECUTABLE_NOT_FOUND", "WARNING",
-                 f"Job {row['job_id']} runs {row.get('executable_name')} but no scanned executable matches it", "jobnet.csv", None),
+                (next_issue, job, "JOB_EXECUTABLE_NOT_FOUND", "WARNING", message, "jobnet.csv", None),
+            )
+            web.execute(
+                "INSERT OR IGNORE INTO graph_issues VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (f"issue:job-executable:{row['jobnet_id']}:{row['job_id']}", "JOB_EXECUTABLE_NOT_FOUND", "WARNING",
+                 stable[job], row.get("executable_name"), None, "jobnet.csv", None, message, "{}", "code-tree:business"),
             )
             next_issue += 1
     for row in jobs:
@@ -449,6 +449,18 @@ def _add_concepts(rag: sqlite3.Connection, business: _BusinessData) -> None:
     rag.executemany(
         "INSERT INTO concept_links VALUES(?,?,?)",
         [(semantic_id, node_id, reason) for (semantic_id, node_id), reason in sorted(links.items())],
+    )
+
+
+def _concept_links_for_web(rag: sqlite3.Connection, web: sqlite3.Connection) -> None:
+    """Dictionary alias links (business term -> code) with the web's stable ids."""
+    web.execute(
+        "CREATE TABLE graph_business_semantic_links(target_id TEXT NOT NULL, semantic_id TEXT NOT NULL, reason TEXT NOT NULL, "
+        "PRIMARY KEY(target_id, semantic_id))"
+    )
+    web.executemany(
+        "INSERT OR IGNORE INTO graph_business_semantic_links VALUES(?,?,?)",
+        rag.execute("SELECT n.stable_id, l.semantic_id, l.reason FROM concept_links l JOIN nodes n ON n.id=l.node_id"),
     )
 
 

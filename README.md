@@ -5,7 +5,8 @@ Repository gồm ba phần (code-tree đã gộp vào đây):
 - **`extractor/`**: package `code_tree_exporter`. Scan source Angular, .NET
   API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi ra `graph.sqlite` cùng
   `codemap-rag.sqlite`.
-- **`web/`**: backend Flask và UI React. Hiển thị flow, lineage, evidence.
+- **`web/`**: backend Flask và UI React. Đọc thẳng output của extract và hiển
+  thị flow, lineage, evidence.
 - **`vscode-extension/`**: `@codemap` trong VS Code Chat (Graph RAG).
 
 Thư mục dùng chung: `shared/` (fixtures và hợp đồng dữ liệu giữa các phần),
@@ -13,8 +14,14 @@ Thư mục dùng chung: `shared/` (fixtures và hợp đồng dữ liệu giữa
 `scripts/`.
 
 ```text
-source ──extract──▶ output/<run>/graph.sqlite ──import-graph──▶ data/*.sqlite ──▶ API/UI
+source ──extract──▶ output/<run>/ ─┬─ graph.sqlite         (graph đầy đủ của engine)
+                                   ├─ codemap-web.sqlite   ──▶ web (đọc trực tiếp)
+                                   └─ codemap-rag.sqlite   ──▶ VS Code @codemap
 ```
+
+Không còn bước import. Web mở thẳng thư mục output, ghi chú và gán thuật ngữ do
+người dùng thêm nằm riêng trong `data/knowledge.sqlite` nên lần extract sau
+không xoá mất.
 
 ## Chạy demo end-to-end
 
@@ -25,14 +32,13 @@ cho Angular và để build UI.
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm install --prefix extractor/code_tree_exporter/extractors/angular-extractor typescript
-cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT và CODE_MAP_SOURCE_ROOT
-.venv/bin/python scripts/run_demo_pipeline.py --fresh
+cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT, CODE_MAP_SOURCE_ROOT, CODE_MAP_GRAPH_OUTPUT
+.venv/bin/python scripts/run_demo_pipeline.py
 ```
 
-Trên Windows dùng `.venv\Scripts\python.exe`. Script chạy lần lượt `validate`,
-`extract` (ra `output/demo/graph.sqlite`), `import-graph` (vào
-`data/code-flow-demo.sqlite`) và kiểm tra integrity. Lần đầu có .NET, các worker
-được build một lần (vài phút) rồi tái sử dụng.
+Trên Windows dùng `.venv\Scripts\python.exe`. Script chạy `validate` rồi
+`extract`, ra `output/demo/`. Lần đầu có .NET, các worker được build một lần
+(vài phút) rồi dùng lại.
 
 Chạy UI:
 
@@ -41,17 +47,24 @@ npm ci --prefix web/frontend && npm run build --prefix web/frontend
 .venv/bin/python web/backend/api/server.py   # http://127.0.0.1:8000/code-map/
 ```
 
-Import một graph khác vào UI:
+Web đọc thư mục trong `CODE_MAP_GRAPH_OUTPUT` (file `.env`). Muốn xem một lần
+extract khác thì đổi biến này, hoặc chạy bản dev
+`python web/backend/api/app.py --graph-output <thư mục output>`.
 
-```bash
-PYTHONPATH=extractor .venv/bin/python -m web.backend.cli import-graph <output-dir-or-graph.sqlite>
-```
+`codemap-web.sqlite` đã chuyển sẵn vocabulary của engine sang vocabulary của UI:
+- `READS_FROM` → `READS`/`REMOTE_READS`
+- `WRITES_TO` → `INSERTS`/`UPDATES`/`DELETES`/`MERGES`
+- `HANDLES_API` → `HANDLED_BY`
 
-API `POST /api/graph/imports` cũng nhận thư mục output (nằm dưới `output/`) chứa
-`graph.sqlite`. Adapter đổi vocabulary của engine sang vocabulary UI
-(`READS_FROM`→`READS`/`REMOTE_READS`, `WRITES_TO`→`INSERTS`/`UPDATES`/`DELETES`/
-`MERGES`, `HANDLES_API`→`HANDLED_BY`), dùng flow đã materialize của engine để
-tạo path đọc/ghi, và lấy tên tiếng Nhật/Anh của bảng, cột từ `examples/input-data/tables*.csv`.
+File này cũng chứa:
+- path đọc/ghi lấy từ flow của engine;
+- tên tiếng Nhật/Anh/Việt của bảng và cột lấy từ `inputData`;
+- từ điển nghiệp vụ;
+- job batch lấy từ `jobnet.csv`.
+
+`semantic_tree` (có thể nặng vài MB mỗi node) không chép sang file này. Web đọc
+nó từ `graph.sqlite` khi mở chi tiết một node. Nếu thư mục output được sinh bởi
+bản extract cũ, API trả lỗi `503 graph_not_ready` kèm hướng dẫn chạy lại.
 
 ## Hiệu năng: parser SQL trên .NET
 
@@ -85,7 +98,7 @@ Demo (không cache): .NET 3.9s, Python 20.6s; graph sinh ra giống hệt nhau.
 |---|---|---|
 | Extract | 488s, RAM process chính 2,2GB | 158s, 1,0GB |
 | `graph-index.json` | 149MB | 5MB |
-| Import vào DB của UI | > 10 phút | 50s |
+| Import vào DB của UI | > 10 phút | không còn bước này (web đọc thẳng output) |
 | Click node hub trong UI (`/detail`) | 365ms, 1,9MB | 5ms, 5KB |
 | Search xấu nhất | 954ms | 93ms |
 
@@ -394,15 +407,16 @@ extractor/
   code_tree_exporter/   # engine: package, contract, extractor runtimes
     extractors/_sql/    # CodeTree.Sql: ANTLR PL/SQL trên .NET
     extractors/sql-service/  # service JSON-lines cho extractor Python
-    rag_export.py       # codemap-rag.sqlite cho VS Code và web
+    rag_export.py       # codemap-rag.sqlite (VS Code) + codemap-web.sqlite (web)
+    serving_tables.py   # các bảng graph_* của web
   tests/                # python -m unittest discover -s extractor/tests -t extractor
   pyproject.toml, requirements.txt
 web/
-  backend/              # Flask API (python -m unittest discover -s web/tests -t .)
+  backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
   frontend/             # React UI
   configs/, ecosystem.config.js (pm2), requirements.txt
 vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
-shared/fixtures/        # dữ liệu kiểm thử dùng chung (token vectors Python ↔ TypeScript)
+shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu
 examples/
   sample-source/        # source demo
   input-data/           # CSV nghiệp vụ (từ điển, jobnet, tên JA/EN của bảng, ...)
