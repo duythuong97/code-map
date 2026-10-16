@@ -123,15 +123,13 @@ def run_pipeline(config_path: Path) -> Path:
                 graph, system_key=str(config.get("name") or root.name)
             )
         packages_root = temporary_root / "packages"
-        prepared_root = temporary_root / "sources"
         packages_root.mkdir()
         jobs: list[_ExtractionJob] = []
         for source in validated_sources:
             source_type = str(source["type"])
             spec = extractor_spec(source_type)
             source_name = str(source["name"])
-            prepared_source_root = prepared_root / source_name
-            source_records, valid_paths, requires_staging = _prepare_source(
+            source_records, valid_paths, source_encodings = _prepare_source(
                 root,
                 source,
                 spec,
@@ -154,19 +152,16 @@ def run_pipeline(config_path: Path) -> Path:
                     )
                 continue
             package_output = packages_root / source_name
-            extractor_root = root
-            if requires_staging:
-                _stage_decoded_source(root, prepared_source_root, source_records)
-                if spec.config_type == "angular":
-                    _copy_angular_metadata(root, prepared_source_root, source)
-                extractor_root = prepared_source_root
+            # Extractors read the sources in place; files that are not UTF-8
+            # are listed in sourceEncodings and decoded by the extractor itself.
             extractor_config = _extractor_config(
                 config,
                 source,
                 spec,
-                extractor_root,
+                root,
                 package_output,
                 valid_paths,
+                source_encodings=source_encodings,
                 input_data_root=_v3_input_data_root(
                     source,
                     catalog.normalized_root if catalog else None,
@@ -579,13 +574,13 @@ def _prepare_source(
     graph: GraphPackage,
     *,
     max_file_bytes: int,
-) -> tuple[list[SourceRecord], list[str], bool]:
+) -> tuple[list[SourceRecord], list[str], dict[str, str]]:
     selected = _selected_files(root, source["folders"], spec.suffixes)
     if spec.config_type in {"dotnet-api", "dotnet-batch"}:
         selected = _expand_dotnet_selection(root, selected)
     records: list[SourceRecord] = []
     valid_paths: list[str] = []
-    requires_staging = False
+    encodings: dict[str, str] = {}
     preserve_comments = source.get("preserveComments", True) is not False
     for path in selected:
         relative = path.relative_to(root).as_posix()
@@ -628,10 +623,8 @@ def _prepare_source(
             )
             continue
 
-        requires_staging = requires_staging or (
-            decoded.actual_encoding.lower().replace("_", "-")
-            not in {"utf-8", "ascii"}
-        )
+        if decoded.actual_encoding.lower().replace("_", "-") not in {"utf-8", "ascii"}:
+            encodings[relative] = decoded.actual_encoding
         comments = (
             tuple(extract_comments(decoded.text, relative, str(source["type"])))
             if preserve_comments
@@ -654,25 +647,7 @@ def _prepare_source(
             )
         )
         valid_paths.append(relative)
-    return records, valid_paths, requires_staging
-
-
-def _stage_decoded_source(
-    root: Path, staging: Path, records: list[SourceRecord]
-) -> None:
-    # ponytail: mixed legacy encodings use a second read; move decoding into extractors if this becomes common.
-    for record in records:
-        relative = record.relative_path
-        source_path = root.joinpath(*PurePosixPath(relative).parts)
-        try:
-            decoded = decode_source(source_path, relative, record.actual_encoding)
-        except SourceDecodingError as exc:
-            raise ValueError(f"Source changed while staging: {relative}") from exc
-        if decoded.raw_sha256 != record.raw_sha256:
-            raise ValueError(f"Source changed while staging: {relative}")
-        destination = staging.joinpath(*PurePosixPath(relative).parts)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(decoded.text, encoding="utf-8", newline="")
+    return records, valid_paths, encodings
 
 
 def _selected_files(root: Path, folders: list, suffixes: tuple[str, ...]) -> list[Path]:
@@ -789,112 +764,6 @@ def _safe_source_file(path: Path, root: Path, suffixes: set[str]) -> bool:
     )
 
 
-def _copy_angular_metadata(root: Path, staging: Path, source: dict) -> None:
-    root = root.resolve()
-    pending: list[Path] = []
-    for raw in source["folders"]:
-        relative = raw.get("path", ".") if isinstance(raw, dict) else raw
-        candidate = (root / str(relative)).resolve()
-        current = candidate.parent if candidate.is_file() else candidate
-        while current == root or root in current.parents:
-            workspace_path = next(
-                (
-                    current / name
-                    for name in (
-                        "angular.json",
-                        ".angular-cli.json",
-                        "angular-cli.json",
-                    )
-                    if (current / name).is_file()
-                ),
-                None,
-            )
-            if workspace_path is not None:
-                pending.extend(
-                    (
-                        workspace_path,
-                        current / "package.json",
-                        current / "tsconfig.json",
-                        current / "tsconfig.app.json",
-                    )
-                )
-                try:
-                    workspace = json.loads(
-                        workspace_path.read_text(encoding="utf-8")
-                    )
-                except (OSError, json.JSONDecodeError):
-                    workspace = {}
-                projects = (
-                    workspace.get("projects", {}) if isinstance(workspace, dict) else {}
-                )
-                for project in projects.values() if isinstance(projects, dict) else ():
-                    if not isinstance(project, dict):
-                        continue
-                    targets = project.get("architect") or project.get("targets") or {}
-                    for target in targets.values() if isinstance(targets, dict) else ():
-                        options = (
-                            target.get("options", {})
-                            if isinstance(target, dict)
-                            else {}
-                        )
-                        tsconfig = (
-                            options.get("tsConfig")
-                            if isinstance(options, dict)
-                            else None
-                        )
-                        if isinstance(tsconfig, str):
-                            pending.append((current / tsconfig).resolve())
-                applications = (
-                    workspace.get("apps", [])
-                    if isinstance(workspace, dict)
-                    else []
-                )
-                for application in (
-                    applications if isinstance(applications, list) else ()
-                ):
-                    if not isinstance(application, dict):
-                        continue
-                    tsconfig = application.get("tsconfig")
-                    if isinstance(tsconfig, str):
-                        pending.append((current / tsconfig).resolve())
-                break
-            if current == root:
-                break
-            current = current.parent
-    for key in ("appConfig", "tsconfig", "tsConfig"):
-        value = source.get(key)
-        if isinstance(value, str) and value:
-            pending.append((root / value).resolve())
-
-    copied: set[Path] = set()
-    while pending:
-        candidate = pending.pop().resolve()
-        if (
-            candidate in copied
-            or not candidate.is_file()
-            or not (candidate == root or root in candidate.parents)
-        ):
-            continue
-        copied.add(candidate)
-        destination = staging / candidate.relative_to(root)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(candidate, destination)
-        if (
-            candidate.name.startswith("tsconfig")
-            and candidate.suffix.lower() == ".json"
-        ):
-            try:
-                metadata = json.loads(candidate.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            extends = metadata.get("extends") if isinstance(metadata, dict) else None
-            if isinstance(extends, str) and (
-                extends.startswith(".") or Path(extends).is_absolute()
-            ):
-                parent = (candidate.parent / extends).resolve()
-                pending.append(parent if parent.suffix else parent.with_suffix(".json"))
-
-
 def _extractor_config(
     global_config: dict,
     source: dict,
@@ -904,6 +773,7 @@ def _extractor_config(
     valid_paths: list[str],
     *,
     input_data_root: Path | None = None,
+    source_encodings: dict[str, str] | None = None,
 ) -> dict:
     result = {
         key: value
@@ -931,6 +801,7 @@ def _extractor_config(
             ),
         }
     )
+    result["sourceEncodings"] = dict(sorted((source_encodings or {}).items()))
     result["limits"] = _resolved_limits(global_config)
     result["folders"] = _staged_folders(source["folders"])
     if spec.config_type == "angular":

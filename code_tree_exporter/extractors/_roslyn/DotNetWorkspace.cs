@@ -5,6 +5,7 @@ using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.MSBuild;
+using Microsoft.CodeAnalysis.Text;
 
 namespace CodeMap.Extractors;
 
@@ -116,10 +117,15 @@ public static class DotNetWorkspaceLoader
         }
 
         ExtractorRuntime.Phase("msbuild open solution/projects");
+        // MSBuild reads documents as UTF-8; give non-UTF-8 files their decoded text.
+        var decodedSolution = workspace.CurrentSolution;
+        foreach (var document in decodedSolution.Projects.SelectMany(project => project.Documents).ToList())
+            if (!string.IsNullOrEmpty(document.FilePath) && ExtractorRuntime.HasSourceEncoding(document.FilePath))
+                decodedSolution = decodedSolution.WithDocumentText(document.Id, SourceText.From(ExtractorRuntime.ReadSource(document.FilePath)));
         var filesByPath = new Dictionary<string, SourceFile>(ExtractorRuntime.PathComparer);
         var compilationByTree = new Dictionary<SyntaxTree, CSharpCompilation>();
         var projectInfos = new List<WorkspaceProjectInfo>();
-        var loadedProjects = workspace.CurrentSolution.Projects
+        var loadedProjects = decodedSolution.Projects
             .Where(project => project.Language == LanguageNames.CSharp
                 && !string.IsNullOrWhiteSpace(project.FilePath)
                 && ExtractorRuntime.IsWithin(project.FilePath!, root)
@@ -184,7 +190,7 @@ public static class DotNetWorkspaceLoader
             }
 
             var references = project.ProjectReferences
-                .Select(reference => workspace.CurrentSolution.GetProject(reference.ProjectId)?.FilePath)
+                .Select(reference => decodedSolution.GetProject(reference.ProjectId)?.FilePath)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Cast<string>()
                 .OrderBy(path => path, ExtractorRuntime.PathComparer)
@@ -203,7 +209,7 @@ public static class DotNetWorkspaceLoader
             if (filesByPath.ContainsKey(path)) continue;
             try
             {
-                var text = File.ReadAllText(path, Encoding.UTF8);
+                var text = ExtractorRuntime.ReadSource(path);
                 var tree = CSharpSyntaxTree.ParseText(text, path: path);
                 var sourceFile = new SourceFile(
                     path,
@@ -233,7 +239,7 @@ public static class DotNetWorkspaceLoader
                 filesByPath[path] = new SourceFile(
                     path,
                     ExtractorRuntime.RepositoryPath(Path.GetRelativePath(root, path)),
-                    File.ReadAllText(path, Encoding.UTF8),
+                    ExtractorRuntime.ReadSource(path),
                     null);
             }
             catch (Exception exception)

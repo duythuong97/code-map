@@ -70,11 +70,11 @@ function extract(ts, config) {
   if (tsconfigPath && existsSync(tsconfigPath)) {
     const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
     const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, path.dirname(tsconfigPath));
-    program = ts.createProgram(parsedConfig.fileNames, parsedConfig.options);
+    program = ts.createProgram(parsedConfig.fileNames, parsedConfig.options, sourceCompilerHost(ts, config, parsedConfig.options));
     typeChecker = program.getTypeChecker();
   } else {
     // Fallback if no tsconfig
-    program = ts.createProgram(files.filter(f => f.absolute.endsWith('.ts')).map(f => f.absolute), {});
+    program = ts.createProgram(files.filter(f => f.absolute.endsWith('.ts')).map(f => f.absolute), {}, sourceCompilerHost(ts, config, {}));
     typeChecker = program.getTypeChecker();
   }
 
@@ -535,6 +535,34 @@ function callFact(ts, file, call, callRefs) {
   return fact;
 }
 
+// Sources are read in place; the pipeline lists files that are not UTF-8 in
+// config.sourceEncodings (repository path -> Python codec name).
+const SOURCE_ENCODING_LABELS = {
+  'utf-8-sig': 'utf-8', 'utf-16-le': 'utf-16le', 'utf-16-be': 'utf-16be',
+  shift_jis: 'shift_jis', cp932: 'shift_jis', euc_jp: 'euc-jp',
+};
+
+function readSource(config, absolute) {
+  const name = (config.sourceEncodings || {})[repoPath(path.relative(config.root, absolute))];
+  if (!name) return readFileSync(absolute, 'utf8');
+  const label = SOURCE_ENCODING_LABELS[name.toLowerCase()];
+  if (!label) throw new Error(`Unsupported source encoding ${name} for ${absolute}`);
+  return new TextDecoder(label).decode(readFileSync(absolute));
+}
+
+// The compiler reads files itself; route non-UTF-8 sources through readSource.
+function sourceCompilerHost(ts, config, options) {
+  const host = ts.createCompilerHost(options);
+  const encodings = config.sourceEncodings || {};
+  if (!Object.keys(encodings).length) return host;
+  const readFile = host.readFile.bind(host);
+  host.readFile = fileName => {
+    const absolute = path.resolve(fileName);
+    return encodings[repoPath(path.relative(config.root, absolute))] ? readSource(config, absolute) : readFile(fileName);
+  };
+  return host;
+}
+
 function configuredFiles(config, extensions, discovery = discoverAngularProject(config)) {
   const root = discovery.root;
   const result = [];
@@ -544,7 +572,7 @@ function configuredFiles(config, extensions, discovery = discoverAngularProject(
     if (!extensions.includes(path.extname(absolute).toLowerCase())) return;
     if (excludedPath(absolute, root, discovery.exclusions)) return;
     seen.add(absolute);
-    const text = readFileSync(absolute, 'utf8');
+    const text = readSource(config, absolute);
     result.push({
       absolute,
       relative: repoPath(path.relative(root, absolute)),

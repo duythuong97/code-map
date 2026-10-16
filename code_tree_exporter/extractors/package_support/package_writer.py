@@ -491,10 +491,22 @@ def configured_files(config: dict, suffixes: Iterable[str]) -> list[SourceFile]:
                     and not excluded_path(path, root)
                 ):
                     path_databases.setdefault(path, database)
+    encodings = config.get("sourceEncodings") if isinstance(config.get("sourceEncodings"), dict) else {}
     files = []
     for path, database in sorted(path_databases.items(), key=lambda item: str(item[0])):
-        files.append(SourceFile(path, workspace_relative(path, root), path.read_text(encoding="utf-8"), database))
+        relative = workspace_relative(path, root)
+        files.append(SourceFile(path, relative, read_source_text(path, relative, encodings), database))
     return files
+
+
+def read_source_text(path: Path, relative: str, encodings: dict) -> str:
+    """Source text; files the pipeline found not to be UTF-8 are decoded with their encoding."""
+    encoding = encodings.get(relative)
+    if not encoding:
+        return path.read_text(encoding="utf-8")
+    from code_tree_exporter.decoding import decode_source
+
+    return decode_source(path, relative, encoding).text
 
 
 def excluded_path(path: Path, root: Path | None = None) -> bool:

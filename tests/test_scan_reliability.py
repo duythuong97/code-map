@@ -134,3 +134,47 @@ class SlimGraphIndexTests(unittest.TestCase):
             (output / "manifest.json").write_text("{}", encoding="utf-8")
             (output / "graph.sqlite").write_bytes(b"")
             self.assertEqual(KnowledgeStore(output).index["memoryByNodeId"], memory)
+
+
+class InPlaceSourceTests(unittest.TestCase):
+    """Extractors read sources in place; non-UTF-8 files are decoded, never copied."""
+
+    def test_shift_jis_sql_is_decoded_in_place(self) -> None:
+        import sqlite3
+        from unittest import mock
+
+        import code_tree_exporter.pipeline as pipeline
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary, "src").resolve()
+            (root / "sql").mkdir(parents=True)
+            (root / "sql" / "orders.sql").write_bytes(
+                "-- 注文を集計する\nSELECT ORDER_ID FROM ORDER_HEADER;\n".encode("shift_jis")
+            )
+            (root / "sql" / "plain.sql").write_text("SELECT 1 FROM ORDER_LINE;\n", encoding="utf-8")
+            config = Path(temporary, "config.json")
+            config.write_text(json.dumps({
+                "name": "sjis",
+                "root": str(root),
+                "output": str(Path(temporary, "out")),
+                "lowPriority": False,
+                "sources": [{"name": "ops", "type": "sql-files", "folders": ["sql"], "database": "DB1", "schema": "APP"}],
+            }), encoding="utf-8")
+            seen: list[dict] = []
+            original = pipeline._run_extractors_parallel
+
+            def capture(jobs, limit):
+                seen.extend(job.extractor_config for job in jobs)
+                return original(jobs, limit)
+
+            with mock.patch.object(pipeline, "_run_extractors_parallel", capture):
+                output = pipeline.run_pipeline(config)
+
+            self.assertEqual(seen[0]["root"], str(root))
+            self.assertEqual(seen[0]["sourceEncodings"], {"sql/orders.sql": "cp932"})
+            with sqlite3.connect(output / "graph.sqlite") as db:
+                comments = [row[0] for row in db.execute("SELECT normalized_text FROM comments")]
+                # No catalog here, so referenced tables stay unresolved references.
+                tables = {row[0] for row in db.execute("SELECT technical_name FROM nodes WHERE node_type='UNRESOLVED_REFERENCE'")}
+            self.assertIn("注文を集計する", comments)
+            self.assertTrue({"ORDER_HEADER", "ORDER_LINE"} <= tables, tables)

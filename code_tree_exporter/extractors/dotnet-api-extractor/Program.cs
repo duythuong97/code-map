@@ -811,7 +811,7 @@ static void AddConfigurationNodes(PackageBuilder builder, string appId, string r
         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
     {
         string text;
-        try { text = File.ReadAllText(path); }
+        try { text = ExtractorRuntime.ReadSource(path); }
         catch { continue; }
         var relative = ExtractorRuntime.RepositoryPath(Path.GetRelativePath(root, path));
         var name = Path.GetFileName(path);

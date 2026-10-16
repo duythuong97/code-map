@@ -135,7 +135,53 @@ public static class ExtractorRuntime
             @"\$\{([A-Z][A-Z0-9_]*)\}",
             match => Environment.GetEnvironmentVariable(match.Groups[1].Value)
                 ?? throw new ArgumentException($"Missing required environment variable: {match.Groups[1].Value}"));
-        return JsonDocument.Parse(text);
+        var document = JsonDocument.Parse(text);
+        ConfigureSourceEncodings(document.RootElement);
+        return document;
+    }
+
+    // Sources are read in place. The pipeline lists the files that are not UTF-8
+    // ("sourceEncodings": repository path -> Python codec name) so they are
+    // decoded here instead of being copied to a UTF-8 staging folder.
+    static Dictionary<string, string> _sourceEncodings = new(StringComparer.Ordinal);
+    static string _sourceRoot = string.Empty;
+
+    public static void ConfigureSourceEncodings(JsonElement config)
+    {
+        _sourceRoot = String(config, "root");
+        _sourceEncodings = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (config.TryGetProperty("sourceEncodings", out var map) && map.ValueKind == JsonValueKind.Object)
+            foreach (var entry in map.EnumerateObject())
+                if (entry.Value.ValueKind == JsonValueKind.String)
+                    _sourceEncodings[entry.Name] = entry.Value.GetString() ?? string.Empty;
+    }
+
+    public static bool HasSourceEncoding(string path) => _sourceEncodings.Count > 0 && _sourceEncodings.ContainsKey(SourceKey(path));
+
+    /// <summary>Source text, decoded with the encoding the pipeline detected when the file is not UTF-8.</summary>
+    public static string ReadSource(string path)
+    {
+        if (_sourceEncodings.Count == 0 || !_sourceEncodings.TryGetValue(SourceKey(path), out var name))
+            return File.ReadAllText(path, Encoding.UTF8);
+        var text = SourceEncoding(name).GetString(File.ReadAllBytes(path));
+        return text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
+    }
+
+    static string SourceKey(string path)
+        => string.IsNullOrEmpty(_sourceRoot) ? path : RepositoryPath(Path.GetRelativePath(_sourceRoot, path));
+
+    static Encoding SourceEncoding(string name)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return name.ToLowerInvariant().Replace('-', '_') switch
+        {
+            "utf_8" or "utf_8_sig" => new UTF8Encoding(false),
+            "utf_16_le" => new UnicodeEncoding(bigEndian: false, byteOrderMark: false),
+            "utf_16_be" => new UnicodeEncoding(bigEndian: true, byteOrderMark: false),
+            "shift_jis" or "cp932" => Encoding.GetEncoding(932),
+            "euc_jp" => Encoding.GetEncoding(51932),
+            _ => throw new NotSupportedException($"Unsupported source encoding: {name}"),
+        };
     }
 
     public static string ConfigPath(JsonElement element, string name, string fallback = "")
@@ -158,7 +204,7 @@ public static class ExtractorRuntime
         return ConfiguredPaths(config, extensions)
             .Select(path =>
             {
-                var text = File.ReadAllText(path, Encoding.UTF8);
+                var text = ReadSource(path);
                 var syntaxTree = Path.GetExtension(path).Equals(".cs", StringComparison.OrdinalIgnoreCase)
                     ? CSharpSyntaxTree.ParseText(text, path: path)
                     : null;

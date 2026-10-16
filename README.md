@@ -87,6 +87,11 @@ Demo (không cache): .NET 3.9s, Python 20.6s; graph sinh ra giống hệt nhau.
 
 Mặc định đã chọn để máy vẫn dùng được trong lúc scan:
 
+- Source được đọc tại chỗ, không copy. File không phải UTF-8 (Shift_JIS, CP932,
+  EUC-JP, UTF-16, UTF-8 có BOM) được ghi vào `sourceEncodings` trong config của
+  từng extractor, rồi Python, Roslyn (cả document của MSBuild) và TypeScript tự
+  giải mã các file đó. Trước đây, chỉ cần một file như vậy là cả source bị copy
+  sang thư mục tạm.
 - `lowPriority` (mặc định `true`): pipeline tự hạ priority (`nice` trên
   macOS/Linux, `BELOW_NORMAL` trên Windows); extractor, Roslyn worker và SQL
   service kế thừa. Đặt `"lowPriority": false` để chạy hết tốc lực.
