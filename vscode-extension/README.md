@@ -37,7 +37,7 @@ Dữ liệu nghiệp vụ được đọc từ thư mục `inputData` trong conf
 Nếu đã có `graph.sqlite` thì không cần extract lại:
 
 ```bash
-python -m code_tree_exporter rag-export --graph output/demo --input-data input-data
+cd extractor && python -m code_tree_exporter rag-export --graph ../output/demo --input-data ../examples/input-data
 ```
 
 Trong VS Code cũng có lệnh **Code Map: Run Extract**. Lệnh này chạy extract

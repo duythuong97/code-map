@@ -30,8 +30,8 @@ output/
 
 # Node / frontend
 node_modules/
-application/frontend/dist/
-application/frontend/.vite/
+web/frontend/dist/
+web/frontend/.vite/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

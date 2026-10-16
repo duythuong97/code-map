@@ -1,5 +1,5 @@
 // Search tokens. Must match code_tree_exporter/rag_export.py (tokens/fold/compact);
-// tests/fixtures/rag-token-vectors.json pins both implementations.
+// shared/fixtures/rag-token-vectors.json pins both implementations.
 
 const STOPWORDS = new Set(
   (

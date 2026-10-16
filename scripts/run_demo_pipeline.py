@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
-from application.runtime_env import project_path  # noqa: E402
+from web.runtime_env import project_path  # noqa: E402
 
 # The interpreter running this script (.venv/bin/python on macOS/Linux,
 # .venv\Scripts\python.exe on Windows); a hardcoded bin/python breaks Windows.
 PYTHON = Path(sys.executable)
-CONFIG = project_path("demo-config.json")
+CONFIG = project_path("examples", "demo-config.json")
 OUTPUT = project_path("output", "demo")
 DB = project_path("data", "code-flow-demo.sqlite")
 
@@ -29,12 +31,14 @@ def main() -> int:
     steps = [
         ("Validate config and runtimes", [PYTHON, "-m", "code_tree_exporter", "validate", "--config", CONFIG]),
         ("Extract graph", [PYTHON, "-m", "code_tree_exporter", "extract", "--config", CONFIG]),
-        ("Import graph", [PYTHON, "-m", "application.backend.cli", "import-graph", OUTPUT, "--db", DB]),
-        ("SQLite integrity", [PYTHON, "-m", "application.backend.cli", "integrity", "--db", DB]),
+        ("Import graph", [PYTHON, "-m", "web.backend.cli", "import-graph", OUTPUT, "--db", DB]),
+        ("SQLite integrity", [PYTHON, "-m", "web.backend.cli", "integrity", "--db", DB]),
     ]
+    # code_tree_exporter lives in extractor/, the web backend in web/.
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT / "extractor"), str(ROOT), os.environ.get("PYTHONPATH", "")])}
     for label, command in steps:
         print(f"\n== {label} ==", flush=True)
-        subprocess.run([str(part) for part in command], check=True)
+        subprocess.run([str(part) for part in command], check=True, env=env)
     print(f"\nDone: {DB}")
     return 0
 

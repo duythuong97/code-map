@@ -110,8 +110,9 @@ async function runExtract(graph: GraphService, refreshStatus: () => Promise<void
 }
 
 function findEngine(): string | undefined {
+  // The code-map repository keeps the engine in extractor/.
   return vscode.workspace.workspaceFolders
-    ?.map((folder) => folder.uri.fsPath)
+    ?.flatMap((folder) => [path.join(folder.uri.fsPath, "extractor"), folder.uri.fsPath])
     .find((folder) => fs.existsSync(path.join(folder, "code_tree_exporter")));
 }
 

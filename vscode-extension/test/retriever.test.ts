@@ -9,7 +9,7 @@ import { Retriever } from "../src/core/retriever";
 import { compact, tokens } from "../src/core/text";
 
 const repo = path.resolve(__dirname, "..", "..", "..");
-const vectors = JSON.parse(fs.readFileSync(path.join(repo, "tests", "fixtures", "rag-token-vectors.json"), "utf8")) as {
+const vectors = JSON.parse(fs.readFileSync(path.join(repo, "shared", "fixtures", "rag-token-vectors.json"), "utf8")) as {
   text: string;
   tokens: string[];
   compact: string;
@@ -30,8 +30,8 @@ function demoDatabase(): string {
   if (!fs.existsSync(graph)) throw new Error(`Run scripts/run_demo_pipeline.py first: ${graph} is missing`);
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "codemap-rag-")), "codemap-rag.sqlite");
   execFileSync(process.env.PYTHON ?? "python3", [
-    "-m", "code_tree_exporter", "rag-export", "--graph", graph, "--input-data", path.join(repo, "input-data"), "--out", out,
-  ], { cwd: repo, stdio: "pipe" });
+    "-m", "code_tree_exporter", "rag-export", "--graph", graph, "--input-data", path.join(repo, "examples", "input-data"), "--out", out,
+  ], { cwd: path.join(repo, "extractor"), stdio: "pipe" });
   return out;
 }
 

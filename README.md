@@ -1,12 +1,16 @@
 # Code Map
 
-Repository gồm hai phần:
+Repository gồm ba phần (code-tree đã gộp vào đây):
 
-- **Engine** `code_tree_exporter/` (trước đây là repo code-tree): scan source
-  Angular, .NET API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi graph vào
-  `graph.sqlite`.
-- **Ứng dụng** `application/` (backend Flask + UI React): import
-  `graph.sqlite` vào database phục vụ UI rồi hiển thị flow, lineage, evidence.
+- **`extractor/`**: package `code_tree_exporter`. Scan source Angular, .NET
+  API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi ra `graph.sqlite` cùng
+  `codemap-rag.sqlite`.
+- **`web/`**: backend Flask và UI React. Hiển thị flow, lineage, evidence.
+- **`vscode-extension/`**: `@codemap` trong VS Code Chat (Graph RAG).
+
+Thư mục dùng chung: `shared/` (fixtures và hợp đồng dữ liệu giữa các phần),
+`examples/` (source demo, input-data, catalog, `demo-config.json`) và
+`scripts/`.
 
 ```text
 source ──extract──▶ output/<run>/graph.sqlite ──import-graph──▶ data/*.sqlite ──▶ API/UI
@@ -20,7 +24,7 @@ cho Angular và để build UI.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-npm install --prefix code_tree_exporter/extractors/angular-extractor typescript
+npm install --prefix extractor/code_tree_exporter/extractors/angular-extractor typescript
 cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT và CODE_MAP_SOURCE_ROOT
 .venv/bin/python scripts/run_demo_pipeline.py --fresh
 ```
@@ -33,21 +37,21 @@ Trên Windows dùng `.venv\Scripts\python.exe`. Script chạy lần lượt `val
 Chạy UI:
 
 ```bash
-npm ci --prefix application/frontend && npm run build --prefix application/frontend
-.venv/bin/python application/backend/api/server.py   # http://127.0.0.1:8000/code-map/
+npm ci --prefix web/frontend && npm run build --prefix web/frontend
+.venv/bin/python web/backend/api/server.py   # http://127.0.0.1:8000/code-map/
 ```
 
 Import một graph khác vào UI:
 
 ```bash
-.venv/bin/python -m application.backend.cli import-graph <output-dir-or-graph.sqlite>
+PYTHONPATH=extractor .venv/bin/python -m web.backend.cli import-graph <output-dir-or-graph.sqlite>
 ```
 
 API `POST /api/graph/imports` cũng nhận thư mục output (nằm dưới `output/`) chứa
 `graph.sqlite`. Adapter đổi vocabulary của engine sang vocabulary UI
 (`READS_FROM`→`READS`/`REMOTE_READS`, `WRITES_TO`→`INSERTS`/`UPDATES`/`DELETES`/
 `MERGES`, `HANDLES_API`→`HANDLED_BY`), dùng flow đã materialize của engine để
-tạo path đọc/ghi, và lấy tên tiếng Nhật/Anh của bảng, cột từ `input-data/tables*.csv`.
+tạo path đọc/ghi, và lấy tên tiếng Nhật/Anh của bảng, cột từ `examples/input-data/tables*.csv`.
 
 ## Hiệu năng: parser SQL trên .NET
 
@@ -60,9 +64,9 @@ backend cho cùng grammar, chọn bằng `CODE_TREE_SQL_PARSER`:
 | `dotnet` | bắt buộc .NET, lỗi nếu không chạy được |
 | `python` | luôn dùng ANTLR Python (chậm) |
 
-- `code_tree_exporter/extractors/_sql/` (`CodeTree.Sql`): port 1:1 facade
+- `extractor/code_tree_exporter/extractors/_sql/` (`CodeTree.Sql`): port 1:1 facade
   `oracle_parser.py` và semantic projector sang C#. Offset tính theo code point
-  nên kết quả giống hệt bản Python (`tests/test_dotnet_sql_parity.py`).
+  nên kết quả giống hệt bản Python (`extractor/tests/test_dotnet_sql_parity.py`).
 - `extractors/sql-service/`: service JSON-lines cho extractor Python; extractor
   PL/SQL và SQL file gửi toàn bộ chunk trong một batch, .NET parse song song.
 - Extractor Roslyn (.NET API/batch) gọi `CodeTree.Sql` ngay trong process, không
@@ -122,8 +126,8 @@ không phải parse/link source lần nữa.
 V3 bổ sung catalog auto-import, hierarchy từ system xuống database/application,
 input/output, materialized flow, resolution candidates và quality metrics mà
 không đổi stable/numeric ID của graph V2. Config chạy mẫu là
-[`demo-config.json`](demo-config.json); bốn CSV bootstrap nằm trong
-[`examples/v3/catalog`](examples/v3/catalog).
+[`examples/demo-config.json`](examples/demo-config.json); bốn CSV bootstrap nằm trong
+[`examples/catalog`](examples/catalog).
 
 ## Graph RAG trong VS Code
 
@@ -133,7 +137,7 @@ tên bảng/cột ja/en, jobnet. Kèm theo là chỉ mục từ khoá. Muốn t�
 `"ragExport": false` trong config. Nếu đã có output thì tạo lại bằng:
 
 ```bash
-python -m code_tree_exporter rag-export --graph output/demo --input-data input-data
+PYTHONPATH=extractor python -m code_tree_exporter rag-export --graph output/demo --input-data examples/input-data
 ```
 
 Extension `vscode-extension/` đọc file này và trả lời bằng model chat của VS Code:
@@ -259,7 +263,10 @@ tự replacement nên không âm thầm làm hỏng tiếng Nhật. `encoding` v
 
 - macOS: `python3 -m pip install -r requirements.txt`
 - Windows: `py -m pip install -r requirements.txt`
-- Cài CLI từ source: `python3 -m pip install .` hoặc `py -m pip install .`
+- Cài CLI `code-tree-exporter` từ source: `python3 -m pip install ./extractor`
+  (hoặc `py -m pip install ./extractor`). Nếu không cài, chạy
+  `python -m code_tree_exporter` từ thư mục `extractor/` hoặc đặt
+  `PYTHONPATH=extractor`.
 
 Node.js + TypeScript và .NET SDK 9 là runtime ngoài Python; chỉ cần cài khi
 config dùng Angular hoặc .NET. Extractor `.NET` dùng `MSBuildWorkspace`, nên
@@ -276,13 +283,14 @@ declaration/literal với confidence tối đa `0.5` và ghi
 
 ### Demo
 
-Repository có sẵn `sample-source/`, `input-data/` và catalog mẫu. Chỉ chạy engine
-(không import vào UI):
+Repository có sẵn `examples/sample-source/`, `examples/input-data/` và catalog
+mẫu. Chỉ chạy engine (không import vào UI):
 
 ```text
 cp .env.example .env
-python3 -m code_tree_exporter validate --config "$PWD/demo-config.json"
-python3 -m code_tree_exporter extract --config "$PWD/demo-config.json"
+cd extractor
+python3 -m code_tree_exporter validate --config "$PWD/../examples/demo-config.json"
+python3 -m code_tree_exporter extract --config "$PWD/../examples/demo-config.json"
 ```
 
 `validate` kiểm tra cả runtime ngoài (`dotnet` cho source `.NET`, `node` cho
@@ -382,17 +390,26 @@ gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 ## Cấu trúc source
 
 ```text
-code_tree_exporter/     # engine: package, contract, extractor runtimes
-  extractors/_sql/      # CodeTree.Sql: ANTLR PL/SQL trên .NET
-  extractors/sql-service/  # service JSON-lines cho extractor Python
-application/            # backend API (Flask) + frontend (React)
-  backend/importer/graph_sqlite.py  # import graph.sqlite vào DB phục vụ UI
-sample-source/          # source demo
-input-data/             # CSV thủ công (jobnet, tên JA/EN của bảng, ...)
-examples/v3/catalog/    # catalog demo cho engine
+extractor/
+  code_tree_exporter/   # engine: package, contract, extractor runtimes
+    extractors/_sql/    # CodeTree.Sql: ANTLR PL/SQL trên .NET
+    extractors/sql-service/  # service JSON-lines cho extractor Python
+    rag_export.py       # codemap-rag.sqlite cho VS Code và web
+  tests/                # python -m unittest discover -s extractor/tests -t extractor
+  pyproject.toml, requirements.txt
+web/
+  backend/              # Flask API (python -m unittest discover -s web/tests -t .)
+  frontend/             # React UI
+  configs/, ecosystem.config.js (pm2), requirements.txt
+vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
+shared/fixtures/        # dữ liệu kiểm thử dùng chung (token vectors Python ↔ TypeScript)
+examples/
+  sample-source/        # source demo
+  input-data/           # CSV nghiệp vụ (từ điển, jobnet, tên JA/EN của bảng, ...)
+  catalog/              # catalog demo cho engine
+  demo-config.json
 scripts/                # run_demo_pipeline.py
-cli.py                  # compatibility shim
-pyproject.toml          # build, dependency, package resources
+requirements.txt        # gộp extractor + web cho một virtualenv
 ```
 
 ## Output sau bước extract

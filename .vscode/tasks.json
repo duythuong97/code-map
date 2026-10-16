@@ -2,32 +2,27 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Test .NET/Python SQL parity",
+			"label": "Test extractor",
 			"type": "process",
 			"command": "${command:python.interpreterPath}",
-			"args": [
-				"-m",
-				"unittest",
-				"-v",
-				"tests.test_dotnet_sql_parity"
-			],
+			"args": ["-m", "unittest", "discover", "-s", "extractor/tests", "-t", "extractor", "-v"],
 			"problemMatcher": [],
 			"group": "test"
 		},
 		{
-			"label": "strict-review-tests",
+			"label": "Test web backend",
 			"type": "process",
 			"command": "${command:python.interpreterPath}",
-			"args": [
-				"-m",
-				"unittest",
-				"discover",
-				"-s",
-				"tests",
-				"-p",
-				"test_*.py",
-				"-v"
-			],
+			"args": ["-m", "unittest", "discover", "-s", "web/tests", "-t", ".", "-v"],
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Test .NET/Python SQL parity",
+			"type": "process",
+			"command": "${command:python.interpreterPath}",
+			"args": ["-m", "unittest", "-v", "tests.test_dotnet_sql_parity"],
+			"options": { "cwd": "${workspaceFolder}/extractor" },
 			"problemMatcher": [],
 			"group": "test"
 		}

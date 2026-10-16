@@ -77,7 +77,7 @@ const fakeVscode = {
     activeTextEditor: undefined as any,
   },
   workspace: {
-    workspaceFolders: [{ uri: Uri.file(path.join(repo, "sample-source")) }],
+    workspaceFolders: [{ uri: Uri.file(path.join(repo, "examples", "sample-source")) }],
     getConfiguration: (section: string) => ({
       get: (key: string, fallback: unknown) => settings[`${section}.${key}`] ?? fallback,
       update: async () => undefined,
@@ -125,8 +125,8 @@ describe("extension (bundled, fake VS Code host)", () => {
     const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "codemap-smoke-")), "codemap-rag.sqlite");
     execFileSync(process.env.PYTHON ?? "python3", [
       "-m", "code_tree_exporter", "rag-export", "--graph", path.join(repo, "output", "demo"),
-      "--input-data", path.join(repo, "input-data"), "--source-root", path.join(repo, "sample-source"), "--out", out,
-    ], { cwd: repo, stdio: "pipe" });
+      "--input-data", path.join(repo, "examples", "input-data"), "--source-root", path.join(repo, "examples", "sample-source"), "--out", out,
+    ], { cwd: path.join(repo, "extractor"), stdio: "pipe" });
     settings = { "codemap.databasePath": out };
     const storage = fs.mkdtempSync(path.join(os.tmpdir(), "codemap-storage-"));
     loadExtension().activate({
@@ -173,7 +173,7 @@ describe("extension (bundled, fake VS Code host)", () => {
   });
 
   it("explains the active file with /explain", async () => {
-    const file = path.join(repo, "sample-source", "order-api", "OrderFlow.cs");
+    const file = path.join(repo, "examples", "sample-source", "order-api", "OrderFlow.cs");
     fakeVscode.window.activeTextEditor = { document: { uri: Uri.file(file) }, selection: { isEmpty: true } };
     const sent: any[] = [];
     await registered.participant.handler(
