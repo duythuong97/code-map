@@ -8,7 +8,9 @@
     <Nullable>enable</Nullable>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TieredPGO>true</TieredPGO>
-    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- Workstation GC: server GC reserves a heap per core. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>

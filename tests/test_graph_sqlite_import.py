@@ -136,3 +136,53 @@ class GraphSqliteImportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServingPayloadTests(unittest.TestCase):
+    """The UI-facing endpoints stay small on hub nodes."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        base = Path(self.temporary.name)
+        (base / "out").mkdir()
+        _engine_graph(base / "out" / "graph.sqlite")
+        with closing(sqlite3.connect(base / "out" / "graph.sqlite")) as db, db:
+            tree = {"version": 3, "type": "operation", "steps": [{"label": "x" * 2000}]}
+            db.execute(
+                "UPDATE nodes SET properties_json=? WHERE node_id=2",
+                (json.dumps({"semantic_tree": tree, "route": "/orders"}),),
+            )
+        self.db = base / "serve.sqlite"
+        import_graph(base / "out", self.db)
+        import application.backend.api.app as serving
+
+        self.serving = serving
+        # app.before_request resets the graph DB to app.DB_PATH on every request.
+        self.previous = serving.DB_PATH
+        serving.DB_PATH = self.db
+        self.client = serving.app.test_client()
+
+    def tearDown(self) -> None:
+        self.serving.DB_PATH = self.previous
+        self.temporary.cleanup()
+
+    def test_flow_omits_semantic_trees_but_keeps_other_properties(self) -> None:
+        body = self.client.get(
+            "/api/graph/flow?node_id=api-operation:a:GET:/orders&mode=1&direction=out&semantic_level=TECHNICAL"
+        ).get_json()
+        method = next(node for node in body["nodes"] if node["node_id"] == "method:a:Orders.Read")
+        properties = json.loads(method["properties_json"])
+        self.assertNotIn("semantic_tree", properties)
+        self.assertEqual(properties["route"], "/orders")
+
+    def test_detail_without_relations_returns_counts_only(self) -> None:
+        full = self.client.get("/api/graph/detail?target_id=table:DB1:ORDER_HEADER&target_type=NODE").get_json()
+        summary = self.client.get(
+            "/api/graph/detail?target_id=table:DB1:ORDER_HEADER&target_type=NODE&relations=0"
+        ).get_json()
+        self.assertEqual(summary["incoming"], [])
+        self.assertEqual(summary["impacts"], [])
+        self.assertEqual(summary["counts"]["incoming"], len(full["incoming"]))
+        self.assertEqual(summary["counts"]["impacts"], len(full["impacts"]))
+        self.assertEqual(summary["node"], full["node"])
+        self.assertEqual(summary["columns"], full["columns"])

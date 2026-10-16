@@ -261,6 +261,14 @@ def _import_flows(db, graph, node_ids: dict[int, str], edge_ids: dict[int, str])
             (SOURCE_PREFIX + "%",),
         )
     }
+    # One pass over evidence instead of one evidence query per flow: with
+    # tens of thousands of flows the per-flow query dominated the import.
+    evidence_by_edge: dict[str, list[str]] = {}
+    for target_id, evidence_id in db.execute(
+        "SELECT target_id, evidence_id FROM graph_evidence WHERE target_type='EDGE' AND source_id LIKE ?",
+        (SOURCE_PREFIX + "%",),
+    ):
+        evidence_by_edge.setdefault(target_id, []).append(evidence_id)
     flows = graph.execute(
         "SELECT flow_id,start_node_id,target_node_id FROM flows WHERE complete=1 ORDER BY stable_id"
     ).fetchall()
@@ -273,14 +281,7 @@ def _import_flows(db, graph, node_ids: dict[int, str], edge_ids: dict[int, str])
         operation = "R" if terminal[3] in READ_TERMINALS else "W" if terminal[3] in WRITE_TERMINALS else ""
         if not operation:
             continue
-        placeholders = ",".join("?" * len(path))
-        evidence = [
-            row[0]
-            for row in db.execute(
-                f"SELECT evidence_id FROM graph_evidence WHERE target_id IN ({placeholders}) ORDER BY evidence_id",
-                path,
-            )
-        ]
+        evidence = sorted({item for edge in path for item in evidence_by_edge.get(edge, ())})
         identity = f"{actor}|{table}|{operation}|{'|'.join(path)}"
         path_id = "path:" + hashlib.sha256(identity.encode()).hexdigest()
         db.execute(

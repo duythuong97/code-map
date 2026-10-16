@@ -143,7 +143,7 @@ assert.match(app, /function backDetail\(\)/);
 assert.match(app, /setDetailHistory\(\(current\) => current\.slice\(0, -1\)\)/);
 assert.match(app, /canGoBack=\{detailHistory\.length > 0\}/);
 assert.match(app, /onBack=\{backDetail\}/);
-assert.match(app, /`\/detail\?target_id=\$\{encodeURIComponent\(targetId\)\}&target_type=\$\{targetType\}&locale=vi`/);
+assert.match(app, /`\/detail\?target_id=\$\{encodeURIComponent\(targetId\)\}&target_type=\$\{targetType\}&locale=vi&relations=0`/);
 
 assert.match(constants, /export const flowKey = \(nodeId, mode, direction = "both", semanticLevel = "TECHNICAL", filters = ""\) => `\$\{nodeId\}\|\$\{direction\}\|\$\{mode\}\|\$\{semanticLevel\}\|\$\{filters\}`/);
 assert.match(app, /function refreshExpandedGraph\(\s*nextSemantic = semantic,\s*nextMaxNodes = maxNodes,?\s*\)/);

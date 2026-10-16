@@ -21,7 +21,7 @@ var parallel = new ParallelOptions
 {
     MaxDegreeOfParallelism = int.TryParse(Environment.GetEnvironmentVariable("CODE_TREE_SQL_THREADS"), out var threads) && threads > 0
         ? threads
-        : Environment.ProcessorCount,
+        : Math.Max(1, Environment.ProcessorCount / 2),
 };
 
 using var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));

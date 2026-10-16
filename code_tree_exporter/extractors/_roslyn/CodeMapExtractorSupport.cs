@@ -199,7 +199,8 @@ public static class ExtractorRuntime
             var candidates = File.Exists(absoluteSelection)
                 ? new[] { absoluteSelection }
                 : Directory.Exists(absoluteSelection)
-                    ? Directory.EnumerateFiles(absoluteSelection, "*", SearchOption.AllDirectories).OrderBy(p => p, PathComparer)
+                    // Pruned walk: bin/obj/node_modules are excluded below anyway.
+                    ? EnumerateFilesPruned(absoluteSelection).OrderBy(p => p, PathComparer)
                     : Enumerable.Empty<string>();
             foreach (var path in candidates)
             {
@@ -211,6 +212,36 @@ public static class ExtractorRuntime
             }
         }
         return files;
+    }
+
+    static readonly HashSet<string> PrunedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bin", "obj", "node_modules", ".git",
+    };
+
+    /// <summary>All files below <paramref name="root"/>, without descending into
+    /// build output, package and VCS folders (SearchOption.AllDirectories walks
+    /// them all before any filter runs).</summary>
+    public static IEnumerable<string> EnumerateFilesPruned(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            IEnumerable<string> files, directories;
+            try
+            {
+                files = Directory.EnumerateFiles(directory);
+                directories = Directory.EnumerateDirectories(directory);
+            }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+            foreach (var file in files) yield return file;
+            foreach (var child in directories)
+                if (!PrunedDirectories.Contains(Path.GetFileName(child)))
+                    pending.Push(child);
+        }
     }
 
     public static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;

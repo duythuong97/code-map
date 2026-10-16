@@ -71,7 +71,38 @@ backend cho cùng grammar, chọn bằng `CODE_TREE_SQL_PARSER`:
   (fallback build thường nếu publish lỗi; tắt bằng `CODE_TREE_DOTNET_READY_TO_RUN=0`).
 
 Demo (không cache): .NET 3.9s, Python 20.6s; graph sinh ra giống hệt nhau.
-`CODE_TREE_SQL_THREADS` giới hạn số thread parse của service.
+`CODE_TREE_SQL_THREADS` giới hạn số thread parse của service (mặc định nửa số core).
+
+## Repo lớn: giữ máy không bị lag
+
+Đo trên repo giả lập 4.410 file / 510.000 dòng (85k node, 190k edge):
+
+| | Trước | Sau |
+|---|---|---|
+| Extract | 488s, RAM process chính 2,2GB | 158s, 1,0GB |
+| `graph-index.json` | 149MB | 5MB |
+| Import vào DB của UI | > 10 phút | 50s |
+| Click node hub trong UI (`/detail`) | 365ms, 1,9MB | 5ms, 5KB |
+| Search xấu nhất | 954ms | 93ms |
+
+Mặc định đã chọn để máy vẫn dùng được trong lúc scan:
+
+- `lowPriority` (mặc định `true`): pipeline tự hạ priority (`nice` trên
+  macOS/Linux, `BELOW_NORMAL` trên Windows); extractor, Roslyn worker và SQL
+  service kế thừa. Đặt `"lowPriority": false` để chạy hết tốc lực.
+- `limits.maxParallelExtractors` mặc định là nửa số core (tối đa 4). Máy ít RAM
+  hoặc solution .NET rất lớn: đặt `1` để các extractor chạy lần lượt, peak RAM
+  bằng extractor lớn nhất thay vì tổng của chúng.
+- `graphIndex` mặc định `"slim"`: `graph-index.json` chỉ còn số đếm, khóa API/
+  bảng và locator của codebase memory; mọi tra cứu theo id đi qua
+  `graph.sqlite`. Dùng `"graphIndex": "full"` nếu tool ngoài cần bản cũ.
+- Worker .NET chạy với `DOTNET_GCConserveMemory=7`; SQL service dùng workstation GC.
+- UI mở rộng tối đa 200 node mỗi lần (chỉnh được tới 1000); `/detail` mà UI gọi
+  dùng `relations=0` (chỉ số đếm), danh sách quan hệ lấy qua `/flow`.
+
+Phần tốn RAM nhất còn lại là Roslyn worker (khoảng 1,6GB cho 1.500 file C#), vì
+nó giữ compilation và semantic model của cả solution. Với solution rất lớn, tách
+thành nhiều source theo nhóm project trong config để mỗi worker nhỏ hơn.
 
 Project chạy theo hai bước độc lập. Bước extract đọc source, tạo node/edge và
 ghi vào `graph.sqlite`; bước export Markdown đọc lại database này để tạo
@@ -79,7 +110,7 @@ ghi vào `graph.sqlite`; bước export Markdown đọc lại database này đ�
 `SYSTEM_TREE.md`. Vì vậy có thể thay đổi projection hoặc export lại Markdown mà
 không phải parse/link source lần nữa.
 
-`graph.sqlite` là nguồn truth; `graph-index.json` và
+`graph.sqlite` là nguồn truth; `graph-index.json` (mặc định bản slim) và
 `codebase-memory/*.jsonl` phục vụ tool/CLI. Comment, encoding và evidence vẫn
 được lưu trong SQLite để truy ngược về source.
 

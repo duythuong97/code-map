@@ -142,6 +142,12 @@ public static class DotNetWorkspaceLoader
                 continue;
             }
             var documentPaths = new List<string>();
+            // Path -> tree once per project; a linear search per document was
+            // quadratic in the project's file count.
+            var treesByPath = new Dictionary<string, SyntaxTree>(ExtractorRuntime.PathComparer);
+            foreach (var tree in compilation.SyntaxTrees)
+                if (!string.IsNullOrEmpty(tree.FilePath))
+                    treesByPath.TryAdd(tree.FilePath, tree);
             foreach (var document in project.Documents.OrderBy(document => document.FilePath, ExtractorRuntime.PathComparer))
             {
                 var path = document.FilePath;
@@ -156,9 +162,7 @@ public static class DotNetWorkspaceLoader
                 if (filesByPath.ContainsKey(path)) continue;
                 var syntaxTree = await document.GetSyntaxTreeAsync();
                 if (syntaxTree is null) continue;
-                var compilationTree = compilation.SyntaxTrees.FirstOrDefault(
-                    tree => ExtractorRuntime.PathComparer.Equals(tree.FilePath, path))
-                    ?? syntaxTree;
+                var compilationTree = treesByPath.GetValueOrDefault(path) ?? syntaxTree;
                 var text = (await document.GetTextAsync()).ToString();
                 var sourceFile = new SourceFile(
                     path,

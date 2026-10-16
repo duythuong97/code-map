@@ -93,10 +93,8 @@ class GraphPackage:
                 _merge_duplicate_row(nodes[retained_id], row)
             node_aliases[old_id] = retained_id
 
-        for row in nodes.values():
-            row["properties_json"] = _rewrite_properties(
-                row.get("properties_json", "{}"), node_aliases
-            )
+        # Node properties are rewritten once below with every alias map; the
+        # node aliases are a subset of those, so an extra pass here is redundant.
         self.nodes = nodes
 
         edge_aliases: dict[str, str] = {}
@@ -221,8 +219,8 @@ class GraphPackage:
         }
 
         compact_nodes: dict[str, dict[str, str]] = {}
-        for stable_id, original in self.nodes.items():
-            row = dict(original)
+        for stable_id, row in self.nodes.items():
+            # In place: the rows are owned here and a copy doubled peak memory.
             row["node_id"] = node_ids[stable_id]
             row["stable_id"] = stable_id
             row["properties_json"] = _rewrite_properties(
@@ -231,8 +229,8 @@ class GraphPackage:
             compact_nodes[row["node_id"]] = row
 
         compact_edges: dict[str, dict[str, str]] = {}
-        for stable_id, original in self.edges.items():
-            row = dict(original)
+        for stable_id, row in self.edges.items():
+            # In place: the rows are owned here and a copy doubled peak memory.
             row["edge_id"] = edge_ids[stable_id]
             row["stable_id"] = stable_id
             row["source_node_id"] = _required_reference(
@@ -247,8 +245,8 @@ class GraphPackage:
             compact_edges[row["edge_id"]] = row
 
         compact_evidence: dict[str, dict[str, str]] = {}
-        for stable_id, original in self.evidence.items():
-            row = dict(original)
+        for stable_id, row in self.evidence.items():
+            # In place: the rows are owned here and a copy doubled peak memory.
             row["evidence_id"] = evidence_ids[stable_id]
             row["stable_id"] = stable_id
             target_map = node_ids if row.get("target_type") == "NODE" else edge_ids
@@ -261,8 +259,8 @@ class GraphPackage:
             compact_evidence[row["evidence_id"]] = row
 
         compact_comments: dict[str, dict[str, str]] = {}
-        for stable_id, original in self.comments.items():
-            row = dict(original)
+        for stable_id, row in self.comments.items():
+            # In place: the rows are owned here and a copy doubled peak memory.
             row["comment_id"] = comment_ids[stable_id]
             row["stable_id"] = stable_id
             row["owner_node_id"] = _required_reference(
@@ -274,8 +272,8 @@ class GraphPackage:
             compact_comments[row["comment_id"]] = row
 
         compact_issues: dict[str, dict[str, str]] = {}
-        for stable_id, original in self.issues.items():
-            row = dict(original)
+        for stable_id, row in self.issues.items():
+            # In place: the rows are owned here and a copy doubled peak memory.
             row["issue_id"] = issue_ids[stable_id]
             row["stable_id"] = stable_id
             source_node_id = row.get("source_node_id", "")
@@ -509,7 +507,10 @@ class GraphPackage:
         max_tree_lines: int = 20_000,
         max_evidence_snippet_chars: int = 500,
         max_issues_per_type_per_file: int = 20,
+        graph_index: str = "slim",
     ) -> None:
+        if graph_index not in {"slim", "full"}:
+            raise ValueError("graph_index must be 'slim' or 'full'")
         if output_mode not in {"flat", "partitioned"}:
             raise ValueError("output_mode must be 'flat' or 'partitioned'")
         if max_evidence_snippet_chars < 1:
@@ -543,10 +544,13 @@ class GraphPackage:
         }
         self.issues = {row["issue_id"]: row for row in rows["issues"]}
         self.compact_identifiers()
+        # The rows are only read from here on (snippets were already bounded
+        # above), so share them instead of copying the whole graph again.
         rows = _graph_rows(
             self,
             max_evidence_snippet_chars=max_evidence_snippet_chars,
             max_issues_per_type_per_file=max_issues_per_type_per_file,
+            copy=False,
         )
         partition = _partition_graph(self, rows)
         packages = _sqlite_package_map(self, source_name)
@@ -624,6 +628,7 @@ class GraphPackage:
             issue_packages=issue_packages,
             knowledge_refs={},
             memory_refs=memory_refs,
+            detail=graph_index,
         )
         (output / "manifest.json").write_text(
             json.dumps(root_manifest, ensure_ascii=False, indent=2) + "\n",
@@ -846,6 +851,10 @@ def _required_reference(
 
 
 def _rewrite_properties(value: str, identifiers: dict[str, str]) -> str:
+    if not value or value == "{}":
+        # Most edges and evidence rows carry no properties; skip the JSON
+        # round trip, which dominated large runs.
+        return "{}"
     try:
         properties = json.loads(value or "{}")
     except json.JSONDecodeError:
@@ -1214,9 +1223,10 @@ def _graph_rows(
     *,
     max_evidence_snippet_chars: int,
     max_issues_per_type_per_file: int,
+    copy: bool = True,
 ) -> dict[str, list[dict[str, str]]]:
     result = {
-        name: [dict(row) for row in getattr(graph, name).values()]
+        name: [dict(row) if copy else row for row in getattr(graph, name).values()]
         for name in CSV_HEADERS
     }
     for evidence in result["evidence"]:
@@ -2574,7 +2584,14 @@ def _write_graph_index(
     issue_packages: dict[str, str],
     knowledge_refs: dict[str, list[str]],
     memory_refs: dict[str, dict[str, object]],
+    detail: str = "slim",
 ) -> None:
+    if detail == "slim":
+        _write_slim_graph_index(
+            graph, output, generated_at=generated_at, packages=packages,
+            knowledge_refs=knowledge_refs, memory_refs=memory_refs,
+        )
+        return
     node_counts: dict[str, int] = defaultdict(int)
     edge_counts: dict[str, int] = defaultdict(int)
     nodes_by_type: dict[str, list[dict[str, str]]] = defaultdict(list)
@@ -2672,6 +2689,56 @@ def _write_graph_index(
     }
     (output / "graph-index.json").write_text(
         json.dumps(index_data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_slim_graph_index(
+    graph: GraphPackage,
+    output: Path,
+    *,
+    generated_at: str,
+    packages: dict[str, dict[str, object]],
+    knowledge_refs: dict[str, list[str]],
+    memory_refs: dict[str, dict[str, object]],
+) -> None:
+    """Counts, API/table keys and memory/knowledge locators only.
+
+    The full index repeated every node, edge and evidence id (about a third of
+    graph.sqlite's size on large repositories) although every lookup by id
+    goes to graph.sqlite, whose indexes answer it directly; loading it cost
+    gigabytes of memory in any consumer. ``graphIndex: "full"`` restores it.
+    """
+    node_counts: dict[str, int] = defaultdict(int)
+    edge_counts: dict[str, int] = defaultdict(int)
+    apis: dict[str, list[str]] = defaultdict(list)
+    tables: dict[str, list[str]] = defaultdict(list)
+    for node_id, node in graph.nodes.items():
+        node_counts[node.get("node_type", "UNKNOWN")] += 1
+        if node.get("node_type") == "API_OPERATION":
+            signature = _api_index_key(node)
+            if signature:
+                apis[signature].append(node_id)
+        if _is_database_node(node):
+            for table_key in _table_index_keys(node):
+                tables[table_key].append(node_id)
+    for edge in graph.edges.values():
+        edge_counts[edge.get("edge_type", "UNKNOWN")] += 1
+    index_data = {
+        "indexVersion": "3.0",
+        "detail": "slim",
+        "generatedAt": generated_at,
+        "database": "graph.sqlite",
+        "nodeTypeCounts": dict(sorted(node_counts.items())),
+        "edgeTypeCounts": dict(sorted(edge_counts.items())),
+        "packagesBySource": packages,
+        "apisByMethodPath": {key: sorted(value) for key, value in sorted(apis.items())},
+        "tablesByQName": {key: sorted(value) for key, value in sorted(tables.items())},
+        "knowledgeByNodeId": knowledge_refs,
+        "memoryByNodeId": memory_refs,
+    }
+    (output / "graph-index.json").write_text(
+        json.dumps(index_data, ensure_ascii=False, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
 

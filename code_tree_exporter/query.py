@@ -49,7 +49,9 @@ class KnowledgeStore:
     def index(self) -> dict[str, object]:
         if self._index is None:
             index = self._load_json(self.output / "graph-index.json")
-            if index.get("indexVersion") != "2.0":
+            # 3.0 is the slim index (counts and memory/knowledge locators);
+            # this class only reads memoryByNodeId from it.
+            if index.get("indexVersion") not in {"2.0", "3.0"}:
                 raise ValueError(
                     f"Unsupported graph index version: {index.get('indexVersion')!r}"
                 )

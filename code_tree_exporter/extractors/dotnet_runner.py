@@ -159,6 +159,8 @@ def _extractor_environment(
     resolved = Path(dotnet).expanduser().resolve()
     dotnet_root = resolved.parent if resolved.name.lower().startswith("dotnet") else None
     environment = os.environ | {"CODE_TREE_PYTHON": sys.executable}
+    # Compact the GC heap more eagerly; Roslyn workers hold large live graphs.
+    environment.setdefault("DOTNET_GCConserveMemory", "7")
     if dotnet_root is not None:
         environment.setdefault("DOTNET_ROOT", str(dotnet_root))
         environment.setdefault("DOTNET_HOST_PATH", str(resolved))

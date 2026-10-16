@@ -58,7 +58,7 @@ export default function CodeFlowApp() {
   const [expansionIntents, setExpansionIntents] = useState({});
   const [semantic, setSemantic] = useState("APPLICATION");
   const [external, setExternal] = useState(true);
-  const [maxNodes, setMaxNodes] = useState(500);
+  const [maxNodes, setMaxNodes] = useState(200);
   const [layoutNonce, setLayoutNonce] = useState(0);
   const [manualNodePositions, setManualNodePositions] = useState({});
   const [notice, setNotice] = useState("");
@@ -433,7 +433,7 @@ export default function CodeFlowApp() {
     setDetailError("");
     try {
       const detailPayload = await api(
-        `/detail?target_id=${encodeURIComponent(targetId)}&target_type=${targetType}&locale=vi`,
+        `/detail?target_id=${encodeURIComponent(targetId)}&target_type=${targetType}&locale=vi&relations=0`,
         { signal: controller.signal },
       );
       if (sideRequest.current !== controller) return;

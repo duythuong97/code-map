@@ -324,7 +324,7 @@ def _read_write_flow(db, node_id, mode, direction, limit, semantic):
             truncated=True
             continue
         node_ids.update(walk_nodes); edges_by_id.update(walk_edges); paths.extend(walk_paths); truncated = truncated or walk_truncated
-    nodes=[dict(row) for row in db.execute(f"SELECT * FROM graph_nodes WHERE node_id IN ({','.join('?' * len(node_ids))})", sorted(node_ids))]
+    nodes=[_flow_node(row) for row in db.execute(f"SELECT * FROM graph_nodes WHERE node_id IN ({','.join('?' * len(node_ids))})", sorted(node_ids))]
     edges=[edges_by_id[key] for key in sorted(edges_by_id)]
     nodes, edges = _semantic_project(nodes, edges, node_id, semantic)
     if semantic != "TECHNICAL":
@@ -363,9 +363,12 @@ def search():
                  OR n.technical_name LIKE ? COLLATE NOCASE
                  OR n.qualified_name LIKE ? COLLATE NOCASE
                  OR n.node_id LIKE ? COLLATE NOCASE
-                 OR l.value LIKE ? COLLATE NOCASE)
+                 OR n.node_id IN (
+                     SELECT target_id FROM graph_localization
+                     WHERE value LIKE ? COLLATE NOCASE
+                       AND UPPER(review_status)='APPROVED' AND locale IN (?, 'en')))
             """)
-            params.extend([like,like,like,like,like])
+            params.extend([like,like,like,like,like,locale])
         if database:
             clauses.append("n.database_key=?")
             params.append(database)
@@ -377,11 +380,9 @@ def search():
             params.extend(excluded_node_types)
         where=" AND ".join(clauses) if clauses else "1=1"
         rows = db.execute(f"""
-            SELECT DISTINCT n.*,
+            SELECT n.*,
                    COALESCE(pref.value,en.value,n.default_display_name) AS localized_display_name
             FROM graph_nodes n
-              LEFT JOIN graph_localization l ON l.target_id=n.node_id
-                 AND UPPER(l.review_status)='APPROVED' AND l.locale IN (?, 'en')
               LEFT JOIN graph_localization pref ON pref.target_id=n.node_id
                  AND pref.field_name='name' AND pref.locale=? AND UPPER(pref.review_status)='APPROVED'
               LEFT JOIN graph_localization en ON en.target_id=n.node_id
@@ -395,7 +396,7 @@ def search():
                 localized_display_name COLLATE NOCASE,
                 n.node_id
             LIMIT ?
-        """, (locale,locale,*params,query,query,query,limit)).fetchall()
+        """, (locale,*params,query,query,query,limit)).fetchall()
         return jsonify([dict(row) for row in rows])
 
 @bp.get("/localization")
@@ -461,6 +462,8 @@ def detail():
         node=db.execute("SELECT * FROM graph_nodes WHERE node_id=?",(target_id,)).fetchone()
         if not node: return error("node_not_found","Node not found",404)
         node_item=dict(node); node_type=node_item["node_type"]
+        if request.args.get("relations","1")=="0":
+            return jsonify(_node_detail_summary(db,target_id,node_item))
         outgoing=[dict(row) for row in db.execute("""
             SELECT e.*, n.node_id AS other_node_id, n.node_type AS other_node_type,
                    n.default_display_name AS other_display_name, n.technical_name AS other_technical_name,
@@ -539,6 +542,50 @@ def detail():
         tree_nodes={row["node_id"]:dict(row) for row in _rows_by_ids(db,"graph_nodes","node_id",tree_target_ids)}
         return jsonify({"target_type":"NODE","node":node_item,"properties":properties,"business_semantics":business_semantics,"semantic_tree_business_semantics":tree_business_semantics,"semantic_tree_nodes":tree_nodes,"incoming":incoming,"outgoing":outgoing,"columns":columns,"table_context":table_context,"impacts":impacts,"paths":paths,"issues":issues,"counts":counts})
 
+def _node_detail_summary(db, target_id: str, node_item: dict) -> dict:
+    """Node detail without relation/impact/path lists (relations=0).
+
+    On hub nodes (a table read by thousands of routines) the lists cost
+    hundreds of milliseconds and megabytes per click; the graph view loads
+    relations through /flow instead, so only counts are returned here.
+    """
+    node_type=node_item["node_type"]
+    columns=[]; table_context=[]
+    if node_type=="TABLE":
+        columns=[dict(row) for row in db.execute("""
+            SELECT c.* FROM graph_edges e JOIN graph_nodes c ON c.node_id=e.target_node_id
+            WHERE e.source_node_id=? AND e.edge_type='CONTAINS' AND c.node_type='COLUMN'
+            ORDER BY CAST(json_extract(c.properties_json,'$.ordinal_position') AS INTEGER), c.technical_name
+        """,(target_id,))]
+    elif node_type=="COLUMN":
+        table_context=[dict(row) for row in db.execute("""
+            SELECT t.* FROM graph_edges e JOIN graph_nodes t ON t.node_id=e.source_node_id
+            WHERE e.target_node_id=? AND e.edge_type='CONTAINS' AND t.node_type='TABLE' LIMIT 1
+        """,(target_id,))]
+    issues=[dict(row) for row in db.execute("SELECT * FROM graph_issues WHERE source_node_id=? ORDER BY CASE severity WHEN 'ERROR' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END, issue_type LIMIT 200",(target_id,))]
+    count=lambda sql: db.execute(sql,(target_id,)).fetchone()[0]
+    incoming=count("SELECT count(*) FROM graph_edges WHERE target_node_id=?")
+    outgoing=count("SELECT count(*) FROM graph_edges WHERE source_node_id=?")
+    counts={
+        "incoming":incoming,"outgoing":outgoing,"relations":incoming+outgoing,
+        "columns":len(columns),"issues":len(issues),
+        "evidence":count("SELECT count(*) FROM graph_evidence WHERE target_id=?"),
+        "impacts":count("SELECT count(*) FROM graph_paths WHERE table_node_id=?") if node_type=="TABLE" else 0,
+        "paths":count("SELECT count(*) FROM graph_paths WHERE actor_node_id=?"),
+    }
+    locale=(request.args.get("locale") or "en").strip().lower() or "en"
+    properties=_json(node_item.get("properties_json"),{})
+    tree_target_ids=_semantic_tree_target_ids(target_id,properties.get("semantic_tree"))
+    return {
+        "target_type":"NODE","node":node_item,"properties":properties,
+        "business_semantics":_business_semantic_rows(db,target_id,locale),
+        "semantic_tree_business_semantics":_semantic_tree_business_semantics(db,tree_target_ids,locale),
+        "semantic_tree_nodes":{row["node_id"]:dict(row) for row in _rows_by_ids(db,"graph_nodes","node_id",tree_target_ids)},
+        "incoming":[],"outgoing":[],"columns":columns,"table_context":table_context,
+        "impacts":[],"paths":[],"issues":issues,"counts":counts,"relations_included":False,
+    }
+
+
 @bp.get("/business-semantic-suggestions")
 def business_semantic_suggestions():
     target_id=request.args.get("target_id","").strip()
@@ -580,6 +627,23 @@ def business_semantic_mapping(target_id):
         db.commit()
         return jsonify({"target_id":target_id,"items":_business_semantic_rows(db,target_id,(request.args.get("locale") or "en").strip().lower() or "en")})
 
+# Graph views only show names, routes and paths; the detail panel loads the
+# full node from /detail. Semantic trees can be megabytes per node, so flow
+# responses leave them out.
+_FLOW_HEAVY_PROPERTIES = ("semantic_tree",)
+
+
+def _flow_node(row) -> dict:
+    item = dict(row)
+    raw = item.get("properties_json") or ""
+    if len(raw) > 1024 and any(f'"{key}"' in raw for key in _FLOW_HEAVY_PROPERTIES):
+        properties = _json(raw, {})
+        for key in _FLOW_HEAVY_PROPERTIES:
+            properties.pop(key, None)
+        item["properties_json"] = json.dumps(properties, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return item
+
+
 @bp.get("/flow-all")
 @bp.get("/lineage")
 @bp.get("/flow")
@@ -596,7 +660,7 @@ def flow():
     with connection() as db:
         if mode in {"W", "R"}:
             return jsonify(_read_write_flow(db,node_id,mode,direction,limit,semantic))
-        pending = [node_id]; visited = set(); edges = []; node_ids={node_id}; truncated=False
+        pending = [node_id]; visited = set(); edges = []; edge_ids=set(); node_ids={node_id}; truncated=False
         while pending and len(node_ids) <= limit:
             current = pending.pop(0); visited.add(current)
             if direction == "in":
@@ -609,14 +673,15 @@ def flow():
                 item=dict(row); candidate={item["source_node_id"],item["target_node_id"]}
                 if not _edge_visible(item, semantic): continue
                 if len(node_ids|candidate)>limit: truncated=True; continue
-                if item not in edges: edges.append(item)
+                if item["edge_id"] not in edge_ids:
+                    edge_ids.add(item["edge_id"]); edges.append(item)
                 node_ids.update(candidate)
                 if mode == "E":
                     other = row["source_node_id"] if direction == "in" else row["target_node_id"] if direction == "out" else row["target_node_id"] if row["source_node_id"] == current else row["source_node_id"]
                     if other not in visited and other not in pending: pending.append(other)
             if mode == "1": break
         truncated=truncated or bool(pending)
-        nodes = [dict(row) for row in db.execute(f"SELECT * FROM graph_nodes WHERE node_id IN ({','.join('?' * len(node_ids))})", sorted(node_ids))]
+        nodes = [_flow_node(row) for row in db.execute(f"SELECT * FROM graph_nodes WHERE node_id IN ({','.join('?' * len(node_ids))})", sorted(node_ids))]
         nodes, edges = _semantic_project(nodes, edges, node_id, semantic)
         return jsonify({"nodes": nodes, "edges": edges, "truncated": truncated, "max_nodes": limit, "semantic":semantic,"semantic_level":semantic})
 

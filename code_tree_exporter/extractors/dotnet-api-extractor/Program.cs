@@ -128,9 +128,17 @@ var classCallEdges = invocationEdges.Select(call => (
     Source: ScopedClassIdentity(call.SourceClassIdentity, call.File, ProjectForFile(call.File, projects)),
     Target: classIdentityByMemberDeclaration.GetValueOrDefault(call.TargetIdentity, string.Empty),
     Call: call)).ToList();
+// Calls grouped by file (original order kept): scanning every call for every
+// endpoint was quadratic and dominated large solutions.
+var classCallEdgesByFile = classCallEdges
+    .GroupBy(edge => edge.Call.File.RelativePath, StringComparer.Ordinal)
+    .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+var invocationsByFile = invocationEdges
+    .GroupBy(call => call.File.RelativePath, StringComparer.Ordinal)
+    .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
 var reachabilityRoots = new HashSet<string>(endpointControllerKeys.Where(classesByIdentity.ContainsKey), StringComparer.Ordinal);
 foreach (var endpoint in endpoints.Where(endpoint => endpoint.IsMinimal && endpoint.File is not null))
-    foreach (var target in classCallEdges.Where(edge => edge.Call.File.RelativePath == endpoint.File!.RelativePath && edge.Call.Start >= endpoint.HandlerStart && edge.Call.Start < endpoint.HandlerEnd).Select(edge => edge.Target).Where(identity => !string.IsNullOrEmpty(identity)))
+    foreach (var target in classCallEdgesByFile.GetValueOrDefault(endpoint.File!.RelativePath, new()).Where(edge => edge.Call.Start >= endpoint.HandlerStart && edge.Call.Start < endpoint.HandlerEnd).Select(edge => edge.Target).Where(identity => !string.IsNullOrEmpty(identity)))
         reachabilityRoots.Add(target);
 var reachableClasses = ReachableClasses(reachabilityRoots, classCallEdges.Select(edge => (edge.Source, edge.Target)), classesByIdentity.Keys.ToHashSet(StringComparer.Ordinal));
 reachableClasses.UnionWith(mapperReferences.Select(reference => reference.OwnerClass));
@@ -243,7 +251,7 @@ foreach (var endpoint in endpoints)
     var line = ExtractorRuntime.LineForOffset(endpointFile, endpoint.Start);
     builder.AddEvidence("NODE", operationId, endpointFile.RelativePath, line, line, "DECLARATION", ExtractorRuntime.LineText(endpointFile, line));
     builder.AddEvidence("EDGE", edgeId, endpointFile.RelativePath, line, line, endpoint.IsMinimal ? "MINIMAL_API" : "API_ACTION", ExtractorRuntime.LineText(endpointFile, line));
-    foreach (var invocation in invocationEdges.Where(call => call.File.RelativePath == endpointFile.RelativePath && call.Start >= endpoint.HandlerStart && call.Start < endpoint.HandlerEnd))
+    foreach (var invocation in invocationsByFile.GetValueOrDefault(endpointFile.RelativePath, new()).Where(call => call.Start >= endpoint.HandlerStart && call.Start < endpoint.HandlerEnd))
     {
         var targetMethodId = TargetMethodNodeId(invocation, methodNodeIdsByIdentity);
         if (string.IsNullOrEmpty(targetMethodId)) continue;
@@ -757,7 +765,7 @@ static bool IsLikelySql(string text)
 
 static void AddConfigurationNodes(PackageBuilder builder, string appId, string root, string repository, string systemKey, string database)
 {
-    foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+    foreach (var path in ExtractorRuntime.EnumerateFilesPruned(root)
         .Where(path =>
         {
             var relative = ExtractorRuntime.RepositoryPath(Path.GetRelativePath(root, path));

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -104,3 +105,32 @@ class AntlrWarmCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlimGraphIndexTests(unittest.TestCase):
+    def test_slim_index_keeps_lookup_keys_and_is_readable(self) -> None:
+        from code_tree_exporter.graph_package import GraphPackage, _write_graph_index
+        from code_tree_exporter.query import KnowledgeStore
+
+        graph = GraphPackage()
+        graph.nodes["1"] = {"node_id": "1", "node_type": "API_OPERATION", "properties_json": "{}"}
+        graph.edges["2"] = {"edge_id": "2", "edge_type": "CALLS", "source_node_id": "1", "target_node_id": "1"}
+        memory = {"1": {"file": "codebase-memory/entities/api.jsonl", "line": 1}}
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            _write_graph_index(
+                graph, output, generated_at="2026-01-01T00:00:00Z", packages={},
+                node_packages={}, edge_packages={}, evidence_packages={}, issue_packages={},
+                knowledge_refs={}, memory_refs=memory,
+            )
+            index = json.loads((output / "graph-index.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["indexVersion"], "3.0")
+            self.assertEqual(index["nodeTypeCounts"], {"API_OPERATION": 1})
+            self.assertEqual(index["edgeTypeCounts"], {"CALLS": 1})
+            self.assertEqual(index["memoryByNodeId"], memory)
+            self.assertNotIn("edgesBySource", index)
+            self.assertNotIn("evidenceById", index)
+
+            (output / "manifest.json").write_text("{}", encoding="utf-8")
+            (output / "graph.sqlite").write_bytes(b"")
+            self.assertEqual(KnowledgeStore(output).index["memoryByNodeId"], memory)

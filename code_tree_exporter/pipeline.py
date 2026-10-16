@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 import re
@@ -64,6 +65,8 @@ def run_pipeline(config_path: Path) -> Path:
     config_path = config_path.expanduser().resolve()
     load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
     config = _load_config(config_path)
+    if config.get("lowPriority", True) is not False:
+        lower_process_priority()
     root = _absolute_directory(config, "root")
     output = _absolute_path(config, "output")
     if output == root or root in output.parents:
@@ -84,6 +87,7 @@ def run_pipeline(config_path: Path) -> Path:
     if output_mode not in {"flat", "partitioned"}:
         raise ValueError("outputMode must be 'flat' or 'partitioned'")
     limits = _resolved_limits(config)
+    _validate_graph_index(config)
     allow_partial_extraction = config.get("allowPartialExtraction") is True
     missing_runtimes = _missing_required_runtimes(check_runtimes(validated_sources))
     if missing_runtimes and not allow_partial_extraction:
@@ -260,10 +264,39 @@ def run_pipeline(config_path: Path) -> Path:
             max_tree_lines=limits["maxTreeLines"],
             max_evidence_snippet_chars=limits["maxEvidenceSnippetChars"],
             max_issues_per_type_per_file=limits["maxIssuesPerTypePerFile"],
+            graph_index=str(config.get("graphIndex", "slim")),
         )
+        # publish_v3 works from graph.sqlite; drop the in-memory graph first so
+        # its memory is not added to publish_v3's own peak.
+        del graph
+        gc.collect()
         publish_v3(final_staging, catalog=catalog, config=config)
         replace_directory(final_staging, output)
     return output
+
+
+def _validate_graph_index(config: dict) -> None:
+    if config.get("graphIndex", "slim") not in {"slim", "full"}:
+        raise ValueError("graphIndex must be 'slim' or 'full'")
+
+
+def lower_process_priority() -> None:
+    """Run extraction below normal priority so the machine stays responsive.
+
+    Child processes (extractors, Roslyn workers, the SQL service) inherit it.
+    Opt out with ``"lowPriority": false``.
+    """
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            below_normal_priority_class = 0x00004000
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), below_normal_priority_class)
+        elif hasattr(os, "nice") and os.nice(0) < 10:
+            os.nice(10 - os.nice(0))
+    except OSError:
+        pass
 
 
 def validate_pipeline_config(config_path: Path) -> dict[str, object]:
@@ -290,6 +323,7 @@ def validate_pipeline_config(config_path: Path) -> dict[str, object]:
     if output_mode not in {"flat", "partitioned"}:
         raise ValueError("outputMode must be 'flat' or 'partitioned'")
     limits = _resolved_limits(config)
+    _validate_graph_index(config)
     with tempfile.TemporaryDirectory(prefix="code-tree-v3-validate-") as temporary:
         catalog = prepare_catalog(
             config,
@@ -455,8 +489,11 @@ def _resolved_limits(config: dict) -> dict[str, int]:
         "maxIssuesPerTypePerFile": value("maxIssuesPerTypePerFile", 20),
         "extractorTimeoutSeconds": value("extractorTimeoutSeconds", 3600),
         "projectTimeoutSeconds": value("projectTimeoutSeconds", 900),
+        # Half the cores by default: each extractor (Roslyn, the SQL service)
+        # is itself multi-threaded, so one worker per core saturates the
+        # machine and makes it unusable during a run.
         "maxParallelExtractors": value(
-            "maxParallelExtractors", min(os.cpu_count() or 4, 8)
+            "maxParallelExtractors", max(1, min(4, (os.cpu_count() or 2) // 2))
         ),
     }
     # extractorTimeoutSeconds kills the whole worker; if it is shorter than the

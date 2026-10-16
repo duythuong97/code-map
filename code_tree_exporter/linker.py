@@ -552,6 +552,9 @@ def _identity_from_stable_id(stable_id: str) -> dict[str, str]:
 
 
 def _property_node_references(value: str) -> set[str]:
+    if not value or '"ref_node_id' not in value:
+        # Cheap exact pre-check: only these keys can hold node references.
+        return set()
     try:
         properties = json.loads(value or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -624,6 +627,8 @@ def _merge_edge_rows(target: dict[str, str], candidate: dict[str, str]) -> None:
 
 
 def _rewrite_properties(value: str, aliases: dict[str, str]) -> str:
+    if not value or value == "{}":
+        return "{}"
     try:
         properties = json.loads(value or "{}")
     except (json.JSONDecodeError, TypeError):
