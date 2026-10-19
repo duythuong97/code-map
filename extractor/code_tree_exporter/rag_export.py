@@ -19,6 +19,7 @@ pins both to the same vectors.
 from __future__ import annotations
 
 import csv
+import io
 import datetime as _dt
 import json
 import re
@@ -26,6 +27,8 @@ import sqlite3
 import unicodedata
 from contextlib import closing
 from pathlib import Path
+
+from .decoding import read_text_auto
 
 from .serving_tables import add_business_edge, add_business_node, finish_serving_tables, write_serving_tables
 
@@ -271,8 +274,8 @@ class _BusinessData:
     def rows(self, relative: str) -> list[dict[str, str]]:
         if self.root is None or not (self.root / relative).is_file():
             return []
-        with (self.root / relative).open(encoding="utf-8-sig", newline="") as handle:
-            return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(handle)]
+        text = read_text_auto(self.root / relative)
+        return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(io.StringIO(text, newline=""))]
 
 
 def _names_from_localization(rag: sqlite3.Connection, web: sqlite3.Connection) -> None:

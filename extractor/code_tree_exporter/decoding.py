@@ -214,3 +214,10 @@ def _newline_style(text: str) -> str:
     if cr:
         return "CR"
     return "none"
+
+
+def read_text_auto(path: Path) -> str:
+    """Text of an input file (CSV, dictionary) saved as UTF-8 with or without
+    BOM, CP932/Shift_JIS, EUC-JP or UTF-16 - Excel on Japanese Windows saves
+    CSV as CP932 by default."""
+    return decode_source(path, path.name, "auto").text

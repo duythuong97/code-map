@@ -16,7 +16,7 @@ from xml.etree import ElementTree
 from .comments import extract_comments
 from .contract.graph_contract import normalize_repository_path
 from .decoding import SourceDecodingError, decode_source, encoding_for
-from .env_loader import load_dotenv
+from .env_loader import expand_env_json, load_dotenv
 from .extractors import ExtractorSpec, extractor_spec
 from .extractors.dotnet_runner import ensure_worker_built
 from .graph_package import (
@@ -394,10 +394,7 @@ def _missing_required_runtimes(runtimes: dict[str, dict[str, object]]) -> list[s
 def _load_config(path: Path) -> dict:
     if not path.is_file():
         raise ValueError(f"Config does not exist: {path}")
-    raw = os.path.expandvars(path.read_text(encoding="utf-8"))
-    if "${" in raw:
-        raise ValueError("Config contains unresolved environment variables")
-    value = json.loads(raw)
+    value = json.loads(expand_env_json(path.read_text(encoding="utf-8-sig")))
     if not isinstance(value, dict):
         raise ValueError("Config root must be an object")
     owners = [
@@ -1009,7 +1006,9 @@ def _run_extractor(
 
         extract(config)
         return True, issues
-    env = os.environ.copy()
+    # Children write UTF-8 and the output is read as UTF-8, whatever the
+    # Windows code page is (cp932 on Japanese Windows).
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     command: list[str]
     if spec.config_type == "angular":
         node = env.get("CODE_TREE_NODE") or shutil.which("node")
@@ -1035,6 +1034,8 @@ def _run_extractor(
             command,
             env=env,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
         )
@@ -1075,6 +1076,8 @@ def _run_extractor(
                     [sys.executable, str(fallback), "--config", str(config_path)],
                     env={**env, "CODEMAP_USE_LEGACY_SCANNERS": "1"},
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     capture_output=True,
                     timeout=timeout,
                 )

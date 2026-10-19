@@ -18,7 +18,10 @@ module.exports = {
   apps: [
     {
       name: required("CODE_MAP_PM2_NAME"),
-      script: path.join(projectRoot, ".venv", "bin", "python"),
+      // The virtualenv interpreter: Scripts\python.exe on Windows, bin/python elsewhere.
+      script: process.platform === "win32"
+        ? path.join(projectRoot, ".venv", "Scripts", "python.exe")
+        : path.join(projectRoot, ".venv", "bin", "python"),
       args: [path.join(projectRoot, "web", "backend", "api", "server.py")],
       interpreter: "none",
       env: { NODE_ENV: "production" },

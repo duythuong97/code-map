@@ -43,7 +43,8 @@ function loadConfig(configPath) {
   const absoluteConfig = path.resolve(configPath);
   const raw = readFileSync(absoluteConfig, 'utf8').replace(/\$\{([A-Z][A-Z0-9_]*)\}/g, (_, name) => {
     if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
-    return process.env[name];
+    // The reference is inside a JSON string: escape Windows backslashes.
+    return JSON.stringify(process.env[name]).slice(1, -1);
   });
   const config = JSON.parse(raw);
   for (const key of ['type', 'source', 'root', 'folders', 'appConfig', 'output']) {
@@ -542,8 +543,19 @@ const SOURCE_ENCODING_LABELS = {
   shift_jis: 'shift_jis', cp932: 'shift_jis', euc_jp: 'euc-jp',
 };
 
+function sourceEncoding(config, absolute) {
+  const encodings = config.sourceEncodings || {};
+  const key = repoPath(path.relative(config.root, absolute));
+  if (key in encodings) return encodings[key];
+  // Windows paths are case-insensitive.
+  if (process.platform !== 'win32') return undefined;
+  const lower = key.toLowerCase();
+  const match = Object.keys(encodings).find(candidate => candidate.toLowerCase() === lower);
+  return match ? encodings[match] : undefined;
+}
+
 function readSource(config, absolute) {
-  const name = (config.sourceEncodings || {})[repoPath(path.relative(config.root, absolute))];
+  const name = sourceEncoding(config, absolute);
   if (!name) return readFileSync(absolute, 'utf8');
   const label = SOURCE_ENCODING_LABELS[name.toLowerCase()];
   if (!label) throw new Error(`Unsupported source encoding ${name} for ${absolute}`);
@@ -558,7 +570,7 @@ function sourceCompilerHost(ts, config, options) {
   const readFile = host.readFile.bind(host);
   host.readFile = fileName => {
     const absolute = path.resolve(fileName);
-    return encodings[repoPath(path.relative(config.root, absolute))] ? readSource(config, absolute) : readFile(fileName);
+    return sourceEncoding(config, absolute) ? readSource(config, absolute) : readFile(fileName);
   };
   return host;
 }

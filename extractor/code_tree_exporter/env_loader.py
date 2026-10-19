@@ -1,7 +1,28 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
+
+_ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env_json(text: str) -> str:
+    """Replace ``${NAME}`` in a JSON document with the JSON-escaped value.
+
+    The references sit inside JSON strings, so a Windows path such as
+    ``C:\\src\\new`` must become ``C:\\\\src\\\\new``; inserted raw, ``\\n`` would
+    turn into a line break or the JSON would not parse.
+    """
+
+    def value(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in os.environ:
+            raise ValueError(f"Config uses ${{{name}}} but {name} is not set (check .env)")
+        return json.dumps(os.environ[name], ensure_ascii=False)[1:-1]
+
+    return _ENV_REFERENCE.sub(value, text)
 
 
 def load_dotenv(*paths: Path) -> None:

@@ -273,6 +273,68 @@ CP932/EUC-JP strict. Kết quả legacy mơ hồ tạo `ENCODING_CONFLICT`; khô
 tự replacement nên không âm thầm làm hỏng tiếng Nhật. `encoding` và
 `encodingOverrides` vẫn dùng để khóa encoding cho source/file đặc biệt.
 
+## Chạy trên Windows (source tiếng Nhật)
+
+1. **Cài:** Python 3.11+ (bản từ python.org; tick "Add to PATH"), .NET SDK 9+
+   (cùng major với `global.json` của solution cần scan), Node.js 20+ (bản
+   chính thức có full ICU, cần để giải mã Shift_JIS trong Angular), Git.
+2. **Bật đường dẫn dài** (repo sâu, `node_modules`), PowerShell quyền Admin:
+   ```powershell
+   New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+   git config --global core.longpaths true
+   ```
+3. **Virtualenv và thư viện:**
+   ```powershell
+   py -3.11 -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements.txt
+   npm install --prefix extractor\code_tree_exporter\extractors\angular-extractor typescript
+   ```
+4. **UTF-8 cho Python** (khuyến nghị): biến môi trường hệ thống
+   `PYTHONUTF8=1`. Engine đã tự đặt cho các tiến trình con, biến này giúp cả
+   các script bạn tự viết đọc ghi UTF-8 thay vì cp932.
+5. **`.env`:** đường dẫn tuyệt đối viết bình thường kiểu Windows, không cần
+   escape:
+   ```
+   CODE_MAP_PROJECT_ROOT=C:\work\code-map
+   CODE_MAP_SOURCE_ROOT=C:\work\code-map\examples\sample-source
+   CODE_MAP_GRAPH_OUTPUT=C:\work\code-map\output\demo
+   CODE_TREE_OUTPUT=../output/demo
+   CODE_MAP_INPUT_DATA=./input-data
+   CODE_TREE_CATALOG=./catalog
+   ```
+   Không ghi dấu `;` cuối dòng, không dùng `...`. Giá trị bắt đầu bằng `./`
+   hoặc `../` được tính từ file config JSON.
+6. **Chạy:** `.venv\Scripts\python scripts\run_demo_pipeline.py`, web chạy bằng
+   `.venv\Scripts\python web\backend\api\server.py` hoặc
+   `pm2 start web\ecosystem.config.js`. pm2 tự chọn `Scripts\python.exe`.
+
+**Encoding của source:**
+- Mặc định `defaultEncoding: "auto"`: mỗi file được nhận diện riêng: BOM,
+  khai báo trong file (`<?xml encoding=…?>`, `-- coding:`), rồi đoán giữa
+  UTF-8, CP932, EUC-JP. Source Shift_JIS trên Windows gần như luôn được nhận
+  là **CP932**. CP932 là tập lớn hơn Shift_JIS chuẩn, có cả ký tự NEC/IBM như
+  `①`, `㈱`, `髙`.
+- Nếu một thư mục chắc chắn dùng một encoding, khoá lại cho chắc và nhanh hơn:
+  ```json
+  { "name": "order-db", "type": "oracle-plsql", "folders": ["order-db"],
+    "encoding": "cp932",
+    "encodingOverrides": [ { "glob": "order-db/legacy/*", "encoding": "euc_jp" } ] }
+  ```
+- File không giải mã được thì bị bỏ qua và có issue `ENCODING_ERROR` (kèm byte
+  lỗi) trong `QUALITY_REPORT.md`, không bao giờ bị thay ký tự âm thầm.
+- CSV trong `inputData` (`tables.csv`, `semantic-dictionary.csv`, `jobnet.csv`…)
+  lưu từ Excel dạng "CSV" (CP932) hay "CSV UTF-8" đều đọc được.
+- Không cần bật "Beta: Use Unicode UTF-8 for worldwide language support" của
+  Windows; bật cũng không sao.
+
+**Lưu ý khác trên Windows:**
+- Git: nên đặt `git config core.autocrlf false` cho repo source cần scan, để
+  hash và evidence giống nhau giữa các máy. CRLF không làm sai số dòng.
+- Khi extract xong, output được thay bằng thao tác đổi tên thư mục. Nếu web
+  đang mở file đúng lúc đó, engine thử lại trong khoảng 10 giây.
+- Antivirus (Defender) quét `node_modules` và `.msbuild` làm chậm. Có thể
+  thêm thư mục repo và thư mục output vào danh sách loại trừ.
+
 ## Cài đặt
 
 - macOS: `python3 -m pip install -r requirements.txt`

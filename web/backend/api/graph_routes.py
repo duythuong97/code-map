@@ -827,10 +827,19 @@ def snippet():
     if not os.access(path, os.R_OK):
         return jsonify(_snippet_payload("unreadable", relative, evidence_row))
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")[:20000]
+        content = _source_text(path)[:20000]
     except OSError:
         return jsonify(_snippet_payload("unreadable", relative, evidence_row))
     return jsonify(_snippet_payload("available", relative, evidence_row, content))
+
+def _source_text(path: Path) -> str:
+    """Source as text whatever it was saved in (UTF-8, CP932/Shift_JIS, EUC-JP, UTF-16)."""
+    from code_tree_exporter.decoding import SourceDecodingError, read_text_auto
+
+    try:
+        return read_text_auto(path)
+    except SourceDecodingError:
+        return path.read_bytes().decode("utf-8", errors="replace")
 
 def _snippet_payload(status: str, relative: str | None, evidence_row: sqlite3.Row | None, content: str | None = None) -> dict[str, Any]:
     start_line = _positive_line(evidence_row["start_line"] if evidence_row else None)

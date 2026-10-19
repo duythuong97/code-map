@@ -2816,15 +2816,31 @@ def replace_directory(staging: Path, output: Path) -> None:
     _require_managed_directory(output)
     _require_managed_directory(backup)
     if backup.exists():
-        shutil.rmtree(backup)
+        _retry_locked(lambda: shutil.rmtree(backup))
     if output.exists():
-        output.replace(backup)
+        _retry_locked(lambda: output.replace(backup))
     try:
-        staging.replace(output)
+        _retry_locked(lambda: staging.replace(output))
     except Exception:
         if backup.exists() and not output.exists():
             backup.replace(output)
         raise
+
+
+def _retry_locked(action, attempts: int = 20, delay: float = 0.5) -> None:
+    """Windows refuses to rename or delete a folder while a file in it is open
+    (the web app reading the previous output, an indexer, antivirus); retry
+    for a few seconds before failing."""
+    import time
+
+    for attempt in range(attempts):
+        try:
+            action()
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 def _json(value: dict[str, object] | None) -> str:

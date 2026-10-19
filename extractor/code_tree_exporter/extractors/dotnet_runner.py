@@ -134,8 +134,10 @@ def run_dotnet_extractor(
 
 def _load_config(path: Path) -> dict[str, object]:
     try:
-        value = json.loads(os.path.expandvars(path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError):
+        from code_tree_exporter.env_loader import expand_env_json
+
+        value = json.loads(expand_env_json(path.read_text(encoding="utf-8-sig")))
+    except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
 

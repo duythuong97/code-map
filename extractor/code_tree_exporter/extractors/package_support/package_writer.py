@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from code_tree_exporter.decoding import read_text_auto
 from code_tree_exporter.contract.graph_contract import (
     api_operation_id,
     canonical_edge_id,
@@ -62,7 +64,7 @@ class Catalog:
         tables: dict[str, dict[str, set[str]]] = {}
         path = input_root / "tables.csv"
         if path.exists():
-            with path.open(encoding="utf-8", newline="") as handle:
+            with io.StringIO(read_text_auto(path), newline="") as handle:
                 for row in csv.DictReader(handle):
                     db = normalize_oracle_identifier(row["database"])
                     if database and db != normalize_oracle_identifier(database):
@@ -76,7 +78,7 @@ class Catalog:
                         else input_root / "tables" / f"{row['table_code']}.csv"
                     )
                     if child.exists():
-                        with child.open(encoding="utf-8", newline="") as column_handle:
+                        with io.StringIO(read_text_auto(child), newline="") as column_handle:
                             columns = {normalize_oracle_identifier(item["column_code"]) for item in csv.DictReader(column_handle)}
                     tables.setdefault(db, {})[table] = columns
         return cls(tables)
@@ -535,7 +537,7 @@ def load_authoritative_ids(input_root: Path) -> set[str]:
     ids: set[str] = set()
     table_path = input_root / "tables.csv"
     if table_path.exists():
-        with table_path.open(encoding="utf-8", newline="") as handle:
+        with io.StringIO(read_text_auto(table_path), newline="") as handle:
             for row in csv.DictReader(handle):
                 ids.add(table_id(row["database"], row["table_code"]))
                 configured = str(row.get("columns_file") or "").strip()
@@ -545,11 +547,11 @@ def load_authoritative_ids(input_root: Path) -> set[str]:
                     else input_root / "tables" / f"{row['table_code']}.csv"
                 )
                 if child.exists():
-                    with child.open(encoding="utf-8", newline="") as column_handle:
+                    with io.StringIO(read_text_auto(child), newline="") as column_handle:
                         ids.update(column_id(row["database"], row["table_code"], item["column_code"]) for item in csv.DictReader(column_handle))
     jobs_path = input_root / "jobnet.csv"
     if jobs_path.exists():
-        with jobs_path.open(encoding="utf-8", newline="") as handle:
+        with io.StringIO(read_text_auto(jobs_path), newline="") as handle:
             for row in csv.DictReader(handle):
                 ids.add(stable_node_id("job-network", "batch-system", row["jobnet_id"]))
                 ids.add(stable_node_id("job", "batch-system", row["jobnet_id"], row["job_id"]))

@@ -10,6 +10,11 @@ from .pipeline import run_pipeline, validate_pipeline_config
 
 
 def main(argv: list[str] | None = None) -> int:
+    # A Windows console or pipe in cp932 cannot print every character
+    # (Vietnamese names, some symbols); never crash on output.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     arguments = list(argv if argv is not None else sys.argv[1:])
     parser = argparse.ArgumentParser(
         prog="code-tree-exporter",

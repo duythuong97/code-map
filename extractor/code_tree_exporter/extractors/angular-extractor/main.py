@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -480,7 +479,9 @@ def _extract_template_literals(
 
 def _load_config(path: Path) -> dict:
     resolved = path.expanduser().resolve()
-    raw = os.path.expandvars(resolved.read_text(encoding="utf-8"))
+    from code_tree_exporter.env_loader import expand_env_json
+
+    raw = expand_env_json(resolved.read_text(encoding="utf-8-sig"))
     if "${" in raw:
         raise ValueError("Config contains unresolved environment variables")
     value = json.loads(raw)

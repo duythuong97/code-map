@@ -129,3 +129,17 @@ class GraphApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowsConfigTests(unittest.TestCase):
+    def test_backslash_paths_in_env_keep_the_config_valid(self) -> None:
+        from unittest import mock
+
+        from web.backend.config import load_json_config
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "config.json"
+            config.write_text('{"graph_output": "${CODE_MAP_GRAPH_OUTPUT}"}', encoding="utf-8")
+            path = r"C:\code-map\new\出力"
+            with mock.patch.dict(os.environ, {"CODE_MAP_GRAPH_OUTPUT": path}):
+                self.assertEqual(load_json_config(config)["graph_output"], path)

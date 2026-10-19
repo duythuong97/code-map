@@ -133,23 +133,28 @@ public static class ExtractorRuntime
         var text = Regex.Replace(
             File.ReadAllText(path, Encoding.UTF8),
             @"\$\{([A-Z][A-Z0-9_]*)\}",
-            match => Environment.GetEnvironmentVariable(match.Groups[1].Value)
-                ?? throw new ArgumentException($"Missing required environment variable: {match.Groups[1].Value}"));
+            // The reference is inside a JSON string: escape Windows backslashes.
+            match => JsonEncodedText.Encode(Environment.GetEnvironmentVariable(match.Groups[1].Value)
+                ?? throw new ArgumentException($"Missing required environment variable: {match.Groups[1].Value}"),
+                System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString());
         var document = JsonDocument.Parse(text);
         ConfigureSourceEncodings(document.RootElement);
+        // Diagnostics go to the pipeline as UTF-8, not the Windows console code page.
+        Console.OutputEncoding = new UTF8Encoding(false);
         return document;
     }
 
     // Sources are read in place. The pipeline lists the files that are not UTF-8
     // ("sourceEncodings": repository path -> Python codec name) so they are
     // decoded here instead of being copied to a UTF-8 staging folder.
-    static Dictionary<string, string> _sourceEncodings = new(StringComparer.Ordinal);
+    static Dictionary<string, string> _sourceEncodings = new(StringComparer.OrdinalIgnoreCase);
     static string _sourceRoot = string.Empty;
 
     public static void ConfigureSourceEncodings(JsonElement config)
     {
         _sourceRoot = String(config, "root");
-        _sourceEncodings = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Windows paths are case-insensitive: a .csproj may list "orderflow.cs" for OrderFlow.cs.
+        _sourceEncodings = new Dictionary<string, string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         if (config.TryGetProperty("sourceEncodings", out var map) && map.ValueKind == JsonValueKind.Object)
             foreach (var entry in map.EnumerateObject())
                 if (entry.Value.ValueKind == JsonValueKind.String)

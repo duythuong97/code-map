@@ -20,10 +20,13 @@ from __future__ import annotations
 import csv
 import datetime as _dt
 import hashlib
+import io
 import json
 import re
 import sqlite3
 from pathlib import Path
+
+from .decoding import read_text_auto
 
 from .contract.graph_contract import canonical_edge_id
 
@@ -275,8 +278,8 @@ def _flows(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) -> No
 def _rows(root: Path | None, relative: str) -> list[dict[str, str]]:
     if root is None or not (root / relative).is_file():
         return []
-    with (root / relative).open(encoding="utf-8-sig", newline="") as handle:
-        return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(handle)]
+    text = read_text_auto(root / relative)
+    return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(io.StringIO(text, newline=""))]
 
 
 def _localization(rag: sqlite3.Connection, input_root: Path | None) -> None:

@@ -12,8 +12,9 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 def load_json_config(path: str | Path) -> dict[str, Any]:
     config_path = absolute_path(path, "config path")
-    text = config_path.read_text(encoding="utf-8")
-    text = _ENV_PATTERN.sub(lambda match: _required_env(match.group(1)), text)
+    text = config_path.read_text(encoding="utf-8-sig")
+    # References sit inside JSON strings: escape Windows backslashes (C:\\src).
+    text = _ENV_PATTERN.sub(lambda match: json.dumps(_required_env(match.group(1)), ensure_ascii=False)[1:-1], text)
     return json.loads(text)
 
 
