@@ -20,9 +20,37 @@ CONFIG = project_path("examples", "demo-config.json")
 OUTPUT = project_path("output", "demo")
 
 
+# .env values the repository layout expects (paths are relative to examples/demo-config.json).
+EXPECTED_ENV = {
+    "CODE_MAP_SOURCE_ROOT": str(ROOT / "examples" / "sample-source"),
+    "CODE_TREE_OUTPUT": "../output/demo",
+    "CODE_MAP_INPUT_DATA": "./input-data",
+    "CODE_TREE_CATALOG": "./catalog",
+    "CODE_MAP_GRAPH_OUTPUT": str(ROOT / "output" / "demo"),
+}
+
+
+def stale_env() -> list[str]:
+    """.env lines that still point at the old layout (before extractor/, web/, examples/)."""
+    problems = []
+    for name, expected in EXPECTED_ENV.items():
+        value = os.environ.get(name, "")
+        if name in {"CODE_MAP_SOURCE_ROOT", "CODE_MAP_GRAPH_OUTPUT"}:
+            ok = bool(value) and (Path(value).is_dir() or name == "CODE_MAP_GRAPH_OUTPUT")
+        else:
+            ok = bool(value) and (CONFIG.parent / value).resolve() == (CONFIG.parent / expected).resolve()
+        if not ok:
+            problems.append(f"  {name}={expected}    (now: {value or '<missing>'})")
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
+    problems = stale_env()
+    if problems:
+        print(f"Update {ROOT / '.env'} for the new layout (see .env.example):\n" + "\n".join(problems), file=sys.stderr)
+        return 1
     steps = [
         ("Validate config and runtimes", [PYTHON, "-m", "code_tree_exporter", "validate", "--config", CONFIG]),
         ("Extract graph", [PYTHON, "-m", "code_tree_exporter", "extract", "--config", CONFIG]),
@@ -31,7 +59,9 @@ def main() -> int:
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT / "extractor"), str(ROOT), os.environ.get("PYTHONPATH", "")])}
     for label, command in steps:
         print(f"\n== {label} ==", flush=True)
-        subprocess.run([str(part) for part in command], check=True, env=env)
+        if subprocess.run([str(part) for part in command], env=env).returncode != 0:
+            print(f"\n{label} failed; the error is printed above.", file=sys.stderr)
+            return 1
     print(f"\nDone: {OUTPUT} (graph.sqlite, codemap-web.sqlite for the web app, codemap-rag.sqlite for VS Code)")
     return 0
 
