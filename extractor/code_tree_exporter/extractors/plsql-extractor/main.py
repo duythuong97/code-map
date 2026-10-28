@@ -36,6 +36,7 @@ from code_tree_exporter.extractors.package_support.package_writer import (
     unresolved_id,
     configured_files,
 )
+from code_tree_exporter.extractors.package_support.oracle_builtins import ORACLE_BUILTIN_CALLS
 from code_tree_exporter.extractors.package_support.oracle_parser import (
     OraclePlsqlParser,
     parse_plsql,
@@ -52,15 +53,7 @@ _VERSION = "3.0.0"
 _EXTERNAL_API_RE = re.compile(
     r"external-api:([A-Za-z_][\w$#-]*):([A-Z]+):([^\s]+)", re.IGNORECASE
 )
-_SKIP_CALLS = {
-    "COUNT",
-    "SUM",
-    "TRUNC",
-    "NVL",
-    "TO_DATE",
-    "TO_CHAR",
-    "RAISE_APPLICATION_ERROR",
-}
+_SKIP_CALLS = ORACLE_BUILTIN_CALLS
 
 
 @dataclass(frozen=True)
@@ -753,7 +746,9 @@ def _extract_dependencies(
             target = candidates[0].node_id
         else:
             package = parts[-2] if len(parts) > 1 else ""
-            target = unresolved_id(database, f"{source_path}:{raw}:{call.start}")
+            # One placeholder per file and name: keyed on the call's character offset, any edit above the
+            # call changed the id and flow documents lost the node on the next extract.
+            target = unresolved_id(database, f"{source_path}:{raw}")
             builder.add_node(
                 target,
                 "UNRESOLVED_REFERENCE",
@@ -972,12 +967,15 @@ def _add_table_reference(
         )
         return
     properties = {"resolvedViaSynonym": synonym.name} if synonym else None
+    # The schema the code meant lets the linker pick the right table when the catalog has the same name
+    # in two schemas (it then ids them `table:DB:SCHEMA.NAME`).
+    reference_schema = owner_identifier(object_name, schema) if (schema or "." in object_name) else ""
     edge_id = builder.add_edge(
         owner_id,
         table_id(database, table_name),
         edge_type,
         raw_operation=operation,
-        properties=properties,
+        properties={**(properties or {}), **({"schema": reference_schema} if reference_schema else {})} or None,
     )
     builder.add_evidence(
         "EDGE", edge_id, source_path, line, line, "SQL", snippet, properties=properties

@@ -169,8 +169,10 @@ def _detect_encoding(raw: bytes, relative_path: str) -> str:
     if len(matches) == 1 or len(matches) == 2 and matches[0][1] == matches[1][1]:
         return matches[0][0]
     if len(matches) > 1:
-        ranked = sorted(matches, key=lambda item: _mojibake_score(item[1]))
-        if _mojibake_score(ranked[0][1]) < _mojibake_score(ranked[1][1]):
+        # Half-width katakana is ordinary in CP932 sources (ｺｰﾄﾞ) but needs an SS2 prefix in EUC-JP, so it only
+        # counts against EUC-JP; private-use characters count against both. CP932 wins ties: Windows-era sources.
+        ranked = sorted(matches, key=lambda item: (_mojibake_score(item[1], item[0]), item[0] != "cp932"))
+        if _mojibake_score(ranked[0][1], ranked[0][0]) < _mojibake_score(ranked[1][1], ranked[1][0]) or ranked[0][0] == "cp932":
             return ranked[0][0]
         raise SourceDecodingError(
             "ENCODING_CONFLICT", relative_path, "Legacy Japanese encoding is ambiguous",
@@ -181,11 +183,28 @@ def _detect_encoding(raw: bytes, relative_path: str) -> str:
         {"hex_context": raw[:16].hex()},
     )
 
-def _mojibake_score(text: str) -> int:
-    return sum(
-        1 for character in text
-        if "\ue000" <= character <= "\uf8ff" or "\uff61" <= character <= "\uff9f"
-    )
+def _mojibake_score(text: str, encoding: str = "euc_jp") -> int:
+    """Characters a wrong guess produces. EUC-JP read as CP932 turns the very common lead bytes A1-A5
+    (symbols, hiragana, katakana rows) into half-width punctuation ｡｢｣､･; real CP932 text rarely has many.
+    CP932 half-width katakana read as EUC-JP would need an SS2 prefix, so half-width katakana counts against
+    EUC-JP. Private-use characters count against both."""
+    if encoding == "cp932":
+        def halfwidth(c: str) -> bool:
+            return "\uff61" <= c <= "\uff9f"
+
+        def wide(c: str) -> bool:
+            return ord(c) >= 0x3000 and not halfwidth(c)
+
+        score = 0
+        for index, c in enumerate(text):
+            if "\ue000" <= c <= "\uf8ff" or "\uff61" <= c <= "\uff65":
+                score += 1
+            elif halfwidth(c) and any(wide(n) for n in text[max(index - 1, 0):index] + text[index + 1:index + 2]):
+                # Real half-width katakana comes in runs; glued to kanji it is EUC-JP bytes misread.
+                score += 1
+        return score
+    return sum(1 for c in text if "\ue000" <= c <= "\uf8ff" or "\uff61" <= c <= "\uff9f")
+
 
 def _looks_utf16(raw: bytes, *, little_endian: bool) -> bool:
     pairs = len(raw) // 2

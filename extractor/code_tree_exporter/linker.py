@@ -42,6 +42,7 @@ def run_linker(graph: GraphPackage) -> None:
     """Resolve cross-source references after every source package is merged."""
     link_api(graph)
     resolve_deferred_references(graph)
+    redirect_catalog_references(graph)
     materialize_dangling_references(graph)
 
 
@@ -53,7 +54,7 @@ def link_api(graph: GraphPackage) -> None:
     for node_id, node in graph.nodes.items():
         if node.get("node_type") != "API_OPERATION":
             continue
-        signature = _api_signature(node)
+        signature = _api_match_key(_api_signature(node))
         if signature is None:
             continue
         operations[signature].append(node_id)
@@ -69,10 +70,10 @@ def link_api(graph: GraphPackage) -> None:
         signature = _api_signature(node)
         if signature is None:
             continue
-        candidates = list(operations.get(signature, ()))
+        candidates = list(operations.get(_api_match_key(signature), ()))
         match_kind = "exact"
         if not candidates:
-            candidates = sorted(_api_suffix_candidates(signature, routes, suffixes))
+            candidates = sorted(_api_suffix_candidates(_api_match_key(signature), routes, suffixes))
             match_kind = "unique_suffix"
         if len(candidates) == 1:
             _put_edge(
@@ -152,6 +153,49 @@ def resolve_deferred_references(
         include_database=include_database,
         include_routines=include_routines,
     )
+
+
+def redirect_catalog_references(graph: GraphPackage) -> None:
+    """Point `table:DB:NAME` / `column:DB:NAME:COL` references at the catalog node for that object.
+
+    Extractors build table ids from the leaf name, while the catalog qualifies a table with its schema once a
+    table of the same name exists in another schema (`table:DB:APP.ORDERS`). Without this, every code edge to
+    such a table would become an unresolved placeholder after the catalog grew."""
+    indexes = _resolution_indexes(graph)
+    # missing id -> schemas the referencing edges name (from the source's configured schema or SCHEMA.NAME).
+    missing: dict[str, set[str]] = defaultdict(set)
+    for edge in graph.edges.values():
+        for field in ("source_node_id", "target_node_id"):
+            node_id = edge.get(field, "")
+            if node_id.startswith(("table:", "column:")) and node_id not in graph.nodes:
+                schema = _upper(_properties(edge).get("schema"))
+                missing[node_id].add(schema)
+    replacements: dict[str, str] = {}
+    for node_id, schemas in missing.items():
+        parts = node_id.split(":")
+        if parts[0] == "table" and len(parts) == 3:
+            database, name = parts[1].upper(), parts[2].upper()
+            explicit, _, leaf = name.rpartition(".")
+
+            def lookup(schema: str) -> set[str]:
+                return set(indexes["objects"].get((database, schema, leaf), set()))
+        elif parts[0] == "column" and len(parts) == 4:
+            database, table, column = parts[1].upper(), parts[2].upper(), parts[3].upper()
+            explicit, _, leaf = table.rpartition(".")
+
+            def lookup(schema: str) -> set[str]:
+                return set(indexes["columns"].get((database, schema, leaf, column), set()))
+        else:
+            continue
+        candidates = lookup(explicit)
+        named = {schema for schema in schemas if schema}
+        if len(candidates) > 1 and not explicit and len(named) == 1:
+            # The same name in two schemas: use the schema the referencing code meant.
+            candidates = lookup(next(iter(named)))
+        if len(candidates) == 1:
+            replacements[node_id] = next(iter(candidates))
+    if replacements:
+        _apply_replacements(graph, replacements)
 
 
 def materialize_dangling_references(graph: GraphPackage) -> None:
@@ -442,6 +486,14 @@ def _api_signature(node: dict[str, str]) -> tuple[str, str] | None:
         return normalize_http_route(method, route)
     except ValueError:
         return None
+
+
+def _api_match_key(signature: tuple[str, str] | None) -> tuple[str, str] | None:
+    """ASP.NET routing is case-insensitive (`[Route("api/[controller]")]` gives `api/Orders`), so match on the
+    case-folded route; node ids keep their original case."""
+    if signature is None:
+        return None
+    return signature[0], signature[1].casefold()
 
 
 def _api_suffix_candidates(

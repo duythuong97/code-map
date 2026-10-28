@@ -261,9 +261,11 @@ Runtime tùy extractor: Python 3.10+, Node.js + TypeScript cho Angular, .NET SDK
 9+ cho Roslyn. Có thể chỉ định executable không nằm trong `PATH` bằng
 `CODE_TREE_NODE` và `CODE_TREE_DOTNET`. Runner tự suy ra `DOTNET_ROOT`, host
 path, SDK resolver và runtime roll-forward từ executable đã chọn. Thiếu
-Node.js/TypeScript hoặc primary parser lỗi, Angular dùng Python fallback, đồng
-thời ghi `SEMANTIC_TREE_UNAVAILABLE`; fallback không bảo toàn đầy đủ nested
-behavior.
+Node.js/TypeScript hoặc primary parser lỗi thì source Angular **báo lỗi và
+extract dừng, giữ nguyên output cũ**: Python fallback đặt id node khác (không có
+UI action, id service/component khác) nên dùng nó âm thầm sẽ làm rời mọi tài
+liệu nghiệp vụ. Muốn chấp nhận fallback, đặt `CODE_TREE_ANGULAR_FALLBACK=1`
+(ghi `SEMANTIC_TREE_UNAVAILABLE`).
 
 Sao chép `.env.example` thành `.env` trên mỗi máy rồi sửa path. CLI tự đọc `.env` cạnh file config; nếu không có thì đọc `.env` tại thư mục chạy. Biến đã export trong process có ưu tiên cao hơn `.env`. `.env` bị Git bỏ qua; chỉ `.env.example` được commit để liệt kê cấu hình cần thiết.
 
@@ -351,9 +353,9 @@ load được project, extractor ghi `MSBUILD_WORKSPACE_DIAGNOSTIC` và chỉ d�
 fallback compilation cho các file bị ảnh hưởng. Lần chạy đầu build worker
 Release; các lần sau chạy DLL trực tiếp nếu source worker không đổi. Runner tự
 cấu hình môi trường .NET từ `CODE_TREE_DOTNET` hoặc executable trong `PATH`. Nếu
-TypeScript semantic runtime không load được, Angular dùng fallback chỉ giữ
-declaration/literal với confidence tối đa `0.5` và ghi
-`SEMANTIC_TREE_UNAVAILABLE`.
+TypeScript semantic runtime không load được, Angular chỉ dùng fallback khi
+`CODE_TREE_ANGULAR_FALLBACK=1` (giữ declaration/literal với confidence tối đa
+`0.5` và ghi `SEMANTIC_TREE_UNAVAILABLE`).
 
 ## Chạy
 
@@ -486,7 +488,10 @@ semantic tree) và danh sách luồng có chứa node.
 **Người dùng không thêm bước bằng tay.** AI viết nội dung, người dùng đọc,
 sửa và duyệt. Tên menu/tính năng, mô tả, tài liệu luồng, trạng thái duyệt và
 câu trả lời lưu trong `knowledge.sqlite` (bảng `biz_items`, `biz_flows`,
-`biz_exports`), gắn theo id của graph nên không mất khi extract lại.
+`biz_exports`), gắn theo id của graph nên không mất khi extract lại. Tài liệu
+nào không còn tính năng sau khi extract lại (màn hình/UI action bị xoá hoặc đổi
+route) hiện ở menu **Tài liệu không còn tính năng**, không bị mất. Nên sao lưu
+`knowledge.sqlite` trước mỗi lần extract cho bản release.
 
 **Viết bằng AI** (ở trang tính năng hoặc đầu tài liệu luồng):
 

@@ -343,6 +343,14 @@ def _add_jobs(rag: sqlite3.Connection, web: sqlite3.Connection, business: _Busin
 
     job_ids: dict[tuple[str, str], int] = {}
     for row in jobs:
+        if not (row.get("jobnet_id") or "").strip() or not (row.get("job_id") or "").strip():
+            # A row without ids (or a file with other headers) is reported, not allowed to abort the extract.
+            rag.execute(
+                "INSERT INTO issues VALUES(?,?,?,?,?,?,?)",
+                (next_issue, None, "INVALID_INPUT_ROW", "WARNING", "jobnet.csv row without jobnet_id/job_id was skipped", "jobnet.csv", None),
+            )
+            next_issue += 1
+            continue
         network = node(f"job-network:{row['jobnet_id']}", "JOB_NETWORK", row.get("jobnet_name") or row["jobnet_id"])
         doc = f"{row.get('executable_name', '')} {row.get('arguments', '')}".strip()
         job = node(f"job:{row['jobnet_id']}:{row['job_id']}", "JOB", row.get("job_name") or row["job_id"], doc, row)
@@ -376,9 +384,10 @@ def _add_jobs(rag: sqlite3.Connection, web: sqlite3.Connection, business: _Busin
             )
             next_issue += 1
     for row in jobs:
-        predecessor = job_ids.get((row["jobnet_id"], row.get("predecessor_job_id", "")))
-        if predecessor is not None:
-            edge(job_ids[(row["jobnet_id"], row["job_id"])], predecessor, "DEPENDS_ON")
+        current = job_ids.get((row.get("jobnet_id"), row.get("job_id")))
+        predecessor = job_ids.get((row.get("jobnet_id"), row.get("predecessor_job_id", "")))
+        if current is not None and predecessor is not None:
+            edge(current, predecessor, "DEPENDS_ON")
 
 
 def _index_terms(rag: sqlite3.Connection) -> None:

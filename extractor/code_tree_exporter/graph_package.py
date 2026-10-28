@@ -321,7 +321,14 @@ class GraphPackage:
                         current = getattr(self, name).get(key)
                         if current is not None and current != row:
                             self.conflicts.append((name, key))
-                            continue
+                            # Merge instead of dropping the later row, and merge in a fixed order so the
+                            # result (repository_key, role, properties) does not depend on the order of
+                            # sources in the config.
+                            first, second = sorted(
+                                (current, row), key=lambda item: json.dumps(item, sort_keys=True)
+                            )
+                            row = dict(first)
+                            _merge_duplicate_row(row, second)
                         getattr(self, name)[key] = row
 
     def resolve_routine_references(self) -> None:

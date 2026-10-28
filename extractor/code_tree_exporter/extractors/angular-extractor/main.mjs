@@ -109,11 +109,15 @@ function extract(ts, config) {
   const screenByRoute = new Map();
   let firstScreen = '';
 
+  // Full route of every route literal: parent `children` paths and the prefix of the lazy route that loads
+  // the file. Keyed on the full path, `orders/list` and `customers/list` stay two screens.
+  const lazyPrefix = lazyRoutePrefixes(ts, files);
   for (const file of files) {
     if (file.absolute.endsWith('.ts')) {
+      const prefix = lazyPrefix.get(file.absolute.replace(/\.ts$/, '')) || '';
       visit(file.sourceFile, node => {
-        if (ts.isObjectLiteralExpression(node)) {
-          const route = stringProp(ts, node, 'path');
+        if (ts.isObjectLiteralExpression(node) && propertyAssignment(ts, node, 'path')) {
+          const route = [prefix, nestedRoutePath(ts, node)].filter(Boolean).join('/');
           if (route) {
             const normalizedRoute = normalizeHttpRoute('GET', '/' + route.replace(/^\/+|\/+$/g, '')).route;
             const target = routeTarget(ts, node, normalizedRoute);
@@ -787,6 +791,61 @@ function propertyAssignment(ts, object, name) {
     return prop;
   }
   return null;
+}
+
+// The route literal that owns `object` through `children: [...]`, if any.
+function parentRoute(ts, object) {
+  const array = object.parent;
+  if (!array || !ts.isArrayLiteralExpression(array)) return null;
+  const owner = array.parent;
+  if (!owner || !ts.isPropertyAssignment(owner)) return null;
+  if (owner.name?.getText(object.getSourceFile()).replace(/^['"]|['"]$/g, '') !== 'children') return null;
+  return owner.parent && ts.isObjectLiteralExpression(owner.parent) ? owner.parent : null;
+}
+
+function nestedRoutePath(ts, object) {
+  const parts = [];
+  for (let current = object; current; current = parentRoute(ts, current)) {
+    const own = stringProp(ts, current, 'path').replace(/^\/+|\/+$/g, '');
+    if (own) parts.unshift(own);
+  }
+  return parts.join('/');
+}
+
+// File (absolute, without .ts) a `loadChildren` points to: `() => import('./x/x.module').then(...)` or the
+// old string form './x/x.module#XModule'.
+function lazyTargetFile(ts, object, fileAbsolute) {
+  const loader = propertyAssignment(ts, object, 'loadChildren');
+  if (!loader) return '';
+  let specifier = ts.isStringLiteralLike(loader.initializer) ? loader.initializer.text.split('#')[0] : '';
+  visit(loader.initializer, node => {
+    if (!specifier && ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+        && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) specifier = node.arguments[0].text;
+  });
+  if (!specifier.startsWith('.')) return '';
+  return path.resolve(path.dirname(fileAbsolute), specifier).replace(/\.ts$/, '');
+}
+
+function lazyRoutePrefixes(ts, files) {
+  const loaders = [];
+  for (const file of files.filter(f => f.absolute.endsWith('.ts'))) {
+    visit(file.sourceFile, node => {
+      if (!ts.isObjectLiteralExpression(node) || !propertyAssignment(ts, node, 'path')) return;
+      const target = lazyTargetFile(ts, node, file.absolute);
+      if (target) loaders.push({ from: file.absolute.replace(/\.ts$/, ''), target, route: nestedRoutePath(ts, node) });
+    });
+  }
+  // A module's routes may themselves be loaded lazily from another lazy module: resolve until stable.
+  const prefixes = new Map();
+  for (let pass = 0; pass <= loaders.length; pass += 1) {
+    let changed = false;
+    for (const loader of loaders) {
+      const full = [prefixes.get(loader.from) || '', loader.route].filter(Boolean).join('/');
+      if (full && prefixes.get(loader.target) !== full) { prefixes.set(loader.target, full); changed = true; }
+    }
+    if (!changed) break;
+  }
+  return prefixes;
 }
 
 function routeTarget(ts, object, normalizedRoute) {

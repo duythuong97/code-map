@@ -881,8 +881,10 @@ def _conditions(tree: Any) -> list[dict[str, Any]]:
                 text = value.get("condition") or value.get("label") or value.get("text") or ""
                 if isinstance(text, (dict, list)):
                     text = json.dumps(text, ensure_ascii=False)[:200]
+                # The extractor writes `source: {path, line}`; older trees used `line`/`location`.
+                source = value.get("source") if isinstance(value.get("source"), dict) else {}
                 location = value.get("location") if isinstance(value.get("location"), dict) else {}
-                line = value.get("line") or value.get("start_line") or location.get("line")
+                line = value.get("line") or value.get("start_line") or source.get("line") or location.get("line")
                 found.append({"kind": kind, "text": str(text)[:300], **({"line": line} if line else {})})
             for child in value.values():
                 walk(child)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import logging
 import os
 import pickle
 import sys
@@ -66,8 +67,9 @@ def save() -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         _in_large_stack(lambda: _write(path))
-    except Exception:
-        # A cache write must never fail an extraction.
+    except Exception as exc:  # noqa: BLE001
+        # A cache write must never fail an extraction, but a cache that never persists should be visible.
+        logging.getLogger(__name__).warning("ANTLR warm cache not saved to %s: %s", path, exc)
         return
 
 
@@ -189,24 +191,34 @@ def _write(path: Path) -> None:
     lexer, parser = _grammar_classes()
     by_identity = {id(value): key for key, value in _singletons().items()}
 
-    class _Pickler(pickle.Pickler):
-        def persistent_id(self, value):
-            return by_identity.get(id(value))
+    def pickler(base):
+        class _Pickler(base):
+            def persistent_id(self, value):
+                return by_identity.get(id(value))
 
+        return _Pickler
+
+    state = (
+        parser.atn,
+        parser.decisionsToDFA,
+        parser.sharedContextCache,
+        lexer.atn,
+        lexer.decisionsToDFA,
+    )
     handle = tempfile.NamedTemporaryFile(
         dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False
     )
     try:
         with handle:
-            _Pickler(handle, protocol=pickle.HIGHEST_PROTOCOL).dump(
-                (
-                    parser.atn,
-                    parser.decisionsToDFA,
-                    parser.sharedContextCache,
-                    lexer.atn,
-                    lexer.decisionsToDFA,
-                )
-            )
+            try:
+                pickler(pickle.Pickler)(handle, protocol=pickle.HIGHEST_PROTOCOL).dump(state)
+            except RecursionError:
+                # Since Python 3.12 the C pickler has a fixed C recursion cap that neither
+                # sys.setrecursionlimit nor the large thread stack raises; the ATN/DFA graph is
+                # deeper than that. The pure-Python pickler honours the raised limit.
+                handle.seek(0)
+                handle.truncate()
+                pickler(pickle._Pickler)(handle, protocol=pickle.HIGHEST_PROTOCOL).dump(state)
         # Atomic: concurrent extractors may race, the last complete file wins.
         os.replace(handle.name, path)
     except BaseException:
