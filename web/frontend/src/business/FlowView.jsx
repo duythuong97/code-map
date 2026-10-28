@@ -302,7 +302,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   const [groupStates, setGroupStates] = useState({});
   const [intents, setIntents] = useState({});
   const [localized, setLocalized] = useState({});
-  // Base (flow) edges the user hid by unticking a 1-hop box; see graph-place.js for the rules.
+  // Base (flow) edges the user hid by unticking an E/W/R box; see graph-place.js for the rules.
   const [hidden, setHidden] = useState(() => new Set());
   // Nodes the user dragged keep their spot; `moving` holds the position while a drag is in progress.
   const [dragged, setDragged] = useState({});
@@ -351,7 +351,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   const toggleFlow = useCallback((node, mode, direction, checked) => {
     const intent = expansionIntentKey(node.node_id, mode, direction);
     if (owned.has(intent)) {
-      // A 1-hop the flow already shows: unticking hides those edges, ticking shows them again.
+      // A walk the flow already shows (E/W/R): unticking hides its edges, ticking shows them again.
       setHidden((current) => toggleBaseIntent(current, owned, intent, checked));
       return;
     }
@@ -431,9 +431,10 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   }, []);
   const intentsShown = useMemo(() => {
     const merged = { ...intents };
-    owned.forEach((_, key) => { if (baseIntentChecked(hidden, owned, key)) merged[key] = true; });
+    const shown = new Set(graph.edges.map((edge) => edge.edge_id));
+    owned.forEach((_, key) => { if (baseIntentChecked(shown, owned, key)) merged[key] = true; });
     return merged;
-  }, [intents, owned, hidden]);
+  }, [intents, owned, graph]);
 
   const flowNodes = layout.map((node) => {
     const tags = stepNodes.map((ids, index) => (ids.includes(node.node_id) ? index + 1 : 0)).filter(Boolean);

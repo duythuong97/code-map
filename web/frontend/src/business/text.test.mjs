@@ -64,31 +64,52 @@ const placed = placeNodes(new Map([["a", { x: 0, y: 0 }], ["b", { x: 460, y: 0 }
 assert.deepEqual(placed.get("a"), { x: 0, y: 0 });
 assert.deepEqual(placed.get("c"), { x: 460, y: 150 });
 assert.deepEqual(placed.get("d"), { x: -460, y: 0 });
-const base = [{ edge_id: "e", source_node_id: "a", target_node_id: "b" }];
-const keys = defaultIntentKeys(base);
-assert.ok(keys.has("a|out|1") && keys.has("b|in|1"));
-
-// Flow entry → screen → class → method. Unticking "screen out 1" hides screen→class; both ends of that edge
-// read as unticked, and class and method (no longer connected to the entry) drop out. Ticking either end restores it.
-const chain = [
-  { edge_id: "e1", source_node_id: "entry", target_node_id: "screen" },
-  { edge_id: "e2", source_node_id: "screen", target_node_id: "class" },
-  { edge_id: "e3", source_node_id: "class", target_node_id: "method" },
+// Defaults are the walks that explain the flow: E both ways, W/R where hops end in a table write/read; never "1".
+const flowEdges = [
+  { edge_id: "e1", source_node_id: "screen", target_node_id: "api", edge_type: "CALLS_API" },
+  { edge_id: "e2", source_node_id: "api", target_node_id: "proc", edge_type: "CALLS" },
+  { edge_id: "e3", source_node_id: "proc", target_node_id: "orders", edge_type: "INSERTS" },
+  { edge_id: "e4", source_node_id: "proc", target_node_id: "prices", edge_type: "READS" },
 ];
-const owned = baseIntentEdges(chain);
-let hidden = toggleBaseIntent(new Set(), owned, "screen|out|1", false);
-assert.deepEqual([...hidden], ["e2"]);
-assert.equal(baseIntentChecked(hidden, owned, "screen|out|1"), false);
-assert.equal(baseIntentChecked(hidden, owned, "class|in|1"), false);
-assert.equal(baseIntentChecked(hidden, owned, "class|out|1"), true);
-const shownEdges = chain.filter((edge) => !hidden.has(edge.edge_id));
-assert.deepEqual([...connectedNodes(["entry"], shownEdges)].sort(), ["entry", "screen"]);
-hidden = toggleBaseIntent(hidden, owned, "class|in|1", true);
+const owned = baseIntentEdges(flowEdges);
+const keys = defaultIntentKeys(flowEdges);
+assert.ok(![...keys].some((key) => key.endsWith("|1")));
+assert.deepEqual(owned.get("screen|out|E").path, ["e1", "e2", "e3", "e4"]);
+assert.deepEqual(owned.get("screen|out|W").path, ["e1", "e2", "e3"]);
+assert.deepEqual(owned.get("screen|out|R").path, ["e1", "e2", "e4"]);
+assert.deepEqual(owned.get("orders|in|W").path, ["e3", "e2", "e1"]);
+assert.deepEqual(owned.get("prices|in|R").path, ["e4", "e2", "e1"]);
+assert.equal(owned.get("orders|in|R"), undefined);
+assert.deepEqual(owned.get("proc|in|E").path, ["e2", "e1"]);
+assert.deepEqual(owned.get("screen|out|W").core, ["e3"]);
+assert.deepEqual(owned.get("screen|out|E").core, ["e1"]);
+assert.deepEqual(owned.get("orders|in|W").core, ["e3"]);
+
+// Unticking "proc out W" hides the write; both ends read as unticked, the table drops out, ticking either end restores it.
+const onScreen = (hiddenIds, list = flowEdges, entry = "screen") => {
+  const visible = list.filter((edge) => !hiddenIds.has(edge.edge_id));
+  const nodes = connectedNodes([entry], visible);
+  return { nodes: [...nodes].sort(), edges: new Set(visible.filter((edge) => nodes.has(edge.source_node_id)).map((edge) => edge.edge_id)) };
+};
+let hidden = toggleBaseIntent(new Set(), owned, "proc|out|W", false);
+assert.deepEqual([...hidden], ["e3"]);
+let view = onScreen(hidden);
+assert.deepEqual(view.nodes, ["api", "prices", "proc", "screen"]);
+assert.equal(baseIntentChecked(view.edges, owned, "orders|in|W"), false);
+assert.equal(baseIntentChecked(view.edges, owned, "screen|out|W"), false);
+assert.equal(baseIntentChecked(view.edges, owned, "screen|out|R"), true);
+assert.equal(baseIntentChecked(view.edges, owned, "proc|out|E"), true);
+hidden = toggleBaseIntent(hidden, owned, "screen|out|W", true);
 assert.equal(hidden.size, 0);
-assert.equal(baseIntentChecked(hidden, owned, "screen|out|1"), true);
-// A node still connected to the entry another way stays: with entry→class as well, hiding screen→class drops nothing.
-const diamond = [...chain, { edge_id: "e4", source_node_id: "entry", target_node_id: "class" }];
-const diamondHidden = toggleBaseIntent(new Set(), baseIntentEdges(diamond), "screen|out|1", false);
-assert.deepEqual([...connectedNodes(["entry"], diamond.filter((edge) => !diamondHidden.has(edge.edge_id)))].sort(), ["class", "entry", "method", "screen"]);
+// Unticking "api out E" drops everything below the API; their boxes read as unticked; "proc in E" brings it back.
+hidden = toggleBaseIntent(new Set(), owned, "api|out|E", false);
+view = onScreen(hidden);
+assert.deepEqual(view.nodes, ["api", "screen"]);
+assert.equal(baseIntentChecked(view.edges, owned, "screen|out|W"), false);
+assert.equal(toggleBaseIntent(hidden, owned, "proc|in|E", true).size, 0);
+// A node still connected to the entry another way stays.
+const diamond = [...flowEdges, { edge_id: "e5", source_node_id: "screen", target_node_id: "proc", edge_type: "CALLS" }];
+const diamondHidden = toggleBaseIntent(new Set(), baseIntentEdges(diamond), "api|out|E", false);
+assert.deepEqual([...connectedNodes(["screen"], diamond.filter((edge) => !diamondHidden.has(edge.edge_id)))].sort(), ["api", "orders", "prices", "proc", "screen"]);
 
 console.log("business text self-check passed");
