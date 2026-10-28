@@ -261,9 +261,11 @@ Runtime tùy extractor: Python 3.10+, Node.js + TypeScript cho Angular, .NET SDK
 9+ cho Roslyn. Có thể chỉ định executable không nằm trong `PATH` bằng
 `CODE_TREE_NODE` và `CODE_TREE_DOTNET`. Runner tự suy ra `DOTNET_ROOT`, host
 path, SDK resolver và runtime roll-forward từ executable đã chọn. Thiếu
-Node.js/TypeScript hoặc primary parser lỗi, Angular dùng Python fallback, đồng
-thời ghi `SEMANTIC_TREE_UNAVAILABLE`; fallback không bảo toàn đầy đủ nested
-behavior.
+Node.js/TypeScript hoặc primary parser lỗi thì source Angular **báo lỗi và
+extract dừng, giữ nguyên output cũ**: Python fallback đặt id node khác (không có
+UI action, id service/component khác) nên dùng nó âm thầm sẽ làm rời mọi tài
+liệu nghiệp vụ. Muốn chấp nhận fallback, đặt `CODE_TREE_ANGULAR_FALLBACK=1`
+(ghi `SEMANTIC_TREE_UNAVAILABLE`).
 
 Sao chép `.env.example` thành `.env` trên mỗi máy rồi sửa path. CLI tự đọc `.env` cạnh file config; nếu không có thì đọc `.env` tại thư mục chạy. Biến đã export trong process có ưu tiên cao hơn `.env`. `.env` bị Git bỏ qua; chỉ `.env.example` được commit để liệt kê cấu hình cần thiết.
 
@@ -351,9 +353,9 @@ load được project, extractor ghi `MSBUILD_WORKSPACE_DIAGNOSTIC` và chỉ d�
 fallback compilation cho các file bị ảnh hưởng. Lần chạy đầu build worker
 Release; các lần sau chạy DLL trực tiếp nếu source worker không đổi. Runner tự
 cấu hình môi trường .NET từ `CODE_TREE_DOTNET` hoặc executable trong `PATH`. Nếu
-TypeScript semantic runtime không load được, Angular dùng fallback chỉ giữ
-declaration/literal với confidence tối đa `0.5` và ghi
-`SEMANTIC_TREE_UNAVAILABLE`.
+TypeScript semantic runtime không load được, Angular chỉ dùng fallback khi
+`CODE_TREE_ANGULAR_FALLBACK=1` (giữ declaration/literal với confidence tối đa
+`0.5` và ghi `SEMANTIC_TREE_UNAVAILABLE`).
 
 ## Chạy
 
@@ -463,6 +465,75 @@ gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 được chặn ở 5.000 node, 10.000 edge và 5.000 evidence; kiểm tra
 `data.truncated` và dùng `graph.sqlite` khi cần duyệt toàn bộ graph rất lớn.
 
+## Tài liệu nghiệp vụ (menu → tính năng → luồng)
+
+Màn hình chính của web là tài liệu nghiệp vụ gắn với graph. Graph explorer cũ đã
+gộp vào đây thành **trang node** (`#/node/<node_id>`): tìm một method, API, bảng…
+ở ô tìm kiếm, hoặc bấm "Chi tiết và graph từ node này" trên một node trong luồng.
+Trang node có graph với checkbox 1/W/R/E, panel chi tiết (nghĩa nghiệp vụ, cột,
+semantic tree) và danh sách luồng có chứa node.
+
+**Cây tính năng dựng tự động từ graph** sau mỗi lần extract:
+
+- mỗi `SCREEN` (route Angular) là một tính năng, gom vào menu theo đoạn đầu
+  của route (`orders/new`, `orders/:id` → menu `orders`);
+- mỗi `JOB_NETWORK` (jobnet.csv) là một tính năng trong menu "Chạy nền";
+- mỗi tính năng đề xuất một luồng cho từng `UI_ACTION` (màn hình) hoặc `JOB`
+  (jobnet). Các bước của luồng được tách từ graph theo hệ thống mà luồng đi qua
+  (customer-web → order-api → ORDER_DB …), nên swimlane có một lane cho mỗi hệ
+  thống và mỗi bước nằm trong lane của nó;
+- `API_OPERATION` không tính năng nào gọi tới nằm ở "Chưa xếp vào tính năng",
+  có thể gán vào một tính năng.
+
+**Người dùng không thêm bước bằng tay.** AI viết nội dung, người dùng đọc,
+sửa và duyệt. Tên menu/tính năng, mô tả, tài liệu luồng, trạng thái duyệt và
+câu trả lời lưu trong `knowledge.sqlite` (bảng `biz_items`, `biz_flows`,
+`biz_exports`), gắn theo id của graph nên không mất khi extract lại. Tài liệu
+nào không còn tính năng sau khi extract lại (màn hình/UI action bị xoá hoặc đổi
+route) hiện ở menu **Tài liệu không còn tính năng**, không bị mất. Nên sao lưu
+`knowledge.sqlite` trước mỗi lần extract cho bản release.
+
+**Viết bằng AI** (ở trang tính năng hoặc đầu tài liệu luồng):
+
+1. **Xuất cho AI** tạo một file hướng dẫn `.md` cho tính năng gồm: phần hướng
+   dẫn (dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, ví dụ),
+   phần **Dữ liệu** (khối YAML `context`: node, cạnh, đoạn code, comment, điều
+   kiện IF/EXCEPTION lấy từ `semantic_tree`, câu trả lời đã có) và phần **Định
+   dạng trả về** (khối YAML `export` + `flows` cần điền; phần đã sửa tay hoặc đã
+   duyệt có `locked: true`). Bỏ tick "Kèm hướng dẫn cho AI" để chỉ lấy file YAML.
+2. Đính kèm file vào AI; không cần câu lệnh riêng. AI trả về đúng khối YAML
+   `export` + `flows` (có thể nằm trong khối ```` ```yaml ````).
+3. **Nhập kết quả** kiểm tra file thuộc đúng lần xuất của tính năng, graph đã
+   đổi chưa, mọi tham chiếu `[[tên]]` / `loại: tên` có trong graph không, quy
+   tắc nào thiếu evidence; rồi ghi nội dung mới ở trạng thái "AI viết · chưa
+   duyệt". Phần khoá không bị ghi đè kể cả khi AI sửa vào.
+
+Tham chiếu node trong tài liệu dùng tên: `Class.method` cho code, tên kỹ thuật
+cho phần còn lại (`POST /api/orders`, `ORDER_HEADER`). Trong YAML có thêm loại:
+`api: POST /api/orders`, `method: OrderController.Create`.
+
+API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
+
+| Route | Ý nghĩa |
+|---|---|
+| `GET /business/tree` | cây menu → tính năng → luồng |
+| `GET/PATCH /business/items/<id>` | chi tiết, đổi tên/mô tả/duyệt, gán entry point |
+| `GET /business/flows/<id>` | tài liệu luồng kèm node và cạnh |
+| `PATCH /business/flows/<id>/parts/<summary\|edge_cases\|step:sN>` | sửa hoặc duyệt một phần |
+| `POST /business/flows/<id>/questions/<qid>/answer` | trả lời câu hỏi |
+| `POST /business/features/<id>/ai-export` | tạo file cho AI (`?code=0&locked=0&answers=0` để bỏ bớt) |
+| `POST /business/features/<id>/ai-import/check`, `.../ai-import` | kiểm tra, nhập file AI trả về |
+| `GET /business/search?q=` | tìm trong nghiệp vụ và node |
+| `GET /business/nodes/<node_id>` | thông tin node và các luồng có chứa node |
+
+Người duyệt lấy từ header `X-Code-Map-User` nếu có.
+
+Hiệu năng với schema lớn: backend bỏ node `COLUMN` và các cạnh cấu trúc khi
+dựng index (một lần cho mỗi lần extract), cache cây theo thời điểm sửa của
+`codemap-web.sqlite` và `knowledge.sqlite`, chỉ liệt kê 300 entry point chưa
+gán đầu tiên (phần còn lại tìm bằng ô tìm kiếm); graph chỉ render node đang
+nằm trong khung nhìn.
+
 ## Cấu trúc source
 
 ```text
@@ -476,7 +547,7 @@ extractor/
   pyproject.toml, requirements.txt
 web/
   backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
-  frontend/             # React UI
+  frontend/             # React UI (src/business: tài liệu nghiệp vụ và trang node; src/code-flow: node graph, panel chi tiết)
   configs/, ecosystem.config.js (pm2), requirements.txt
 vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
 shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu

@@ -26,6 +26,7 @@ from code_tree_exporter.extractors.package_support.package_writer import (
     stable_node_id,
     unresolved_id,
 )
+from code_tree_exporter.extractors.package_support.oracle_builtins import ORACLE_BUILTIN_CALLS
 from code_tree_exporter.extractors.package_support.oracle_parser import prefetch_plsql
 from code_tree_exporter.extractors.package_support.sql_analyzer import analyze_sql
 from code_tree_exporter.extractors.package_support.semantic_tree import attach_sql_semantic_tree
@@ -91,6 +92,8 @@ def extract(config: dict) -> None:
     )
 
     for file in files:
+        if not file.text.strip():
+            continue  # an empty or whitespace-only file has nothing to extract (and is not a parse error)
         database = file.database or default_database
         if not database:
             temporary_id = sql_file_id(repository, file.relative)
@@ -317,11 +320,13 @@ def extract(config: dict) -> None:
                     start_line=line,
                 )
                 continue
+            reference_schema = owner_identifier(ref.object_name, schema) if (schema or "." in ref.object_name) else ""
             edge_id = builder.add_edge(
                 sql_id,
                 table_id(database, table_name),
                 ref.edge_type,
                 raw_operation=ref.operation,
+                properties={"schema": reference_schema} if reference_schema else None,
             )
             builder.add_evidence(
                 "EDGE", edge_id, file.relative, line, line, "SQL", snippet
@@ -360,6 +365,8 @@ def extract(config: dict) -> None:
             parts = raw.split(".")
             package = parts[-2] if len(parts) > 1 else ""
             routine = parts[-1]
+            if len(parts) == 1 and routine in ORACLE_BUILTIN_CALLS:
+                continue
             target = unresolved_id(database, f"{source}:{file.relative}:{raw}")
             builder.add_node(
                 target,

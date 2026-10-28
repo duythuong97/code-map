@@ -22,6 +22,7 @@ import datetime as _dt
 import hashlib
 import io
 import json
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -144,17 +145,47 @@ def _sources(graph: sqlite3.Connection, rag: sqlite3.Connection, created: str) -
     )
 
 
+def _restore_references(raw: str | None, node_ids: dict[int, str]) -> str:
+    """graph.sqlite stores node ids inside properties (semantic_tree ref_node_id, candidate_node_ids, ...) as
+    compact integers; the serving database speaks stable ids, so map them back."""
+    raw = raw or "{}"
+    if raw == "{}" or not node_ids:
+        return raw
+    try:
+        properties = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    changed = False
+
+    def restore(item):
+        nonlocal changed
+        # Compact ids are 63-bit hashes; small integers (lines, counts) are never node ids.
+        if isinstance(item, int) and not isinstance(item, bool) and abs(item) > 2**31 and item in node_ids:
+            changed = True
+            return node_ids[item]
+        if isinstance(item, str) and len(item) > 9 and item.lstrip("-").isdigit() and int(item) in node_ids:
+            changed = True
+            return node_ids[int(item)]
+        if isinstance(item, list):
+            return [restore(value) for value in item]
+        if isinstance(item, dict):
+            return {key: restore(value) for key, value in item.items()}
+        return item
+
+    restored = restore(properties)
+    return json.dumps(restored, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if changed else raw
+
+
 def _nodes(graph: sqlite3.Connection, rag: sqlite3.Connection) -> tuple[dict[int, str], dict[str, str]]:
-    node_ids: dict[int, str] = {}
+    node_ids: dict[int, str] = dict(graph.execute("SELECT node_id, stable_id FROM nodes"))
     node_types: dict[str, str] = {}
     rows = []
     for row in graph.execute(
         "SELECT node_id, stable_id, node_type, technical_name, qualified_name, default_display_name, system_key, "
         "database_key, repository_key, graph_role, confidence, properties_json, package_key FROM nodes ORDER BY stable_id"
     ):
-        node_ids[row[0]] = row[1]
         node_types[row[1]] = row[2]
-        rows.append((*row[1:11], _light_properties(row[11]), _source_id(row[12])))
+        rows.append((*row[1:11], _light_properties(_restore_references(row[11], node_ids)), _source_id(row[12])))
     rag.executemany("INSERT OR IGNORE INTO graph_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     return node_ids, node_types
 
@@ -189,7 +220,7 @@ def _edges(graph, rag, node_ids: dict[int, str], node_types: dict[str, str]) -> 
             edge_ids[row[0]] = identities[identity]
             continue
         edge_id = canonical_edge_id(source, edge_type, target, raw_operation, layer)
-        properties = json.loads(row[7] or "{}")
+        properties = json.loads(_restore_references(row[7], node_ids))
         if edge_type != row[3] or layer != row[4]:
             properties.setdefault("engine_edge_type", row[3])
             properties.setdefault("engine_graph_layer", row[4])
@@ -221,7 +252,7 @@ def _issues(graph, rag, node_ids: dict[int, str]) -> None:
     rag.executemany(
         "INSERT OR IGNORE INTO graph_issues VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         [
-            (row[0], row[1], row[2], node_ids.get(row[3]) if row[3] is not None else None, *row[4:9], row[9] or "{}", _source_id(row[10]))
+            (row[0], row[1], row[2], node_ids.get(row[3]) if row[3] is not None else None, *row[4:9], _restore_references(row[9], node_ids), _source_id(row[10]))
             for row in graph.execute(
                 "SELECT stable_id, issue_type, severity, source_node_id, raw_reference, database_key, source_path, "
                 "start_line, message, properties_json, package_key FROM issues ORDER BY stable_id"
@@ -337,7 +368,9 @@ def _semantics(rag: sqlite3.Connection, input_root: Path | None) -> None:
         semantic_id = row.get("semantic_id", "")
         status = (row.get("status") or "approved").lower()
         if not re.fullmatch(r"semantic:[a-z0-9][a-z0-9:_-]*", semantic_id) or status not in {"draft", "approved", "deprecated"}:
-            raise ValueError(f"invalid semantic dictionary row: {semantic_id or '<missing>'}")
+            # One bad row must not throw away an extract that already ran for minutes; skip it loudly.
+            logging.getLogger(__name__).warning("Skipping invalid semantic dictionary row: %s", semantic_id or "<missing>")
+            continue
         aliases = [alias.strip() for alias in row.get("aliases", "").split("|") if alias.strip()]
         rows.append((semantic_id, (row.get("locale") or "en").lower(), row.get("domain", ""), row.get("label", ""),
                      row.get("definition", ""), json.dumps(aliases, ensure_ascii=False), status, "IMPORTED", now, now))

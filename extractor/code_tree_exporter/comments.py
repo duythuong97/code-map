@@ -20,9 +20,13 @@ class Comment:
     normalized_text: str
 
 
-_C_STYLE = re.compile(r"//[^\r\n]*|/\*[\s\S]*?\*/")
+# String literals are matched first and skipped, so `'https://x'` or `'--none--'` is not a comment.
+_C_STYLE = re.compile(
+    r"@\"(?:[^\"]|\"\")*\"|\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'|`(?:\\.|[^`\\])*`"
+    r"|//[^\r\n]*|/\*[\s\S]*?\*/"
+)
 _HTML = re.compile(r"<!--[\s\S]*?-->")
-_SQL = re.compile(r"--[^\r\n]*|/\*[\s\S]*?\*/")
+_SQL = re.compile(r"'(?:[^']|'')*'|--[^\r\n]*|/\*[\s\S]*?\*/")
 _DIRECTIVE = re.compile(r"(?:TODO|FIXME|HACK|NOTE|WARNING|noinspection|eslint|tslint|pragma|region|#if|#endif)", re.IGNORECASE)
 _DISABLED_CODE = re.compile(r"(?:\b(?:if|for|while|return|class|public|private|SELECT|INSERT|UPDATE|DELETE|BEGIN|END)\b|[;{}]|=>)", re.IGNORECASE)
 
@@ -33,6 +37,8 @@ def extract_comments(text: str, source_path: str, source_type: str) -> list[Comm
     comments: list[Comment] = []
     for match in pattern.finditer(text):
         raw = match.group(0)
+        if raw[:1] in {"'", '"', "`", "@"}:
+            continue
         start_line, start_column = _position(text, match.start())
         end_line, end_column = _position(text, max(match.start(), match.end() - 1))
         kind = _kind(raw, language)

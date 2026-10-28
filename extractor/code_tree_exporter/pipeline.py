@@ -1063,6 +1063,18 @@ def _run_extractor(
         primary_message = _bounded_subprocess_message(
             completed, "Angular TypeScript parser failed"
         )
+        if os.environ.get("CODE_TREE_ANGULAR_FALLBACK", "").strip().lower() not in {"1", "true", "yes"}:
+            # The regex fallback names nodes differently (no UI actions, other service/component ids), so
+            # using it silently would detach every screen and flow document until the next normal run.
+            # Fail the source instead; the extract then keeps the previous output.
+            add_issue(
+                "PARSE_ERROR",
+                "Angular TypeScript parser failed (is Node.js with the extractor's npm packages installed?). "
+                "Set CODE_TREE_ANGULAR_FALLBACK=1 to accept the degraded regex fallback, whose node ids differ: "
+                + primary_message,
+                properties={"source_key": str(config.get("source") or "")},
+            )
+            return False, issues
         add_issue(
             "SEMANTIC_TREE_UNAVAILABLE",
             f"Angular TypeScript parser unavailable; degraded regex fallback used: {primary_message}",
