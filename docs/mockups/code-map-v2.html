@@ -1,0 +1,884 @@
+<title>Code Map Studio</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: thanh tìm kiếm cố định trên cùng → trang chủ (tìm + danh sách luồng) hoặc màn luồng chia đôi:
+   trái = tài liệu nghiệp vụ dài (timeline các bước, trích dẫn node), phải = graph / swimlane đồng bộ với tài liệu. */
+:root {
+  color-scheme: dark;
+  --bg: #090d16;
+  --panel: #0e1420;
+  --raised: #141b2a;
+  --hover: #1a2233;
+  --line: #222b3d;
+  --line-soft: #1a2232;
+  --fg: #e8ecf4;
+  --fg-2: #c3cad8;
+  --muted: #8791a6;
+  --accent: #f2a541;
+  --accent-ink: #1a1206;
+  --focus: #6b9bff;
+  --ai: #a58bff;
+  --ok: #45c58c;
+  --warn: #f0b84b;
+  --bad: #f2675c;
+  --t-ui: #5fb0f5; --t-api: #a58bff; --t-logic: #94a6c9; --t-data: #52c98b; --t-ext: #f07aa4;
+  --s1: #3cc3b0; --s2: #f0b84b; --s3: #f07aa4; --s4: #5fb0f5; --s5: #a58bff;
+  --node: #f4f6fb; --node-fg: #111827;
+  --dot: #1b2438;
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, .55), 0 2px 6px -2px rgba(0, 0, 0, .4);
+  --font-ui: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --r: 12px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f5f6f9; --panel: #ffffff; --raised: #f8f9fc; --hover: #eff2f7; --line: #e1e5ec; --line-soft: #edf0f5;
+    --fg: #121826; --fg-2: #2f3747; --muted: #667086; --accent: #c8710c; --accent-ink: #ffffff; --focus: #2f6fe0; --ai: #6d4fe0;
+    --ok: #17875a; --warn: #a77405; --bad: #cc3b30;
+    --t-ui: #1d72c2; --t-api: #6d4fe0; --t-logic: #4c5d80; --t-data: #17875a; --t-ext: #c23d6c;
+    --s1: #0f8f80; --s2: #b07a06; --s3: #c23d6c; --s4: #1d72c2; --s5: #6d4fe0;
+    --node: #ffffff; --node-fg: #111827; --dot: #d9dee8;
+    --shadow: 0 12px 30px -14px rgba(20, 30, 60, .25), 0 2px 6px -2px rgba(20, 30, 60, .12);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f6f9; --panel: #ffffff; --raised: #f8f9fc; --hover: #eff2f7; --line: #e1e5ec; --line-soft: #edf0f5;
+  --fg: #121826; --fg-2: #2f3747; --muted: #667086; --accent: #c8710c; --accent-ink: #ffffff; --focus: #2f6fe0; --ai: #6d4fe0;
+  --ok: #17875a; --warn: #a77405; --bad: #cc3b30;
+  --t-ui: #1d72c2; --t-api: #6d4fe0; --t-logic: #4c5d80; --t-data: #17875a; --t-ext: #c23d6c;
+  --s1: #0f8f80; --s2: #b07a06; --s3: #c23d6c; --s4: #1d72c2; --s5: #6d4fe0;
+  --node: #ffffff; --node-fg: #111827; --dot: #d9dee8;
+  --shadow: 0 12px 30px -14px rgba(20, 30, 60, .25), 0 2px 6px -2px rgba(20, 30, 60, .12);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.5; overflow: hidden; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+code, .mono { font-family: var(--font-mono); font-size: .86em; }
+kbd { font-family: var(--font-mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; color: var(--muted); background: var(--raised); }
+
+.shell { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+
+/* ---------------- Top bar ---------------- */
+.top { position: relative; z-index: 40; display: grid; grid-template-columns: auto minmax(0, 620px) 1fr; align-items: center; gap: 16px;
+  padding: 10px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(10px); }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; letter-spacing: -.01em; border: 0; background: none; padding: 0; white-space: nowrap; }
+.logo svg { flex: none; }
+.logo span { color: var(--muted); font-weight: 500; font-size: 12px; }
+.search { position: relative; }
+.search-box { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 8px 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised); transition: border-color .15s, box-shadow .15s; }
+.search-box:focus-within { border-color: color-mix(in srgb, var(--focus) 60%, var(--line)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus) 16%, transparent); }
+.search-box input { flex: 1; min-width: 0; border: 0; outline: none; background: none; font-size: 14px; }
+.search-box svg { color: var(--muted); flex: none; }
+.drop { position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: min(520px, 70vh); overflow-y: auto; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); padding: 6px; }
+.drop h6 { margin: 8px 10px 4px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.hit { width: 100%; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: none; }
+.hit:hover, .hit.kb { background: var(--hover); }
+.hit .ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); }
+.hit .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit .t.m { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; }
+.hit .s { display: block; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; font-family: var(--font-ui); }
+.hit .r { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.hit[disabled] { opacity: .5; cursor: default; }
+.hit mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 3px; }
+.top-r { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+.ws { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.ws i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: background .15s, border-color .15s; }
+.btn:hover { background: var(--hover); }
+.btn.pri { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.pri:hover { filter: brightness(1.06); }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; border-radius: 7px; }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--hover); }
+.btn.on { border-color: color-mix(in srgb, var(--focus) 60%, var(--line)); background: color-mix(in srgb, var(--focus) 14%, transparent); }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg-2); }
+.icon-btn:hover { background: var(--hover); }
+
+/* ---------------- Home ---------------- */
+.home { overflow-y: auto; }
+.home-in { max-width: 1040px; margin: 0 auto; padding-block: 56px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+.hero { display: grid; gap: 14px; }
+.hero h1 { margin: 0; font-size: clamp(26px, 3.4vw, 36px); letter-spacing: -.025em; line-height: 1.15; text-wrap: balance; max-width: 22ch; }
+.hero p { margin: 0; color: var(--muted); font-size: 15px; max-width: 62ch; }
+.try { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; }
+.try button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
+.try button:hover { border-color: var(--muted); }
+.try .m { font-family: var(--font-mono); font-size: 12px; }
+.sec-t { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sec-t h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.sec-t span { color: var(--muted); font-size: 12.5px; }
+.flows { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.fcard { display: grid; gap: 12px; text-align: left; padding: 16px 18px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); transition: border-color .15s, transform .15s; }
+.fcard:not([disabled]):hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); transform: translateY(-1px); }
+.fcard[disabled] { cursor: default; }
+.fcard .dom { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.fcard h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.fcard p { margin: 0; color: var(--fg-2); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fmeta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); align-items: center; }
+.steps-mini { display: flex; gap: 3px; }
+.steps-mini i { height: 5px; flex: 1; border-radius: 3px; background: var(--line); }
+.steps-mini i.ok { background: var(--ok); }
+.steps-mini i.ed { background: var(--focus); }
+.steps-mini i.ai { background: color-mix(in srgb, var(--ai) 55%, transparent); }
+
+.prov { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); }
+.prov.ai { --c: var(--ai); }
+.prov.edited { --c: var(--focus); }
+.prov.ok { --c: var(--ok); }
+.prov.warn { --c: var(--warn); }
+.prov.bad { --c: var(--bad); }
+
+/* ---------------- Flow screen ---------------- */
+.flow { display: grid; grid-template-columns: minmax(460px, 46%) minmax(0, 1fr); min-height: 0; height: 100%; }
+.doc { overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); min-width: 0; scroll-behavior: smooth; }
+.doc-in { padding-block: 28px 80px; padding-left: max(28px, env(safe-area-inset-left, 0px)); padding-right: 28px; display: grid; gap: 28px; max-width: 760px; }
+.crumb { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; flex-wrap: wrap; }
+.crumb button { border: 0; background: none; padding: 0; color: var(--muted); }
+.crumb button:hover { color: var(--fg); }
+.doc-h { display: grid; gap: 12px; }
+.doc-h h1 { margin: 0; font-size: 28px; letter-spacing: -.025em; line-height: 1.2; text-wrap: balance; }
+.doc-meta { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; font-size: 12.5px; color: var(--muted); }
+.review { display: flex; align-items: center; gap: 10px; }
+.review .bar { width: 120px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; display: flex; }
+.review .bar i { height: 100%; }
+.doc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.note-regen { font-size: 12.5px; color: var(--fg-2); border: 1px solid color-mix(in srgb, var(--ai) 40%, var(--line)); background: color-mix(in srgb, var(--ai) 8%, transparent); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; }
+
+.toc { position: sticky; top: 0; z-index: 5; margin: -28px -28px 0; padding: 10px 28px; display: flex; gap: 6px; flex-wrap: wrap; background: color-mix(in srgb, var(--panel) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line-soft); }
+.toc button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; height: 26px; padding: 0 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); }
+.toc button i { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--muted)); }
+.toc button[aria-current="true"] { border-color: color-mix(in srgb, var(--c, var(--focus)) 70%, var(--line)); color: var(--fg); background: color-mix(in srgb, var(--c, var(--focus)) 12%, var(--panel)); }
+
+.prose { font-size: 15px; line-height: 1.72; color: var(--fg-2); max-width: 68ch; }
+.prose p { margin: 0 0 12px; }
+.prose p:last-child { margin-bottom: 0; }
+.prose strong { color: var(--fg); font-weight: 600; }
+.ref { display: inline-flex; align-items: center; gap: 5px; vertical-align: baseline; border: 1px solid color-mix(in srgb, var(--c) 35%, var(--line)); background: color-mix(in srgb, var(--c) 10%, transparent); color: var(--fg); border-radius: 6px; padding: 0 6px; margin: 0 1px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; transition: background .15s, box-shadow .15s; }
+.ref::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--c); }
+.ref:hover { background: color-mix(in srgb, var(--c) 22%, transparent); }
+.ref.sel { box-shadow: 0 0 0 2px var(--focus); }
+.ref.missing { border-style: dashed; --c: var(--bad); }
+
+.block { display: grid; gap: 12px; scroll-margin-top: 56px; }
+.block-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.block-h h2 { margin: 0; font-size: 18px; letter-spacing: -.015em; flex: 1; min-width: 0; }
+.label { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--line); }
+.facts div { background: var(--panel); padding: 10px 14px; display: grid; gap: 2px; }
+.facts dt { font-size: 11.5px; color: var(--muted); }
+.facts dd { margin: 0; font-size: 13.5px; color: var(--fg); }
+
+.timeline { display: grid; gap: 0; }
+.step { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; padding: 6px 0 30px; scroll-margin-top: 56px; }
+.step::before { content: ""; position: absolute; left: 17px; top: 40px; bottom: 0; width: 2px; background: var(--line); }
+.step:last-child::before { display: none; }
+.step .num { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; border: 2px solid var(--c); color: var(--c); background: var(--panel); position: relative; z-index: 1; transition: background .15s, color .15s; }
+.step.active .num { background: var(--c); color: var(--panel); }
+.step-body { display: grid; gap: 12px; min-width: 0; border-radius: var(--r); padding: 8px 14px 14px; margin: -8px -14px 0; transition: background .2s; cursor: pointer; }
+.step.active .step-body { background: color-mix(in srgb, var(--c) 6%, transparent); }
+.step-h { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.step-h h3 { margin: 0; font-size: 18px; letter-spacing: -.015em; line-height: 1.3; flex: 1; min-width: 12ch; }
+.actor { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); }
+.actor svg { color: var(--muted); }
+.step-tools { display: flex; gap: 4px; }
+
+.rules { display: grid; gap: 8px; }
+.rule { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised); }
+.rule > svg { color: var(--warn); margin-top: 3px; }
+.rule b { display: block; font-size: 14px; color: var(--fg); font-weight: 600; }
+.rule p { margin: 4px 0 0; font-size: 13.5px; color: var(--fg-2); line-height: 1.6; }
+.rule .rf { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.nodes-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.nodes-row .label { margin-right: 4px; }
+
+.list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.list li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; font-size: 14px; color: var(--fg-2); line-height: 1.65; }
+.list li svg { margin-top: 4px; color: var(--muted); }
+.q { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; background: var(--raised); }
+.q.done { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.q p { margin: 0; font-size: 14px; color: var(--fg); line-height: 1.6; }
+.q .ans { font-size: 13.5px; color: var(--fg-2); border-left: 2px solid var(--ok); padding-left: 10px; }
+.q form { display: flex; gap: 8px; }
+.q input { flex: 1; min-width: 0; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); padding: 0 10px; }
+
+/* editor */
+.edit { display: grid; gap: 12px; padding: 14px; border-radius: var(--r); border: 1px solid color-mix(in srgb, var(--focus) 50%, var(--line)); background: var(--panel); box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus) 10%, transparent); cursor: default; }
+.field { display: grid; gap: 5px; }
+.field label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.field input, .field textarea { width: 100%; border: 1px solid var(--line); background: var(--raised); border-radius: 8px; padding: 8px 10px; line-height: 1.6; }
+.field textarea { resize: vertical; min-height: 160px; font-size: 14px; }
+.field textarea.sm { min-height: 64px; font-size: 13px; }
+.field small { color: var(--muted); font-size: 11.5px; }
+.edit-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.pickhint { font-size: 12px; color: var(--focus); }
+
+/* ---------------- Canvas ---------------- */
+.stage { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.stage-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.seg { display: inline-flex; padding: 3px; border-radius: 9px; background: var(--raised); border: 1px solid var(--line); }
+.seg button { border: 0; background: none; height: 26px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 0 0 1px var(--line); }
+.stage-info { color: var(--muted); font-size: 12.5px; }
+.zoom { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.zoom span { font-size: 11.5px; color: var(--muted); width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
+.canvas-wrap { overflow: auto; background-color: var(--bg); background-image: radial-gradient(var(--dot) 1.2px, transparent 1.2px); background-size: 20px 20px; position: relative; scroll-behavior: smooth; }
+.sizer { position: relative; }
+.canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.canvas svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.halo { position: absolute; border-radius: 16px; border: 1.5px solid color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 7%, transparent); transition: opacity .2s; }
+.halo span { position: absolute; top: -12px; left: 14px; height: 22px; padding: 0 10px; border-radius: 999px; background: var(--c); color: var(--panel); font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; white-space: nowrap; }
+.halo.dim { opacity: .3; }
+.gn { position: absolute; width: 212px; text-align: left; padding: 9px 12px 10px; border-radius: 12px; background: var(--node); color: var(--node-fg); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 4px 14px -8px rgba(0,0,0,.45); z-index: 2; transition: opacity .2s, box-shadow .15s, transform .15s; }
+.gn:hover { transform: translateY(-1px); }
+.gn .ty { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--c) 80%, var(--node-fg)); }
+.gn .ty i { width: 7px; height: 7px; border-radius: 2px; background: var(--c); }
+.gn .nm { font-family: var(--font-mono); font-size: 11.5px; margin-top: 4px; overflow-wrap: anywhere; line-height: 1.35; }
+.gn .alt { font-size: 10.5px; opacity: .62; margin-top: 3px; }
+.gn .tags { position: absolute; top: -9px; right: 10px; display: flex; gap: 3px; }
+.gn .tags b { height: 18px; min-width: 22px; padding: 0 6px; border-radius: 999px; font-size: 10px; display: grid; place-items: center; color: #fff; background: var(--sc); }
+.gn.dim { opacity: .28; }
+.gn.sel { box-shadow: 0 0 0 3px var(--focus), 0 8px 24px -10px rgba(0,0,0,.5); }
+.gn.picked { box-shadow: 0 0 0 3px var(--sc); }
+.gn.focus { border: 2px solid var(--sc); box-shadow: 0 0 0 4px color-mix(in srgb, var(--sc) 22%, transparent), 0 8px 24px -12px rgba(0,0,0,.5); }
+.gn.pickable { cursor: copy; }
+.ge { fill: none; stroke: color-mix(in srgb, var(--accent) 80%, transparent); stroke-width: 1.6; transition: opacity .2s; }
+.ge.read { stroke: var(--t-data); stroke-dasharray: 6 5; }
+.ge.write { stroke: var(--t-data); }
+.ge.dim { opacity: .18; }
+.gl rect { fill: var(--panel); stroke: var(--line); }
+.gl text { fill: var(--muted); font-size: 9.5px; font-weight: 600; font-family: var(--font-ui); letter-spacing: .03em; }
+.gl.dim { opacity: .25; }
+
+.pop { position: absolute; left: 14px; bottom: 14px; z-index: 10; width: min(360px, calc(100% - 28px)); border-radius: 14px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); padding: 14px 16px; display: grid; gap: 10px; }
+.pop-h { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.pop-h .tyl { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--c); }
+.pop-h h4 { margin: 2px 0 0; font-family: var(--font-mono); font-size: 13.5px; font-weight: 500; overflow-wrap: anywhere; }
+.kv { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 12px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; color: var(--fg-2); }
+.kv code { font-size: 11px; }
+.mentions { display: grid; gap: 4px; }
+.mentions button { text-align: left; border: 0; background: var(--raised); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; color: var(--fg-2); display: flex; gap: 8px; align-items: center; }
+.mentions button:hover { background: var(--hover); }
+.mentions i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+
+/* swimlane */
+.lanes-wrap { padding: 20px; }
+.lanes { display: grid; width: max-content; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.lanes > div { border-bottom: 1px solid var(--line-soft); border-left: 1px solid var(--line-soft); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+.lanes .lh { position: sticky; left: 0; z-index: 2; background: var(--panel); border-left: 0; font-weight: 600; font-size: 12.5px; gap: 2px; box-shadow: inset 3px 0 0 var(--c); }
+.lanes .lh small { font-weight: 400; color: var(--muted); font-size: 11px; }
+.lanes .ch { background: var(--raised); gap: 2px; cursor: pointer; box-shadow: inset 0 3px 0 var(--c); }
+.lanes .ch.active { background: color-mix(in srgb, var(--c) 10%, var(--raised)); }
+.lanes .ch b { font-size: 13.5px; letter-spacing: -.01em; }
+.lanes .ch small { color: var(--c); font-weight: 700; font-size: 11px; }
+.lanes .cell.active { background: color-mix(in srgb, var(--c) 5%, transparent); }
+.lc { text-align: left; border-radius: 9px; padding: 7px 9px; background: var(--node); color: var(--node-fg); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); font-family: var(--font-mono); font-size: 11px; overflow-wrap: anywhere; line-height: 1.35; }
+.lc .t { display: block; font-family: var(--font-ui); font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--c) 80%, var(--node-fg)); margin-bottom: 2px; }
+.lc.txt { font-family: var(--font-ui); font-size: 12px; line-height: 1.45; }
+.lc.sel { box-shadow: 0 0 0 2px var(--focus); }
+
+/* modal */
+.modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: rgba(5, 8, 15, .55); backdrop-filter: blur(3px); }
+.modal-card { width: min(720px, 100%); max-height: calc(100% - 40px); overflow: auto; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); padding: 20px 22px; display: grid; gap: 14px; }
+.modal-card h3 { margin: 0; font-size: 17px; }
+.modal-card p { margin: 0; color: var(--fg-2); }
+.modal-card textarea { width: 100%; min-height: 300px; border: 1px solid var(--line); background: var(--raised); border-radius: 10px; padding: 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre; resize: vertical; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.check { display: grid; gap: 4px; font-size: 12.5px; max-height: 180px; overflow: auto; }
+.check div { display: flex; gap: 8px; }
+.check .y { color: var(--ok); } .check .n { color: var(--bad); }
+.toast { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 70; padding: 10px 16px; border-radius: 10px; background: var(--fg); color: var(--bg); font-size: 13px; font-weight: 500; box-shadow: var(--shadow); }
+
+@media (max-width: 1080px) {
+  body { overflow: auto; }
+  .shell { height: auto; min-height: 100%; }
+  .flow { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .doc { border-right: 0; overflow: visible; }
+  .stage { height: 640px; border-top: 1px solid var(--line); }
+  .top { grid-template-columns: auto minmax(0, 1fr); }
+  .top-r { grid-column: 1 / -1; justify-content: flex-start; }
+}
+@media (max-width: 560px) {
+  .top { grid-template-columns: minmax(0, 1fr); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .doc-in { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .toc { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+  .facts { grid-template-columns: minmax(0, 1fr); }
+  .step { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+  .step .num { width: 28px; height: 28px; font-size: 12px; }
+  .step::before { left: 13px; top: 32px; }
+  .flows { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { *, .doc, .canvas-wrap { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+
+<div class="shell">
+  <header class="top">
+    <button type="button" class="logo" id="go-home" aria-label="Về trang chủ">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" style="fill:var(--accent)"/><circle cx="8" cy="9" r="2.2" style="fill:var(--accent-ink)"/><circle cx="16" cy="9" r="2.2" style="fill:var(--accent-ink)"/><circle cx="12" cy="16" r="2.2" style="fill:var(--accent-ink)"/><path d="M8 9 L16 9 M8 9 L12 16 M16 9 L12 16" style="stroke:var(--accent-ink);stroke-width:1.4"/></svg>
+      Code Map <span>order-system</span>
+    </button>
+    <div class="search" id="search">
+      <label class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" autocomplete="off" placeholder="Tìm nghiệp vụ, bước, quy tắc, method, API, bảng…" aria-label="Tìm kiếm">
+        <kbd>/</kbd>
+      </label>
+      <div class="drop" id="drop" hidden></div>
+    </div>
+    <div class="top-r">
+      <span class="ws"><i></i>output/demo · extract 27/10</span>
+      <button type="button" class="btn" id="open-import">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Import kết quả AI</button>
+    </div>
+  </header>
+  <main id="main" style="min-height:0"></main>
+</div>
+<div class="modal" id="modal" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/js-yaml/4.1.0/js-yaml.min.js"></script>
+<script>
+/* ======================= Graph (extractor, examples/sample-source) ======================= */
+const TY = {
+  UI_ACTION: ["--t-ui", "Màn hình"], API_CALL_REFERENCE: ["--t-ui", "Màn hình"], API_OPERATION: ["--t-api", "API"], METHOD: ["--t-logic", "Xử lý"],
+  PROCEDURE: ["--t-logic", "Xử lý"], FUNCTION: ["--t-logic", "Xử lý"], TABLE: ["--t-data", "Dữ liệu"], EXTERNAL_DATABASE_OBJECT: ["--t-ext", "Ngoài"],
+};
+const NODES = [
+  { id: "ui_action:customer-web:CreateOrderComponent.submitOrder", ty: "UI_ACTION", nm: "CreateOrderComponent.submitOrder", col: 0, row: 2, file: "customer-web/src/app/order-flow.ts" },
+  { id: "method:customer-web:OrderService.createOrder", ty: "METHOD", nm: "OrderService.createOrder", col: 1, row: 2, file: "customer-web/src/app/order-flow.ts", term: "Tạo đơn hàng" },
+  { id: "api_call:customer-web:POST:/order-api/api/orders", ty: "API_CALL_REFERENCE", nm: "POST /order-api/api/orders", col: 2, row: 2, file: "customer-web/src/assets/appconfig.json" },
+  { id: "api:order-api:POST:/api/orders", ty: "API_OPERATION", nm: "POST /api/orders", col: 3, row: 2, file: "order-api/OrderFlow.cs", term: "Tạo đơn hàng", en: "Create API" },
+  { id: "method:Demo.OrderApi.OrderController.Create", ty: "METHOD", nm: "OrderController.Create", col: 4, row: 2, file: "order-api/OrderFlow.cs" },
+  { id: "method:Demo.OrderApi.OrderService.CreateOrder", ty: "METHOD", nm: "OrderService.CreateOrder", col: 5, row: 2, file: "order-api/OrderFlow.cs", term: "Tạo đơn hàng" },
+  { id: "method:Demo.OrderApi.OrderRepository.CreateOrder", ty: "METHOD", nm: "OrderRepository.CreateOrder", col: 6, row: 2, file: "order-api/OrderFlow.cs" },
+  { id: "procedure:ORDER_DB:PKG_ORDER.CREATE_ORDER", ty: "PROCEDURE", nm: "PKG_ORDER.CREATE_ORDER", col: 7, row: 2, file: "order-db/order_flow.sql", term: "Tạo đơn hàng" },
+  { id: "procedure:ORDER_DB:PKG_ORDER.VALIDATE_LINES", ty: "PROCEDURE", nm: "PKG_ORDER.VALIDATE_LINES", col: 8, row: 0, file: "order-db/order_flow.sql" },
+  { id: "function:ORDER_DB:PKG_ORDER.CALCULATE_TOTAL", ty: "FUNCTION", nm: "PKG_ORDER.CALCULATE_TOTAL", col: 8, row: 1, file: "order-db/order_flow.sql" },
+  { id: "table:ORDER_DB:ORDER_HEADER", ty: "TABLE", nm: "ORDER_HEADER", col: 8, row: 2, ja: "注文明細", en: "Order Header", term: "Đơn hàng" },
+  { id: "table:ORDER_DB:ORDER_LINE", ty: "TABLE", nm: "ORDER_LINE", col: 8, row: 3, ja: "注文明細行", en: "Order Line" },
+  { id: "table:ORDER_DB:INVENTORY_RESERVATION", ty: "TABLE", nm: "INVENTORY_RESERVATION", col: 8, row: 4, ja: "在庫引当", en: "Inventory Reservation" },
+  { id: "table:ORDER_DB:PAYMENT_TRANSACTION", ty: "TABLE", nm: "PAYMENT_TRANSACTION", col: 8, row: 5, ja: "決済取引", en: "Payment Transaction" },
+  { id: "external:TAX_DB_LINK:TAX_SCHEMA.TAX_RATE", ty: "EXTERNAL_DATABASE_OBJECT", nm: "TAX_SCHEMA.TAX_RATE", col: 9, row: 0, file: "qua DB link TAX_DB_LINK" },
+  { id: "table:ORDER_DB:ORDER_STAGING_LINES", ty: "TABLE", nm: "ORDER_STAGING_LINES", col: 9, row: 1, ja: "注文明細一時領域", en: "Order Staging Lines" },
+];
+const EDGES = [[0, 1, "CALLS"], [1, 2, "CALLS"], [2, 3, "CALLS_API"], [3, 4, "HANDLED_BY"], [4, 5, "CALLS"], [5, 6, "CALLS"], [6, 7, "CALLS"],
+  [7, 8, "CALLS"], [7, 9, "CALLS"], [9, 14, "REMOTE_READS"], [9, 15, "READS"], [7, 10, "INSERTS"], [7, 11, "INSERTS"], [7, 12, "INSERTS"], [7, 13, "INSERTS"]];
+const OTHER_NODES = [["API_OPERATION", "POST /api/orders/retry"], ["PROCEDURE", "PKG_ORDER.CANCEL_ORDER"], ["PROCEDURE", "PKG_ORDER.ALLOCATE_ORDER"], ["TABLE", "SHIPMENT"]];
+const byNm = Object.fromEntries(NODES.map(n => [n.nm, n]));
+const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
+const ids = (...names) => names.map(n => byNm[n].id);
+
+/* ======================= Tài liệu nghiệp vụ do AI xuất (người dùng chỉ sửa / duyệt) ======================= */
+const FLOW = {
+  id: "order.create", name: "Tạo đơn hàng", domain: "Đơn hàng", generated: "27/10/2026 · từ extract output/demo",
+  summary: { prov: "ok", by: "BA", text:
+`Nhân viên bán hàng lập đơn cho khách trên màn hình **Tạo đơn** của customer-web. Khi bấm Gửi, hệ thống gọi API tạo đơn của order-api, kiểm tra các dòng hàng, tính tổng tiền có thuế rồi ghi đơn ở trạng thái **chờ xử lý (PENDING)**, kèm bản ghi giữ hàng và một giao dịch thanh toán đang chờ.
+
+Luồng này chỉ tạo đơn. Việc phân bổ tồn kho, tạo shipment và đối soát do batch ORDER_DAILY xử lý ở các luồng sau.` },
+  facts: [["Người thực hiện", "Nhân viên bán hàng"], ["Kích hoạt", "Bấm Submit trên màn hình orders/new"], ["Kết quả", "1 đơn PENDING, các dòng đơn, giữ hàng RESERVED, thanh toán PENDING"],
+    ["Hệ thống tham gia", "customer-web · order-api · ORDER_DB · TAX_DB (DB link)"], ["Luồng tiếp theo", "Phân bổ tồn kho (batch ORDER_DAILY)"], ["Dữ liệu chính", "ORDER_HEADER (注文明細)"]],
+  steps: [
+    { name: "Nhân viên gửi đơn", actor: "Nhân viên bán hàng", prov: "edited",
+      nodes: ids("CreateOrderComponent.submitOrder", "OrderService.createOrder", "POST /order-api/api/orders", "POST /api/orders", "OrderController.Create"),
+      text: `Nhân viên mở màn hình Tạo đơn (route orders/new) và nhập mã khách hàng. Các dòng hàng của khách đã được chuẩn bị sẵn ở vùng tạm, nên màn hình chỉ gửi mã khách và một danh sách dòng rỗng.
+
+Khi bấm Submit, [[CreateOrderComponent.submitOrder]] gọi [[OrderService.createOrder]]. Phương thức này gửi yêu cầu POST tới địa chỉ cấu hình \`createOrder\` trong appconfig.json, tức [[POST /order-api/api/orders]]. Yêu cầu tới [[POST /api/orders]] của order-api, và [[OrderController.Create]] chuyển thẳng xuống tầng service mà không kiểm tra gì thêm.`,
+      rules: [
+        { title: "Gửi lại cùng request key không tạo đơn mới", at: "POST /api/orders", status: "warn",
+          text: "Comment trong OrderController mô tả hành vi idempotency cho endpoint retry. Trong code đã scan, cả Create và Retry đều gọi thẳng CreateOrder và AI chưa tìm thấy chỗ tra request key." },
+      ] },
+    { name: "Kiểm tra dòng đơn và tính tiền", actor: "Hệ thống", prov: "ai",
+      nodes: ids("OrderService.CreateOrder", "OrderRepository.CreateOrder", "PKG_ORDER.VALIDATE_LINES", "PKG_ORDER.CALCULATE_TOTAL", "TAX_SCHEMA.TAX_RATE", "ORDER_STAGING_LINES"),
+      text: `[[OrderService.CreateOrder]] chuyển yêu cầu xuống [[OrderRepository.CreateOrder]], nơi gọi procedure [[PKG_ORDER.CREATE_ORDER]] trong ORDER_DB. Trước khi ghi dữ liệu, procedure gọi [[PKG_ORDER.VALIDATE_LINES]] để kiểm tra dòng hàng của khách, rồi gọi [[PKG_ORDER.CALCULATE_TOTAL]] để tính tổng tiền.
+
+Tổng tiền bằng tổng **số lượng × đơn giá** của các dòng trong [[ORDER_STAGING_LINES]], nhân với thuế suất đọc từ [[TAX_SCHEMA.TAX_RATE]] qua DB link TAX_DB_LINK. Vì thuế suất được đọc trực tiếp từ hệ thống thuế, đơn không tạo được khi DB link mất kết nối.`,
+      rules: [
+        { title: "Dòng đơn phải hợp lệ trước khi tạo đơn", at: "PKG_ORDER.VALIDATE_LINES", status: "bad",
+          text: "Tên và vị trí gọi cho thấy đây là bước kiểm tra. Thân procedure hiện chỉ có NULL, nên không dòng nào bị từ chối." },
+        { title: "Tổng tiền = Σ(số lượng × đơn giá) × thuế suất", at: "PKG_ORDER.CALCULATE_TOTAL", status: "ok",
+          text: "Tính trên dòng tạm theo CUSTOMER_ID. Thuế suất là một giá trị duy nhất, không phụ thuộc sản phẩm hay khu vực." },
+      ] },
+    { name: "Ghi đơn ở trạng thái chờ xử lý", actor: "Hệ thống", prov: "ai",
+      nodes: ids("PKG_ORDER.CREATE_ORDER", "ORDER_HEADER", "ORDER_LINE", "INVENTORY_RESERVATION", "PAYMENT_TRANSACTION", "ORDER_STAGING_LINES"),
+      text: `Procedure lấy mã đơn mới từ sequence ORDER_SEQ rồi ghi [[ORDER_HEADER]] với trạng thái PENDING, tổng tiền vừa tính và thời điểm tạo. Các dòng trong [[ORDER_STAGING_LINES]] được chép sang [[ORDER_LINE]] với cùng mã đơn.
+
+Ngay sau đó hệ thống giữ hàng: mỗi dòng đơn sinh một bản ghi [[INVENTORY_RESERVATION]] trạng thái RESERVED. Cuối cùng một bản ghi [[PAYMENT_TRANSACTION]] trạng thái PENDING được tạo với số tiền bằng tổng tiền đơn. Bốn thao tác ghi này cùng nằm trong một lần gọi [[PKG_ORDER.CREATE_ORDER]].`,
+      rules: [
+        { title: "Đơn mới luôn ở trạng thái PENDING", at: "PKG_ORDER.CREATE_ORDER", status: "ok",
+          text: "Giữ hàng được tạo đồng thời với trạng thái RESERVED; thanh toán ở trạng thái PENDING với số tiền bằng tổng tiền đơn." },
+        { title: "Trùng khoá thì ghi thanh toán FAILED rồi báo lỗi", at: "PKG_ORDER.CREATE_ORDER", status: "warn",
+          text: "Khối EXCEPTION bắt DUP_VAL_ON_INDEX, ghi một PAYMENT_TRANSACTION FAILED số tiền 0 rồi RAISE. Vì lỗi được ném lại, bản ghi FAILED có thể bị rollback cùng giao dịch." },
+      ] },
+  ],
+  edge: { prov: "ai", items: [
+    "Không có dòng nào trong [[ORDER_STAGING_LINES]] cho khách: SUM trả về NULL, đơn vẫn được ghi với tổng tiền rỗng.",
+    "DB link TAX_DB_LINK lỗi: [[PKG_ORDER.CALCULATE_TOTAL]] ném lỗi, không có dữ liệu nào được ghi.",
+    "Trùng khoá khi ghi [[ORDER_HEADER]]: ghi thanh toán FAILED rồi ném lỗi về API (xem quy tắc ở bước 3).",
+  ] },
+  questions: [
+    { q: "[[CreateOrderComponent.submitOrder]] đang gửi customerId cố định là 100. Đây là code demo hay lỗi cần sửa?", a: "" },
+    { q: "[[PKG_ORDER.VALIDATE_LINES]] đang rỗng. Quy tắc kiểm tra dòng đơn gồm những điều kiện nào?", a: "" },
+    { q: "Bản ghi thanh toán FAILED có cần được giữ lại khi tạo đơn thất bại không?", a: "" },
+  ],
+};
+const OTHER_FLOWS = [
+  { name: "Huỷ đơn hàng", domain: "Đơn hàng", text: "Nhân viên huỷ đơn từ màn hình chi tiết. Đơn chuyển CANCELLED, giữ hàng bị xoá và ghi audit shipment.", steps: ["ai", "ai"], q: 2 },
+  { name: "Phân bổ tồn kho", domain: "Kho & xuất hàng", text: "Batch ORDER_DAILY phân bổ hàng cho đơn PENDING. Còn hàng thì ALLOCATED, hết hàng thì tạo backorder.", steps: ["ok", "ai", "ai"], q: 1 },
+  { name: "Tạo shipment & xác nhận xuất", domain: "Kho & xuất hàng", text: "Job CREATE_SHIPMENTS tạo shipment và kiện hàng; nhân viên xác nhận xuất trên màn hình shipment.", steps: ["ai", "ai"], q: 2 },
+  { name: "Đối soát cuối ngày", domain: "Vận hành", text: "Tổng hợp số đơn và tổng tiền từ hôm qua vào ORDER_DAILY_SUMMARY, sau đó xuất dữ liệu cho đối tác.", steps: ["ai"], q: 1 },
+];
+
+/* ======================= State ======================= */
+const S = { view: "home", step: null, sel: null, mode: "graph", zoom: .8, editing: null, draft: null, pick: false, regen: false, kb: 0 };
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sc = i => `--s${(i % 5) + 1}`;
+const tc = ty => (TY[ty] || ["--t-logic"])[0];
+const stepsOf = nid => FLOW.steps.map((s, i) => s.nodes.includes(nid) ? i : -1).filter(i => i >= 0);
+const PROV = { ai: ["ai", "✦ AI viết · chưa duyệt"], edited: ["edited", "✎ Đã sửa tay"], ok: ["ok", "✓ Đã duyệt"] };
+const STATUS = { ok: ["ok", "Khớp code"], warn: ["warn", "Cần xác nhận"], bad: ["bad", "Lệch với code"] };
+const ICON = {
+  user: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>`,
+  cpu: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg>`,
+  diamond: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 22 12 12 22 2 12z"/></svg>`,
+  edit: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>`,
+  check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>`,
+  alert: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>`,
+  close: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+};
+
+/* text: đoạn cách nhau 1 dòng trống, [[tên node]] = trích dẫn, **đậm**, `code` */
+function rich(t) {
+  return String(t).split(/\n\s*\n/).map(p => `<p>${inline(p)}</p>`).join("");
+}
+function inline(p) {
+  return esc(p).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[\[(.+?)\]\]/g, (_, name) => {
+      const n = byNm[name.replace(/&amp;/g, "&")];
+      if (!n) return `<span class="ref missing" title="Không có node này trong graph">${name}</span>`;
+      return `<button type="button" class="ref${S.sel === n.id ? " sel" : ""}" data-ref="${esc(n.id)}" style="--c:var(${tc(n.ty)})">${name}</button>`;
+    });
+}
+
+/* ======================= Search ======================= */
+function searchIndex() {
+  const out = [];
+  out.push({ kind: "flow", label: FLOW.name, sub: `${FLOW.domain} · ${FLOW.steps.length} bước`, text: FLOW.name + " " + FLOW.summary.text, go: () => openFlow() });
+  FLOW.steps.forEach((s, i) => {
+    out.push({ kind: "step", label: s.name, sub: `${FLOW.name} · Bước ${i + 1}`, text: s.name + " " + s.text, n: i, go: () => openFlow({ step: i }) });
+    s.rules.forEach(r => out.push({ kind: "rule", label: r.title, sub: `${FLOW.name} · Bước ${i + 1}`, text: r.title + " " + r.text, go: () => openFlow({ step: i }) }));
+  });
+  OTHER_FLOWS.forEach(f => out.push({ kind: "flow", label: f.name, sub: `${f.domain} · mockup chỉ mở luồng Tạo đơn hàng`, text: f.name + " " + f.text, off: true }));
+  NODES.forEach(n => out.push({ kind: "node", ty: n.ty, label: n.nm, sub: [n.ty.replace(/_/g, " "), n.term && "từ điển: " + n.term, n.ja].filter(Boolean).join(" · "),
+    text: [n.nm, n.term, n.ja, n.en].join(" "), r: stepsOf(n.id).map(i => "B" + (i + 1)).join(" "), go: () => openFlow({ node: n.id }) }));
+  OTHER_NODES.forEach(([ty, nm]) => out.push({ kind: "node", ty, label: nm, sub: ty.replace(/_/g, " ") + " · chưa thuộc luồng nào đã viết", text: nm, off: true }));
+  return out;
+}
+const INDEX = searchIndex();
+function runSearch(q) {
+  const toks = q.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!toks.length) return [];
+  return INDEX.filter(it => toks.every(t => (it.label + " " + it.text).toLowerCase().includes(t)));
+}
+function hl(label, q) {
+  let s = esc(label);
+  q.trim().split(/\s+/).filter(t => t.length > 1).forEach(t => { s = s.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>"); });
+  return s;
+}
+function renderDrop() {
+  const q = $("#q").value, drop = $("#drop");
+  const res = runSearch(q);
+  if (!q.trim()) { drop.hidden = true; return; }
+  const groups = [["flow", "Luồng nghiệp vụ"], ["step", "Bước"], ["rule", "Quy tắc"], ["node", "Node trong code"]];
+  let k = 0, h = "";
+  for (const [kind, title] of groups) {
+    const items = res.filter(r => r.kind === kind).slice(0, kind === "node" ? 8 : 5);
+    if (!items.length) continue;
+    h += `<h6>${title}</h6>` + items.map(it => {
+      const idx = res.indexOf(it), c = it.kind === "node" ? tc(it.ty) : it.kind === "rule" ? "--warn" : it.kind === "step" ? sc(it.n) : "--accent";
+      const ic = it.kind === "node" ? it.ty.slice(0, 2) : it.kind === "rule" ? "◆" : it.kind === "step" ? "B" + (it.n + 1) : "✦";
+      return `<button type="button" class="hit${k++ === S.kb ? " kb" : ""}" data-hit="${idx}" ${it.off ? "disabled" : ""} style="--c:var(${c})"><span class="ic">${ic}</span>
+        <span class="t${it.kind === "node" ? " m" : ""}">${hl(it.label, q)}<span class="s">${esc(it.sub)}</span></span><span class="r">${esc(it.r || "")}</span></button>`;
+    }).join("");
+  }
+  drop.innerHTML = h || `<p style="margin:10px;color:var(--muted)">Không có kết quả cho “${esc(q)}”. Thử tên bảng, API, method hoặc tên tiếng Nhật.</p>`;
+  drop.hidden = false;
+  drop.querySelectorAll("[data-hit]").forEach(b => b.addEventListener("click", () => pick(res[+b.dataset.hit])));
+  drop._res = [...drop.querySelectorAll("[data-hit]:not([disabled])")].map(b => res[+b.dataset.hit]);
+}
+function pick(it) { if (!it || it.off) return; $("#drop").hidden = true; $("#q").blur(); it.go(); }
+$("#q").addEventListener("input", () => { S.kb = 0; renderDrop(); });
+$("#q").addEventListener("focus", renderDrop);
+$("#q").addEventListener("keydown", e => {
+  const list = $("#drop")._res || [];
+  if (e.key === "ArrowDown") { S.kb = Math.min(S.kb + 1, list.length - 1); renderDrop(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { S.kb = Math.max(S.kb - 1, 0); renderDrop(); e.preventDefault(); }
+  else if (e.key === "Enter") { pick(list[S.kb]); e.preventDefault(); }
+  else if (e.key === "Escape") { $("#drop").hidden = true; $("#q").blur(); }
+});
+document.addEventListener("click", e => { if (!e.target.closest("#search")) $("#drop").hidden = true; });
+document.addEventListener("keydown", e => { if (e.key === "/" && !e.target.closest("input,textarea")) { e.preventDefault(); $("#q").focus(); } });
+
+/* ======================= Home ======================= */
+function renderHome() {
+  const prog = [FLOW.summary.prov, ...FLOW.steps.map(s => s.prov), FLOW.edge.prov];
+  $("#main").innerHTML = `<div class="home" style="height:100%"><div class="home-in">
+    <section class="hero">
+      <h1>Hiểu một hệ thống bắt đầu từ một câu tìm kiếm</h1>
+      <p>Tìm theo tên method, API, bảng, tên tiếng Nhật hoặc tên nghiệp vụ. Mỗi luồng là một tài liệu do AI viết từ graph, có trích dẫn tới từng node. Bạn đọc, sửa và duyệt.</p>
+      <div class="try">Thử: <button type="button" class="m" data-try="createOrder">createOrder</button><button type="button" class="m" data-try="ORDER_HEADER">ORDER_HEADER</button><button type="button" data-try="注文">注文</button><button type="button" data-try="thuế">thuế</button><button type="button" data-try="trạng thái PENDING">trạng thái PENDING</button></div>
+    </section>
+    <section style="display:grid;gap:14px">
+      <div class="sec-t"><h2>Luồng nghiệp vụ</h2><span>5 luồng · AI xuất ngày 27/10 · 4 câu hỏi đang chờ</span></div>
+      <div class="flows">
+        <button type="button" class="fcard" data-open-flow>
+          <span class="dom">${esc(FLOW.domain)}</span><h3>${esc(FLOW.name)}</h3><p>${esc(FLOW.summary.text.replace(/\*\*/g, ""))}</p>
+          <span class="steps-mini">${prog.map(p => `<i class="${p === "ok" ? "ok" : p === "edited" ? "ed" : "ai"}"></i>`).join("")}</span>
+          <span class="fmeta"><span>${FLOW.steps.length} bước</span><span>${prog.filter(p => p === "ok").length}/${prog.length} phần đã duyệt</span><span>${FLOW.questions.filter(q => !q.a).length} câu hỏi</span></span>
+        </button>
+        ${OTHER_FLOWS.map(f => `<button type="button" class="fcard" disabled title="Mockup chỉ có nội dung luồng Tạo đơn hàng">
+          <span class="dom">${esc(f.domain)}</span><h3>${esc(f.name)}</h3><p>${esc(f.text)}</p>
+          <span class="steps-mini">${f.steps.map(p => `<i class="${p === "ok" ? "ok" : "ai"}"></i>`).join("")}</span>
+          <span class="fmeta"><span>${f.steps.length} bước</span><span>${f.steps.filter(p => p === "ok").length}/${f.steps.length} đã duyệt</span><span>${f.q} câu hỏi</span></span></button>`).join("")}
+      </div>
+    </section></div></div>`;
+  $("#main").querySelectorAll("[data-try]").forEach(b => b.addEventListener("click", () => { $("#q").value = b.dataset.try; $("#q").focus(); S.kb = 0; renderDrop(); }));
+  $("[data-open-flow]").addEventListener("click", () => openFlow());
+}
+
+/* ======================= Flow ======================= */
+function openFlow(opt = {}) {
+  S.view = "flow"; S.editing = null; S.pick = false;
+  S.sel = opt.node || null;
+  S.step = opt.step ?? (opt.node ? (stepsOf(opt.node)[0] ?? null) : null);
+  renderFlow();
+  requestAnimationFrame(() => {
+    if (S.step != null) document.getElementById("step-" + S.step)?.scrollIntoView({ block: "start" });
+    if (opt.node) scrollDocToNode(opt.node);
+    focusCanvas();
+  });
+}
+function renderFlow() {
+  $("#main").innerHTML = `<div class="flow"><article class="doc" id="doc"></article>
+    <section class="stage"><div class="stage-bar" id="stage-bar"></div><div class="canvas-wrap" id="cwrap"><div class="sizer" id="sizer"><div class="canvas" id="canvas"></div></div></div><div id="pop"></div></section></div>`;
+  renderDoc(); renderStage();
+}
+function reviewParts() { return [FLOW.summary, ...FLOW.steps, FLOW.edge]; }
+function renderDoc() {
+  const parts = reviewParts(), okN = parts.filter(p => p.prov === "ok").length, edN = parts.filter(p => p.prov === "edited").length, open = FLOW.questions.filter(q => !q.a).length;
+  const doc = $("#doc"), top = doc.scrollTop;
+  doc.innerHTML = `<div class="doc-in">
+    <nav class="toc" aria-label="Mục lục">
+      <button type="button" data-toc="sum">Tổng quan</button>
+      ${FLOW.steps.map((s, i) => `<button type="button" data-toc="${i}" style="--c:var(${sc(i)})" aria-current="${S.step === i}"><i></i>B${i + 1} ${esc(s.name)}</button>`).join("")}
+      <button type="button" data-toc="edge">Ngoại lệ</button>
+      <button type="button" data-toc="q" style="--c:var(--warn)"><i></i>${open} câu hỏi</button>
+    </nav>
+    <header class="doc-h" id="sec-sum">
+      <div class="crumb"><button type="button" data-home>Luồng nghiệp vụ</button><span>/</span><span>${esc(FLOW.domain)}</span></div>
+      <h1>${esc(FLOW.name)}</h1>
+      <div class="doc-meta">
+        <span class="review"><span class="bar"><i style="width:${okN / parts.length * 100}%;background:var(--ok)"></i><i style="width:${edN / parts.length * 100}%;background:var(--focus)"></i></span>${okN}/${parts.length} phần đã duyệt</span>
+        <span>✦ AI xuất ${esc(FLOW.generated)}</span>
+      </div>
+      <div class="doc-actions">
+        <button type="button" class="btn" data-regen>✦ Sinh lại bằng AI</button>
+        <button type="button" class="btn" data-export>Xuất YAML</button>
+      </div>
+      ${S.regen ? `<div class="note-regen"><span>AI sẽ viết lại các phần chưa duyệt từ graph mới nhất. <strong>${edN} phần đã sửa tay và ${okN} phần đã duyệt được giữ nguyên</strong>; nếu AI thấy code đã đổi ở các phần đó, nó thêm câu hỏi thay vì ghi đè.</span>
+        <span class="row" style="display:flex;gap:8px"><button type="button" class="btn sm pri" data-regen-go>Sinh lại</button><button type="button" class="btn sm" data-regen>Huỷ</button></span></div>` : ""}
+    </header>
+    ${blockHtml("summary", "Tổng quan", FLOW.summary, `<div class="prose">${rich(FLOW.summary.text)}</div>
+      <dl class="facts">${FLOW.facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>`)}
+    <section class="block"><div class="block-h"><h2>Các bước</h2><span class="label">${FLOW.steps.length} bước · do AI tách từ graph</span></div>
+      <div class="timeline">${FLOW.steps.map(stepHtml).join("")}</div></section>
+    ${blockHtml("edge", "Ngoại lệ và trường hợp đặc biệt", FLOW.edge, `<ul class="list">${FLOW.edge.items.map(t => `<li>${ICON.alert}<span>${inline(t)}</span></li>`).join("")}</ul>`, "sec-edge")}
+    <section class="block" id="sec-q"><div class="block-h"><h2>Câu hỏi AI chưa chắc</h2><span class="prov warn">${open} đang chờ</span></div>
+      <p style="margin:0;color:var(--muted);font-size:13px">AI ghi lại những chỗ code không đủ để kết luận. Câu trả lời được lưu cùng tài liệu và dùng cho lần sinh lại sau.</p>
+      ${FLOW.questions.map((q, i) => `<div class="q${q.a ? " done" : ""}"><p>${inline(q.q)}</p>${q.a ? `<div class="ans">${esc(q.a)}</div>` : `<form data-ans="${i}"><input id="ans-${i}" placeholder="Trả lời…" aria-label="Trả lời câu hỏi ${i + 1}"><button type="submit" class="btn sm">Lưu</button></form>`}</div>`).join("")}
+    </section>
+  </div>`;
+  doc.scrollTop = top;
+  bindDoc();
+}
+function blockHtml(key, title, part, body, id) {
+  const editing = S.editing === key;
+  return `<section class="block"${id ? ` id="${id}"` : ""}><div class="block-h"><h2>${title}</h2>${provHtml(part)}
+    ${editing ? "" : `<span class="step-tools"><button type="button" class="btn sm ghost" data-edit="${key}">${ICON.edit} Sửa</button>${part.prov !== "ok" ? `<button type="button" class="btn sm" data-approve="${key}">${ICON.check} Duyệt</button>` : ""}</span>`}</div>
+    ${editing ? editorHtml(key) : body}</section>`;
+}
+function provHtml(p) { const [cls, label] = PROV[p.prov]; return `<span class="prov ${cls}">${label}${p.prov === "ok" && p.by ? " · " + esc(p.by) : ""}</span>`; }
+function stepHtml(s, i) {
+  const editing = S.editing === i;
+  return `<div class="step${S.step === i ? " active" : ""}" id="step-${i}" style="--c:var(${sc(i)})"><span class="num">${i + 1}</span>
+    <div class="step-body" data-step="${i}">
+      <div class="step-h"><h3>${esc(s.name)}</h3>${provHtml(s)}</div>
+      <span class="actor">${s.actor === "Hệ thống" ? ICON.cpu : ICON.user}${esc(s.actor)}</span>
+      ${editing ? editorHtml(i) : `<div class="prose">${rich(s.text)}</div>
+      ${s.rules.length ? `<div class="rules">${s.rules.map(r => `<div class="rule">${ICON.diamond}<div><b>${esc(r.title)}</b><p>${inline(r.text)}</p>
+        <div class="rf"><span>Kiểm tra tại</span>${inline("[[" + r.at + "]]")}<span class="prov ${STATUS[r.status][0]}">${STATUS[r.status][1]}</span></div></div></div>`).join("")}</div>` : ""}
+      <div class="nodes-row"><span class="label">${s.nodes.length} node</span>${s.nodes.map(nid => inline("[[" + byId[nid].nm + "]]")).join("")}</div>
+      <div class="step-tools"><button type="button" class="btn sm ghost" data-edit="${i}">${ICON.edit} Sửa</button>${s.prov !== "ok" ? `<button type="button" class="btn sm" data-approve="${i}">${ICON.check} Duyệt</button>` : ""}</div>`}
+    </div></div>`;
+}
+function editorHtml(key) {
+  const d = S.draft, isStep = typeof key === "number";
+  return `<div class="edit">
+    ${isStep ? `<div class="field"><label for="ed-name">Tên bước</label><input id="ed-name" value="${esc(d.name)}"></div>
+      <div class="field"><label for="ed-actor">Người / hệ thống thực hiện</label><input id="ed-actor" value="${esc(d.actor)}"></div>` : ""}
+    <div class="field"><label for="ed-text">Nội dung</label><textarea id="ed-text">${esc(d.text)}</textarea>
+      <small>Cách đoạn bằng một dòng trống. Gõ <code>[[tên node]]</code> để trích dẫn node, <code>**chữ đậm**</code> để nhấn mạnh.</small></div>
+    ${isStep ? d.rules.map((r, k) => `<div class="field"><label for="ed-rule-${k}">Quy tắc ${k + 1} · tại ${esc(r.at)}</label><input id="ed-rule-${k}" data-rt="${k}" value="${esc(r.title)}"><textarea class="sm" id="ed-rule-d-${k}" data-rd="${k}">${esc(r.text)}</textarea></div>`).join("") : ""}
+    ${isStep ? `<div class="field"><label>Node của bước (${d.nodes.length})</label>
+      <div class="nodes-row">${d.nodes.map(nid => inline("[[" + byId[nid].nm + "]]")).join("")}</div>
+      <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn sm${S.pick ? " on" : ""}" data-pick>${S.pick ? "Đang chọn trên graph…" : "Chọn lại node trên graph"}</button>${S.pick ? `<span class="pickhint">Nhấn node để thêm hoặc bỏ khỏi bước này</span>` : ""}</span></div>` : ""}
+    <div class="edit-foot"><span style="font-size:12px;color:var(--muted)">Phần đã sửa tay được giữ khi AI sinh lại.</span>
+      <span style="display:flex;gap:8px"><button type="button" class="btn sm" data-cancel>Huỷ</button><button type="button" class="btn sm pri" data-save="${key}">Lưu thay đổi</button></span></div>
+  </div>`;
+}
+function partOf(key) { return key === "summary" ? FLOW.summary : key === "edge" ? FLOW.edge : FLOW.steps[+key]; }
+function bindDoc() {
+  const D = $("#doc"), on = (s, fn) => D.querySelectorAll(s).forEach(el => el.addEventListener("click", e => fn(el, e)));
+  on("[data-home]", () => { S.view = "home"; render(); });
+  on("[data-toc]", el => {
+    const t = el.dataset.toc;
+    if (/^\d+$/.test(t)) { setStep(+t); document.getElementById("step-" + t).scrollIntoView({ block: "start" }); }
+    else document.getElementById("sec-" + t).scrollIntoView({ block: "start" });
+  });
+  on("[data-ref]", (el, e) => { e.stopPropagation(); selectNode(el.dataset.ref, { fromDoc: true }); });
+  on("[data-step]", (el, e) => { if (e.target.closest("button,input,textarea,a")) return; setStep(+el.dataset.step); });
+  on("[data-edit]", (el, e) => {
+    e.stopPropagation();
+    const key = /^\d+$/.test(el.dataset.edit) ? +el.dataset.edit : el.dataset.edit;
+    const p = partOf(key);
+    S.editing = key; S.pick = false;
+    S.draft = key === "edge" ? { text: p.items.join("\n\n") } : JSON.parse(JSON.stringify(p));
+    if (typeof key === "number") setStep(key, true);
+    renderDoc(); renderStage();
+    setTimeout(() => $("#ed-text")?.focus(), 0);
+  });
+  on("[data-approve]", (el, e) => { e.stopPropagation(); const p = partOf(/^\d+$/.test(el.dataset.approve) ? +el.dataset.approve : el.dataset.approve); p.prov = "ok"; p.by = "bạn"; renderDoc(); toast("Đã duyệt"); });
+  on("[data-cancel]", () => { S.editing = null; S.pick = false; renderDoc(); renderStage(); });
+  on("[data-save]", () => {
+    const key = S.editing, p = partOf(key), d = S.draft;
+    d.text = $("#ed-text").value;
+    if (typeof key === "number") {
+      p.name = $("#ed-name").value.trim() || p.name; p.actor = $("#ed-actor").value.trim(); p.text = d.text; p.nodes = d.nodes;
+      p.rules = p.rules.map((r, k) => ({ ...r, title: $("#ed-rule-" + k).value, text: $("#ed-rule-d-" + k).value }));
+    } else if (key === "edge") p.items = d.text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    else p.text = d.text;
+    p.prov = "edited"; S.editing = null; S.pick = false;
+    renderDoc(); renderStage(); toast("Đã lưu. Phần này sẽ không bị AI ghi đè.");
+  });
+  on("[data-pick]", () => { S.pick = !S.pick; renderDoc(); renderStage(); });
+  on("[data-regen]", () => { S.regen = !S.regen; renderDoc(); });
+  on("[data-regen-go]", () => { S.regen = false; renderDoc(); toast("Mockup: yêu cầu sinh lại không chạy thật"); });
+  on("[data-export]", openExport);
+  D.querySelectorAll("[data-ans]").forEach(f => f.addEventListener("submit", e => {
+    e.preventDefault(); const i = +f.dataset.ans, v = $("#ans-" + i).value.trim(); if (!v) return;
+    FLOW.questions[i].a = v; renderDoc(); toast("Đã lưu câu trả lời");
+  }));
+  // giữ nội dung đang gõ khi đổi node đã chọn
+  ["#ed-name", "#ed-actor", "#ed-text"].forEach(s => { const el = $(s); if (el) el.addEventListener("input", () => { const k = { "#ed-name": "name", "#ed-actor": "actor", "#ed-text": "text" }[s]; S.draft[k] = el.value; }); });
+  D.querySelectorAll("[data-rt]").forEach(el => el.addEventListener("input", () => { S.draft.rules[+el.dataset.rt].title = el.value; }));
+  D.querySelectorAll("[data-rd]").forEach(el => el.addEventListener("input", () => { S.draft.rules[+el.dataset.rd].text = el.value; }));
+}
+function setStep(i, quiet) {
+  S.step = S.step === i && !quiet ? null : i;
+  document.querySelectorAll(".step").forEach(el => el.classList.toggle("active", el.id === "step-" + S.step));
+  document.querySelectorAll("[data-toc]").forEach(b => b.setAttribute("aria-current", b.dataset.toc === String(S.step)));
+  if (!quiet) { renderStage(); focusCanvas(); }
+}
+function selectNode(nid, opt = {}) {
+  if (S.editing !== null && S.pick && typeof S.editing === "number") {
+    const d = S.draft; d.nodes = d.nodes.includes(nid) ? d.nodes.filter(x => x !== nid) : [...d.nodes, nid];
+    renderDoc(); renderStage(); return;
+  }
+  S.sel = S.sel === nid && !opt.fromDoc ? null : nid;
+  document.querySelectorAll(".ref").forEach(r => r.classList.toggle("sel", r.dataset.ref === S.sel));
+  renderStage();
+  if (opt.fromDoc) focusCanvas(nid);
+  else if (S.sel) scrollDocToNode(S.sel);
+}
+function scrollDocToNode(nid) {
+  const el = document.querySelector(`#doc .step .prose .ref[data-ref="${CSS.escape(nid)}"]`) || document.querySelector(`#doc .ref[data-ref="${CSS.escape(nid)}"]`);
+  if (el) el.scrollIntoView({ block: "center" });
+}
+
+/* ======================= Stage: graph / swimlane ======================= */
+const W = 212, H = 80, CG = 96, RG = 34, PX = 50, PY = 56;
+const pos = NODES.map(n => ({ x: PX + n.col * (W + CG), y: PY + n.row * (H + RG) }));
+const GW = PX * 2 + 10 * (W + CG) - CG, GH = PY + 6 * (H + RG) + 30;
+function renderStage() {
+  const editingStep = typeof S.editing === "number" ? S.editing : null;
+  $("#stage-bar").innerHTML = `<span class="seg"><button type="button" data-mode="graph" aria-pressed="${S.mode === "graph"}">Graph</button><button type="button" data-mode="lane" aria-pressed="${S.mode === "lane"}">Swimlane</button></span>
+    <span class="stage-info">${S.mode === "graph" ? `${NODES.length} node · ${EDGES.length} cạnh${S.step != null ? ` · đang xem B${S.step + 1}` : ""}` : `${FLOW.steps.length} bước × lớp hệ thống`}</span>
+    ${S.mode === "graph" ? `<span class="zoom"><button type="button" class="icon-btn" data-z="-" aria-label="Thu nhỏ">−</button><span>${Math.round(S.zoom * 100)}%</span><button type="button" class="icon-btn" data-z="+" aria-label="Phóng to">+</button><button type="button" class="btn sm" data-z="fit">Vừa khung</button></span>` : ""}`;
+  $("#stage-bar").querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { S.mode = b.dataset.mode; renderStage(); if (S.mode === "graph") focusCanvas(); }));
+  $("#stage-bar").querySelectorAll("[data-z]").forEach(b => b.addEventListener("click", () => {
+    const z = b.dataset.z, wrap = $("#cwrap");
+    S.zoom = z === "fit" ? Math.max(.35, Math.min(1, (wrap.clientWidth - 20) / GW, (wrap.clientHeight - 20) / GH)) : Math.max(.35, Math.min(1.4, S.zoom + (z === "+" ? .1 : -.1)));
+    renderStage();
+  }));
+  if (S.mode === "lane") return renderLanes();
+  const steps = FLOW.steps.map((s, i) => i === editingStep ? S.draft.nodes : s.nodes);
+  const focusSet = S.step != null ? new Set(steps[S.step]) : null;
+  const dimNode = nid => focusSet && !focusSet.has(nid);
+  let html = "";
+  let svg = `<svg width="${GW}" height="${GH}"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>`;
+  for (const [a, b, t] of EDGES) {
+    const A = pos[a], B = pos[b], x1 = A.x + W, y1 = A.y + H / 2, x2 = B.x, y2 = B.y + H / 2, dx = (x2 - x1) / 2;
+    const dim = focusSet && !(focusSet.has(NODES[a].id) && focusSet.has(NODES[b].id));
+    const w = t.length * 5.8 + 12, mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    svg += `<path class="ge ${/READS/.test(t) ? "read" : /INSERTS/.test(t) ? "write" : ""}${dim ? " dim" : ""}" d="M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}" marker-end="url(#ah)"/>
+      <g class="gl${dim ? " dim" : ""}"><rect x="${mx - w / 2}" y="${my - 9}" width="${w}" height="18" rx="9"/><text x="${mx}" y="${my + 3.5}" text-anchor="middle">${t}</text></g>`;
+  }
+  svg += "</svg>";
+  html += NODES.map((n, i) => {
+    const st = steps.map((ns, k) => ns.includes(n.id) ? k : -1).filter(k => k >= 0);
+    const picked = editingStep != null && S.pick && steps[editingStep].includes(n.id);
+    return `<button type="button" class="gn${dimNode(n.id) && !picked ? " dim" : ""}${S.sel === n.id ? " sel" : ""}${picked ? " picked" : ""}${!S.pick && focusSet && focusSet.has(n.id) ? " focus" : ""}${S.pick ? " pickable" : ""}" data-n="${esc(n.id)}"
+      style="left:${pos[i].x}px;top:${pos[i].y}px;--c:var(${tc(n.ty)});--sc:var(${sc(editingStep ?? S.step ?? 0)})">
+      <span class="tags">${st.map(k => `<b style="--sc:var(${sc(k)})">B${k + 1}</b>`).join("")}</span>
+      <div class="ty"><i></i>${n.ty.replace(/_/g, " ")}</div><div class="nm">${esc(n.nm)}</div>
+      <div class="alt">${n.ja ? esc(n.ja) + " · " : ""}${esc(n.en || n.term || "—")}</div></button>`;
+  }).join("");
+  const c = $("#canvas");
+  c.style.width = GW + "px"; c.style.height = GH + "px"; c.style.transform = `scale(${S.zoom})`;
+  $("#sizer").style.width = GW * S.zoom + "px"; $("#sizer").style.height = GH * S.zoom + "px";
+  c.innerHTML = svg + html;
+  c.querySelectorAll(".gn").forEach(el => el.addEventListener("click", () => selectNode(el.dataset.n)));
+  renderPop();
+}
+function focusCanvas(nid) {
+  if (S.mode !== "graph") return;
+  const wrap = $("#cwrap"); if (!wrap) return;
+  let ps;
+  if (nid) ps = [pos[NODES.findIndex(n => n.id === nid)]];
+  else if (S.step != null) ps = FLOW.steps[S.step].nodes.map(id => pos[NODES.findIndex(n => n.id === id)]);
+  else ps = [pos[0]];
+  const cx = (Math.min(...ps.map(p => p.x)) + Math.max(...ps.map(p => p.x)) + W) / 2 * S.zoom, cy = (Math.min(...ps.map(p => p.y)) + Math.max(...ps.map(p => p.y)) + H) / 2 * S.zoom;
+  wrap.scrollTo({ left: Math.max(0, cx - wrap.clientWidth / 2), top: Math.max(0, cy - wrap.clientHeight / 2) });
+}
+function renderPop() {
+  const pop = $("#pop");
+  if (!S.sel || S.mode !== "graph" || S.pick) { pop.innerHTML = ""; return; }
+  const n = byId[S.sel], st = stepsOf(n.id);
+  const ments = [];
+  FLOW.steps.forEach((s, i) => {
+    if (s.text.includes("[[" + n.nm + "]]")) ments.push([i, `B${i + 1} · ${s.name}`]);
+    s.rules.forEach(r => { if (r.at === n.nm) ments.push([i, `Quy tắc: ${r.title}`]); });
+  });
+  pop.innerHTML = `<div class="pop" style="--c:var(${tc(n.ty)})"><div class="pop-h"><div><div class="tyl">${n.ty.replace(/_/g, " ")}</div><h4>${esc(n.nm)}</h4></div><button type="button" class="icon-btn" data-close aria-label="Đóng">${ICON.close}</button></div>
+    <dl class="kv"><dt>node_id</dt><dd><code>${esc(n.id)}</code></dd>${n.file ? `<dt>Nguồn</dt><dd><code>${esc(n.file)}</code></dd>` : ""}${n.term ? `<dt>Từ điển</dt><dd>${esc(n.term)}</dd>` : ""}${n.ja ? `<dt>JA / EN</dt><dd>${esc(n.ja)} · ${esc(n.en)}</dd>` : ""}
+      <dt>Thuộc bước</dt><dd>${st.length ? st.map(i => "B" + (i + 1)).join(", ") : "chưa thuộc bước nào"}</dd></dl>
+    ${ments.length ? `<div class="mentions"><span class="label">Được nhắc trong tài liệu</span>${ments.map(([i, t]) => `<button type="button" data-ment="${i}" style="--c:var(${sc(i)})"><i></i>${esc(t)}</button>`).join("")}</div>` : ""}</div>`;
+  pop.querySelector("[data-close]").addEventListener("click", () => { S.sel = null; document.querySelectorAll(".ref.sel").forEach(r => r.classList.remove("sel")); renderStage(); });
+  pop.querySelectorAll("[data-ment]").forEach(b => b.addEventListener("click", () => { setStep(+b.dataset.ment, true); renderStage(); scrollDocToNode(S.sel); }));
+}
+function renderLanes() {
+  const lanes = [["--t-ui", "Màn hình", "Angular", n => TY[n.ty][1] === "Màn hình"], ["--t-api", "API", ".NET", n => n.ty === "API_OPERATION"],
+    ["--t-logic", "Xử lý", ".NET · PL/SQL", n => TY[n.ty][1] === "Xử lý"], ["--t-data", "Dữ liệu", "Oracle", n => n.ty === "TABLE"], ["--t-ext", "Ngoài", "DB link", n => n.ty === "EXTERNAL_DATABASE_OBJECT"]];
+  const cols = FLOW.steps.length;
+  const act = i => S.step === i ? " active" : "";
+  let h = `<div class="lanes-wrap"><div class="lanes" style="grid-template-columns:150px repeat(${cols}, 260px)">`;
+  h += `<div class="lh" style="--c:transparent"></div>` + FLOW.steps.map((s, i) => `<div class="ch${act(i)}" data-lstep="${i}" style="--c:var(${sc(i)})"><small>BƯỚC ${i + 1}</small><b>${esc(s.name)}</b></div>`).join("");
+  h += `<div class="lh" style="--c:var(--s1)">Ai thực hiện<small>tài liệu</small></div>` + FLOW.steps.map((s, i) => `<div class="cell${act(i)}" style="--c:var(${sc(i)})"><div class="lc txt" style="--c:var(--s1)">${esc(s.actor)}</div></div>`).join("");
+  h += `<div class="lh" style="--c:var(--warn)">Quy tắc<small>tài liệu</small></div>` + FLOW.steps.map((s, i) => `<div class="cell${act(i)}" style="--c:var(${sc(i)})">${s.rules.map(r => `<div class="lc txt" style="--c:var(--${r.status === "bad" ? "bad" : "warn"})">◆ ${esc(r.title)}</div>`).join("")}</div>`).join("");
+  for (const [c, name, tech, fit] of lanes) {
+    if (!FLOW.steps.some(s => s.nodes.some(id => fit(byId[id])))) continue;
+    h += `<div class="lh" style="--c:var(${c})">${name}<small>${tech} · graph</small></div>`;
+    h += FLOW.steps.map((s, i) => `<div class="cell${act(i)}" style="--c:var(${sc(i)})">${s.nodes.filter(id => fit(byId[id])).map(id => { const n = byId[id]; return `<button type="button" class="lc${S.sel === id ? " sel" : ""}" data-lnode="${esc(id)}" style="--c:var(${c})"><span class="t">${n.ty.replace(/_/g, " ")}</span>${esc(n.nm)}</button>`; }).join("")}</div>`).join("");
+  }
+  h += `</div></div>`;
+  $("#sizer").style.width = "auto"; $("#sizer").style.height = "auto";
+  const c = $("#canvas"); c.style.transform = "none"; c.style.position = "static"; c.style.width = "auto"; c.style.height = "auto";
+  c.innerHTML = h;
+  $("#cwrap").scrollTo({ left: 0, top: 0, behavior: "instant" });
+  c.querySelectorAll("[data-lstep]").forEach(el => el.addEventListener("click", () => { setStep(+el.dataset.lstep); document.getElementById("step-" + el.dataset.lstep).scrollIntoView({ block: "start" }); }));
+  c.querySelectorAll("[data-lnode]").forEach(el => el.addEventListener("click", () => { S.sel = el.dataset.lnode; renderStage(); scrollDocToNode(S.sel); document.querySelectorAll(".ref").forEach(r => r.classList.toggle("sel", r.dataset.ref === S.sel)); }));
+  $("#pop").innerHTML = "";
+}
+
+/* ======================= Import / Export ======================= */
+const SAMPLE_IMPORT = `# Kết quả AI xuất cho luồng "Tạo đơn hàng"
+version: 1
+flow:
+  id: order.create
+  name: Tạo đơn hàng
+  domain: Đơn hàng
+  summary: |
+    Nhân viên bán hàng lập đơn cho khách trên màn hình Tạo đơn...
+  steps:
+    - name: Nhân viên gửi đơn
+      actor: Nhân viên bán hàng
+      nodes:
+        - ui_action: CreateOrderComponent.submitOrder
+        - api: POST /api/orders
+      text: |
+        Khi bấm Submit, [[CreateOrderComponent.submitOrder]] gọi
+        [[OrderService.createOrder]] ...
+    - name: Kiểm tra dòng đơn và tính tiền
+      actor: Hệ thống
+      nodes:
+        - procedure: PKG_ORDER.VALIDATE_LINES
+        - function: PKG_ORDER.CALCULATE_TOTAL
+        - table: ORDER_DISCOUNT
+      rules:
+        - title: Dòng đơn phải hợp lệ trước khi tạo đơn
+          at: PKG_ORDER.VALIDATE_LINES
+          text: Thân procedure hiện chỉ có NULL...
+  questions:
+    - VALIDATE_LINES đang rỗng. Quy tắc kiểm tra gồm những gì?
+`;
+function modal(html) { const m = $("#modal"); m.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">${html}</div>`; m.hidden = false; m.onclick = e => { if (e.target === m) m.hidden = true; }; m.querySelectorAll("[data-mclose]").forEach(b => b.addEventListener("click", () => { m.hidden = true; })); }
+function openImport() {
+  modal(`<h3>Import kết quả AI</h3><p>Dán YAML hoặc chọn file do AI xuất. Node được tham chiếu bằng <code>loại: tên</code>; hệ thống đối chiếu với graph trước khi áp dụng. Các phần bạn đã sửa tay hoặc đã duyệt không bị ghi đè.</p>
+    <label class="btn" for="imp-file" style="justify-self:start">Chọn file .yaml</label><input id="imp-file" type="file" accept=".yaml,.yml" hidden>
+    <textarea id="imp-text" spellcheck="false" aria-label="Nội dung YAML">${esc(SAMPLE_IMPORT)}</textarea><div id="imp-res"></div>
+    <div class="modal-foot"><button type="button" class="btn" data-mclose>Đóng</button><button type="button" class="btn pri" id="imp-check">Kiểm tra</button></div>`);
+  $("#imp-file").addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $("#imp-text").value = String(r.result); }; r.readAsText(f); });
+  $("#imp-check").addEventListener("click", () => {
+    let doc; const out = $("#imp-res");
+    if (typeof jsyaml === "undefined") { out.innerHTML = `<div class="check"><div class="n">Không tải được thư viện đọc YAML.</div></div>`; return; }
+    try { doc = jsyaml.load($("#imp-text").value); } catch (e) { out.innerHTML = `<div class="check"><div class="n">YAML sai cú pháp: ${esc(e.message.split("\n")[0])}</div></div>`; return; }
+    const steps = doc?.flow?.steps || [], lines = [];
+    steps.forEach(s => (s.nodes || []).forEach(ref => { const [k, v] = Object.entries(ref || {})[0] || []; lines.push([`${k}: ${v}`, !!byNm[String(v)]]); }));
+    const ok = lines.filter(l => l[1]).length;
+    out.innerHTML = `<div class="check"><strong style="font-size:13px">${steps.length} bước · ${ok}/${lines.length} node khớp graph</strong>${lines.map(([t, y]) => `<div class="${y ? "y" : "n"}">${y ? "✓" : "✕"} <code>${esc(t)}</code>${y ? "" : " · không có trong graph, sẽ lưu là mồ côi"}</div>`).join("")}</div>`;
+  });
+}
+function openExport() {
+  const data = { version: 1, flow: { id: FLOW.id, name: FLOW.name, domain: FLOW.domain, summary: FLOW.summary.text,
+    steps: FLOW.steps.map(s => ({ name: s.name, actor: s.actor, status: s.prov, nodes: s.nodes.map(id => ({ [{ UI_ACTION: "ui_action", METHOD: "method", API_CALL_REFERENCE: "api_call", API_OPERATION: "api", PROCEDURE: "procedure", FUNCTION: "function", TABLE: "table", EXTERNAL_DATABASE_OBJECT: "external" }[byId[id].ty]]: byId[id].nm })),
+      text: s.text, rules: s.rules.map(r => ({ title: r.title, at: r.at, text: r.text })) })),
+    questions: FLOW.questions.map(q => q.a ? { q: q.q, answer: q.a } : q.q) } };
+  const text = typeof jsyaml !== "undefined" ? jsyaml.dump(data, { lineWidth: 90 }) : JSON.stringify(data, null, 2);
+  modal(`<h3>Xuất YAML</h3><p>Cùng định dạng với file import, gồm cả phần đã sửa tay và câu trả lời. Có thể lưu vào git để review.</p>
+    <textarea readonly id="exp-text" aria-label="YAML xuất ra">${esc(text)}</textarea>
+    <div class="modal-foot"><button type="button" class="btn" data-mclose>Đóng</button><button type="button" class="btn pri" id="exp-copy">Sao chép</button></div>`);
+  $("#exp-copy").addEventListener("click", () => {
+    const t = $("#exp-text");
+    navigator.clipboard?.writeText(t.value).then(() => toast("Đã sao chép"), () => { t.select(); toast("Đã chọn nội dung, nhấn Ctrl+C để sao chép"); }) ?? (t.select(), toast("Đã chọn nội dung, nhấn Ctrl+C để sao chép"));
+  });
+}
+$("#open-import").addEventListener("click", openImport);
+let tt; function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(tt); tt = setTimeout(() => { el.hidden = true; }, 2200); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#modal").hidden = true; });
+
+/* ======================= Boot ======================= */
+function render() { S.view === "home" ? renderHome() : renderFlow(); }
+$("#go-home").addEventListener("click", () => { S.view = "home"; render(); });
+render();
+</script>
