@@ -273,12 +273,21 @@ const nodeTypes = { flowNode: StepFlowNode };
 const SEMANTIC_LEVELS = [["SYSTEM", "System"], ["APPLICATION", "Application"], ["TECHNICAL", "Technical"]];
 const MAX_EXPANSION_NODES = 200;
 
+// Expansions skip structural containment (table → columns, file → methods): one hop would otherwise pull in everything.
+function withoutStructure(rootId, data) {
+  const edges = (data.edges || []).filter((edge) => edge.graph_layer !== "STRUCTURAL" && edge.edge_type !== "HAS_COLUMN");
+  const linked = new Set([rootId]);
+  edges.forEach((edge) => { linked.add(edge.source_node_id); linked.add(edge.target_node_id); });
+  return { nodes: (data.nodes || []).filter((node) => linked.has(node.node_id) && node.node_type !== "COLUMN"), edges };
+}
+
 function toGraphNode(node) {
   return { ...node, technical_name: node.name || node.technical_name, default_display_name: node.display_name || node.name };
 }
 
 function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick, notify }) {
   const instance = useRef(null);
+  const canvasRef = useRef(null);
   const requests = useRef(new Map());
   const [semantic, setSemantic] = useState("TECHNICAL");
   // System/Application project the flow itself too, not only the expansions.
@@ -320,7 +329,7 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
     try {
       const data = await api(`/flow?node_id=${encodeURIComponent(node.node_id)}&mode=${mode}&direction=${direction}&max_nodes=${MAX_EXPANSION_NODES}&semantic_level=${level}`, { signal: controller.signal });
       if (requests.current.get(key) !== controller) return;
-      setGroups((current) => mergeGroup(current, key, { nodes: data.nodes || [], edges: data.edges || [] }));
+      setGroups((current) => mergeGroup(current, key, withoutStructure(node.node_id, data)));
       setGroupStates((current) => setGroupLoadState(current, key, { loading: false, error: "", truncated: Boolean(data.truncated) }));
       const ids = (data.nodes || []).map((item) => item.node_id).slice(0, 300);
       if (ids.length) {
@@ -387,10 +396,10 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
     expanded.edges.forEach((edge) => {
       if (!shown.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) shown.set(edge.edge_id, edge);
     });
-    // A node stays while an edge still reaches it; the entry and edgeless flows always show.
-    const linked = new Set([entry]);
+    // The flow's own nodes always stay; an expanded node stays while an edge still reaches it.
+    const linked = new Set(nodes.map((node) => node.node_id));
     shown.forEach((edge) => { linked.add(edge.source_node_id); linked.add(edge.target_node_id); });
-    const keep = baseEdges.length ? [...byId.values()].filter((node) => linked.has(node.node_id)) : [...byId.values()];
+    const keep = [...byId.values()].filter((node) => linked.has(node.node_id));
     return { nodes: keep, edges: [...shown.values()] };
   }, [nodes, baseEdges, groups, suppressed, entry]);
   // The flow's own nodes are laid out once; expansions never move them.
@@ -447,12 +456,19 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
     return () => clearTimeout(timer);
   }, [semantic]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const timer = setTimeout(fit, 30); return () => clearTimeout(timer); }, [fit]);
+  // Selecting a node never zooms; the view only pans when the node is off screen (e.g. picked from the doc).
   useEffect(() => {
-    if (selected) instance.current?.fitView({ padding: 0.6, duration: 300, nodes: [{ id: selected }], maxZoom: 1 });
+    const flow = instance.current;
+    const node = selected && flow?.getNode(selected);
+    const box = canvasRef.current?.getBoundingClientRect();
+    if (!node || !box) return;
+    const point = flow.flowToScreenPosition(node.position);
+    if (point.x > box.left && point.x < box.right - 120 && point.y > box.top && point.y < box.bottom - 60) return;
+    flow.setCenter(node.position.x + 130, node.position.y + 50, { zoom: flow.getZoom(), duration: 300 });
   }, [selected]);
   const expansions = Object.keys(intents).length + suppressed.size;
   if (!flowNodesAll.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
-  return <div className="bm-canvas">
+  return <div className="bm-canvas" ref={canvasRef}>
     <div className="bm-canvas-tools">
       <span className="bm-seg">{SEMANTIC_LEVELS.map(([level, label]) => <button key={level} type="button" aria-pressed={semantic === level} onClick={() => changeSemantic(level)}>{label}</button>)}</span>
       {expansions ? <button type="button" className="bm-btn sm" onClick={clearExpansions}>Về graph ban đầu</button> : null}
