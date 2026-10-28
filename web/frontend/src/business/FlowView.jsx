@@ -6,7 +6,7 @@ import { buildAutoLayout } from "../code-flow/layout.js";
 import { api } from "../code-flow/api.js";
 import { edgeColor, flowFiltersKey, flowKey } from "../code-flow/constants.js";
 import { FlowNode } from "../code-flow/FlowNode.jsx";
-import { defaultIntentKeys, placeNodes, visibleBaseEdges } from "./graph-place.js";
+import { baseIntentChecked, baseIntentEdges, connectedNodes, placeNodes, toggleBaseIntent } from "./graph-place.js";
 import {
   expansionIntentKey,
   materializeGroups,
@@ -302,13 +302,14 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   const [groupStates, setGroupStates] = useState({});
   const [intents, setIntents] = useState({});
   const [localized, setLocalized] = useState({});
-  const [suppressed, setSuppressed] = useState(() => new Set());
+  // Base (flow) edges the user hid by unticking a 1-hop box; see graph-place.js for the rules.
+  const [hidden, setHidden] = useState(() => new Set());
   // Nodes the user dragged keep their spot; `moving` holds the position while a drag is in progress.
   const [dragged, setDragged] = useState({});
   const [moving, setMoving] = useState(null);
   const filters = flowFiltersKey(MAX_EXPANSION_NODES);
   const baseEdges = useMemo(() => edges.map((edge) => ({ ...edge, source_node_id: edge.source, target_node_id: edge.target })), [edges]);
-  const defaults = useMemo(() => defaultIntentKeys(baseEdges), [baseEdges]);
+  const owned = useMemo(() => baseIntentEdges(baseEdges), [baseEdges]);
 
   useEffect(() => {
     const names = {};
@@ -349,13 +350,9 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
 
   const toggleFlow = useCallback((node, mode, direction, checked) => {
     const intent = expansionIntentKey(node.node_id, mode, direction);
-    if (defaults.has(intent)) {
+    if (owned.has(intent)) {
       // A 1-hop the flow already shows: unticking hides those edges, ticking shows them again.
-      setSuppressed((current) => {
-        const next = new Set(current);
-        if (checked) next.delete(intent); else next.add(intent);
-        return next;
-      });
+      setHidden((current) => toggleBaseIntent(current, owned, intent, checked));
       return;
     }
     const key = flowKey(node.node_id, mode, direction, semantic, filters);
@@ -368,7 +365,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     }
     setIntents((current) => mergeExpansionIntent(current, node, mode, direction));
     void loadGroup(node, mode, direction, semantic);
-  }, [semantic, filters, loadGroup, defaults]);
+  }, [semantic, filters, loadGroup, owned]);
 
   // A graph opened from a single node starts with its own 1-hop neighbours, like ticking "1" on both sides.
   useEffect(() => {
@@ -383,14 +380,14 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     setSemantic(level);
     setGroups({});
     setGroupStates({});
-    setSuppressed(new Set());
+    setHidden(new Set());
     setDragged({});
     Object.values(intents).forEach((intent) => void loadGroup(intent.node, intent.mode, intent.direction, level));
   }
 
   function clearExpansions() {
     requests.current.forEach((controller) => controller.abort());
-    setGroups({}); setGroupStates({}); setIntents({}); setSuppressed(new Set()); setDragged({});
+    setGroups({}); setGroupStates({}); setIntents({}); setHidden(new Set()); setDragged({});
   }
 
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
@@ -399,16 +396,19 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     const expanded = materializeGroups(null, groups);
     const byId = new Map(nodes.map((node) => [node.node_id, toGraphNode(node)]));
     expanded.nodes.forEach((node) => { if (!byId.has(node.node_id)) byId.set(node.node_id, { ...node, expanded: true }); });
-    const shown = new Map(visibleBaseEdges(baseEdges, suppressed).map((edge) => [edge.edge_id, edge]));
+    const shown = new Map(baseEdges.filter((edge) => !hidden.has(edge.edge_id)).map((edge) => [edge.edge_id, edge]));
     expanded.edges.forEach((edge) => {
       if (!shown.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) shown.set(edge.edge_id, edge);
     });
-    // The flow's own nodes always stay; an expanded node stays while an edge still reaches it.
-    const linked = new Set(nodes.map((node) => node.node_id));
-    shown.forEach((edge) => { linked.add(edge.source_node_id); linked.add(edge.target_node_id); });
+    // Nodes stay while a shown edge still connects them to the entry. Flow nodes that never had an edge
+    // (added to a step by hand) always stay.
+    const touched = new Set(baseEdges.flatMap((edge) => [edge.source_node_id, edge.target_node_id]));
+    const seeds = nodes.filter((node) => node.node_id === entry || !touched.has(node.node_id)).map((node) => node.node_id);
+    if (!seeds.length && nodes.length) seeds.push(nodes[0].node_id);
+    const linked = connectedNodes(seeds, [...shown.values()]);
     const keep = [...byId.values()].filter((node) => linked.has(node.node_id));
-    return { nodes: keep, edges: [...shown.values()] };
-  }, [nodes, baseEdges, groups, suppressed, entry]);
+    return { nodes: keep, edges: [...shown.values()].filter((edge) => linked.has(edge.source_node_id) && linked.has(edge.target_node_id)) };
+  }, [nodes, baseEdges, groups, hidden, entry]);
   // The flow's own nodes are laid out once; expansions never move them.
   const basePositions = useMemo(() => new Map(buildAutoLayout(nodes.map(toGraphNode), baseEdges, entry, {}).map((node) => [node.node_id, node.position])), [nodes, baseEdges, entry]);
   const positions = useMemo(() => {
@@ -431,9 +431,9 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   }, []);
   const intentsShown = useMemo(() => {
     const merged = { ...intents };
-    defaults.forEach((key) => { if (!suppressed.has(key)) merged[key] = true; });
+    owned.forEach((_, key) => { if (baseIntentChecked(hidden, owned, key)) merged[key] = true; });
     return merged;
-  }, [intents, defaults, suppressed]);
+  }, [intents, owned, hidden]);
 
   const flowNodes = layout.map((node) => {
     const tags = stepNodes.map((ids, index) => (ids.includes(node.node_id) ? index + 1 : 0)).filter(Boolean);
@@ -473,7 +473,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     if (point.x > box.left && point.x < box.right - 120 && point.y > box.top && point.y < box.bottom - 60) return;
     flow.setCenter(node.position.x + 130, node.position.y + 50, { zoom: flow.getZoom(), duration: 300 });
   }, [selected]);
-  const expansions = Object.keys(intents).length + suppressed.size;
+  const expansions = Object.keys(intents).length + hidden.size;
   if (!flowNodesAll.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
   return <div className="bm-canvas" ref={canvasRef}>
     <div className="bm-canvas-tools">

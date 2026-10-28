@@ -57,7 +57,7 @@ assert.deepEqual(parseRoute(""), { view: "home", id: null });
 assert.equal(routeHash("feature", "feature:screen:web:orders/new"), "#/feature/feature%3Ascreen%3Aweb%3Aorders%2Fnew");
 
 // Expansion placement keeps existing nodes and puts new ones beside their neighbour without overlap.
-const { placeNodes, defaultIntentKeys, visibleBaseEdges } = await import("./graph-place.js");
+const { placeNodes, defaultIntentKeys, baseIntentEdges, toggleBaseIntent, baseIntentChecked, connectedNodes } = await import("./graph-place.js");
 const placed = placeNodes(new Map([["a", { x: 0, y: 0 }], ["b", { x: 460, y: 0 }]]), ["a", "b", "c", "d"], [
   { source_node_id: "a", target_node_id: "b" }, { source_node_id: "a", target_node_id: "c" }, { source_node_id: "d", target_node_id: "a" },
 ]);
@@ -67,6 +67,28 @@ assert.deepEqual(placed.get("d"), { x: -460, y: 0 });
 const base = [{ edge_id: "e", source_node_id: "a", target_node_id: "b" }];
 const keys = defaultIntentKeys(base);
 assert.ok(keys.has("a|out|1") && keys.has("b|in|1"));
-assert.deepEqual(visibleBaseEdges(base, new Set(["a|out|1"])), []);
+
+// Flow entry → screen → class → method. Unticking "screen out 1" hides screen→class; both ends of that edge
+// read as unticked, and class and method (no longer connected to the entry) drop out. Ticking either end restores it.
+const chain = [
+  { edge_id: "e1", source_node_id: "entry", target_node_id: "screen" },
+  { edge_id: "e2", source_node_id: "screen", target_node_id: "class" },
+  { edge_id: "e3", source_node_id: "class", target_node_id: "method" },
+];
+const owned = baseIntentEdges(chain);
+let hidden = toggleBaseIntent(new Set(), owned, "screen|out|1", false);
+assert.deepEqual([...hidden], ["e2"]);
+assert.equal(baseIntentChecked(hidden, owned, "screen|out|1"), false);
+assert.equal(baseIntentChecked(hidden, owned, "class|in|1"), false);
+assert.equal(baseIntentChecked(hidden, owned, "class|out|1"), true);
+const shownEdges = chain.filter((edge) => !hidden.has(edge.edge_id));
+assert.deepEqual([...connectedNodes(["entry"], shownEdges)].sort(), ["entry", "screen"]);
+hidden = toggleBaseIntent(hidden, owned, "class|in|1", true);
+assert.equal(hidden.size, 0);
+assert.equal(baseIntentChecked(hidden, owned, "screen|out|1"), true);
+// A node still connected to the entry another way stays: with entry→class as well, hiding screen→class drops nothing.
+const diamond = [...chain, { edge_id: "e4", source_node_id: "entry", target_node_id: "class" }];
+const diamondHidden = toggleBaseIntent(new Set(), baseIntentEdges(diamond), "screen|out|1", false);
+assert.deepEqual([...connectedNodes(["entry"], diamond.filter((edge) => !diamondHidden.has(edge.edge_id)))].sort(), ["class", "entry", "method", "screen"]);
 
 console.log("business text self-check passed");
