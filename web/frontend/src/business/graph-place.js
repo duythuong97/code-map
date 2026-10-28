@@ -2,9 +2,9 @@
 // expansion adds are put next to the node they connect to (right for outgoing, left for incoming).
 import { expansionIntentKey } from "../flow-state.js";
 
-export const GAP_X = 380;
+export const GAP_X = 460;
 export const GAP_Y = 150;
-const NODE_W = 320;
+const NODE_W = 420;
 const NODE_H = 120;
 
 export function placeNodes(positions, nodeIds, edges) {

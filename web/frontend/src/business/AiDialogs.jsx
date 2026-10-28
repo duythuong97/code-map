@@ -4,7 +4,7 @@ import { businessApi } from "./api.js";
 import { Modal, copyText, downloadText } from "./ui.jsx";
 
 const OPTIONS = [
-  ["instructions", "Kèm hướng dẫn cho AI", "Hướng dẫn đầy đủ: dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, ví dụ. Bỏ chọn nếu bạn tự viết prompt riêng."],
+  ["instructions", "Kèm hướng dẫn cho AI", "File .md gồm hướng dẫn đầy đủ, phần dữ liệu và khối YAML là định dạng AI trả về. Bỏ chọn để chỉ lấy file YAML khi bạn tự viết prompt."],
   ["code", "Kèm đoạn code", "Cần để AI viết quy tắc có bằng chứng. Bỏ chọn nếu file quá lớn."],
   ["locked", "Gửi kèm phần đã duyệt và đã sửa tay", "Các phần này bị khoá, AI chỉ đọc để hiểu ngữ cảnh. Bỏ chọn thì AI viết lại cả những phần đó."],
   ["answers", "Kèm câu trả lời đã có", "Để AI không hỏi lại những gì đã được trả lời."],
@@ -31,7 +31,7 @@ export function ExportDialog({ featureId, featureName, onClose, onExported, noti
     <button type="button" className="bm-btn pri" disabled={!pack} onClick={() => { downloadText(pack.filename, pack.text); notify("Đã tải file"); }}><Download size={14} /> Tải file</button>
   </>;
   return <Modal title={`Xuất cho AI · ${featureName}`} onClose={onClose} footer={footer} wide>
-    <p>File gồm node và cạnh của tính năng, đoạn code làm bằng chứng, comment, các điều kiện trong code và template cần điền. AI không cần truy cập code hay graph.</p>
+    <p>Một file cho AI: hướng dẫn, dữ liệu của tính năng (node, cạnh, đoạn code, comment, điều kiện) và khối YAML là định dạng trả về. AI không cần truy cập code hay graph.</p>
     {pack ? <div className="bm-pack">
       <div><b>{pack.stats.nodes}</b><span>node</span></div><div><b>{pack.stats.edges}</b><span>cạnh</span></div>
       <div><b>{pack.stats.evidence}</b><span>đoạn code</span></div><div><b>{pack.stats.locked}</b><span>phần khoá</span></div>
@@ -41,13 +41,9 @@ export function ExportDialog({ featureId, featureName, onClose, onExported, noti
         <span>{label}<small>{hint}</small></span></label>)}
     </div>
     {error ? <p className="bm-error">{error}</p> : null}
-    <label className="bm-field">Xem trước{pack ? ` · ${pack.filename}` : ""}<small>Phần <code>flows</code> là định dạng AI phải trả về: điền các trường trống, giữ nguyên cấu trúc.</small>
+    <label className="bm-field">Xem trước{pack ? ` · ${pack.filename}` : ""}
       <textarea ref={preview} className="bm-code" rows={12} readOnly value={pack?.text || "Đang tạo file…"} spellCheck={false} /></label>
-    <ol className="bm-how"><li>Tải file về. Nếu chọn “Kèm hướng dẫn cho AI”, phần <code>instructions</code> ở đầu file là hướng dẫn đầy đủ; phần <code>flows</code> là định dạng AI phải trả về.</li>
-      <li>Đính kèm file vào AI (ChatGPT, Claude, Copilot…) kèm câu lệnh dưới đây.</li><li>Quay lại tính năng này, bấm “Nhập kết quả” và dán file AI trả về.</li></ol>
-    {pack?.prompt ? <div className="bm-prompt"><p>{pack.prompt}</p>
-      <div className="bm-actions"><span className="bm-muted small">Câu lệnh gửi kèm file</span>
-        <button type="button" className="bm-btn sm" onClick={async () => notify(await copyText(pack.prompt) ? "Đã sao chép câu lệnh" : "Không sao chép được, hãy chọn và sao chép tay")}>Sao chép câu lệnh</button></div></div> : null}
+    <p className="bm-muted small">Tải file về và đính kèm vào AI (ChatGPT, Claude, Copilot…). Không cần viết thêm câu lệnh: file đã có đủ hướng dẫn. Sau đó quay lại đây, bấm “Nhập kết quả” và dán khối YAML AI trả về.</p>
   </Modal>;
 }
 
@@ -89,7 +85,7 @@ export function ImportDialog({ featureId, featureName, onClose, onImported, noti
   </>;
   return <Modal title={`Nhập kết quả AI · ${featureName}`} onClose={onClose} footer={footer} wide>
     <p>Dán file AI trả về hoặc chọn file. Hệ thống kiểm tra file có đúng lần xuất của tính năng này không, tham chiếu node có hợp lệ không, và giữ nguyên các phần đã khoá. Nội dung mới vào ở trạng thái “AI viết · chưa duyệt”.</p>
-    <label className="bm-btn file"><Upload size={14} /> Chọn file<input type="file" accept=".yaml,.yml,.txt" hidden onChange={(event) => readFile(event.target.files[0])} /></label>
+    <label className="bm-btn file"><Upload size={14} /> Chọn file<input type="file" accept=".yaml,.yml,.md,.txt" hidden onChange={(event) => readFile(event.target.files[0])} /></label>
     <textarea className="bm-code" rows={14} value={text} spellCheck={false} aria-label="Nội dung file AI trả về" placeholder="export:\n  id: exp-…\nflows:\n  - id: flow:…"
       onChange={(event) => { setText(event.target.value); setCheck(null); }} />
     {error ? <p className="bm-error">{error}</p> : null}

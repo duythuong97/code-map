@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import sys
 import tempfile
@@ -48,6 +49,17 @@ EDGES = [
     (4, 5, "CALLS", "TECHNICAL", ""), (5, 6, "CALLS", "TECHNICAL", ""), (5, 7, "WRITES_TO", "TECHNICAL", "INSERT"),
     (10, 5, "CALLS", "TECHNICAL", ""),
 ]
+
+
+def load_pack(text: str) -> dict:
+    """The export with instructions is Markdown with YAML blocks; merge them back into one pack."""
+    blocks = re.findall(r"```yaml\n(.*?)```", text, flags=re.S)
+    if not blocks:
+        return yaml.safe_load(text)
+    pack: dict = {}
+    for block in blocks:
+        pack.update(yaml.safe_load(block))
+    return pack
 
 
 def business_graph(path: Path) -> None:
@@ -118,7 +130,7 @@ class BusinessApiTests(unittest.TestCase):
         return self.call("post", f"/features/{FEATURE}/ai-export" + (f"?{query}" if query else ""))
 
     def fill(self, pack_text: str, *, step_text: str, s1_text: str | None = None) -> str:
-        pack = yaml.safe_load(pack_text)
+        pack = load_pack(pack_text)
         flow = next(flow for flow in pack["flows"] if flow["id"] == FLOW)
         flow["name"] = "Tạo đơn hàng"
         flow["summary"]["text"] = "Nhân viên lập đơn cho khách."
@@ -168,8 +180,9 @@ class BusinessApiTests(unittest.TestCase):
 
     def test_export_pack_carries_graph_context_and_an_empty_template(self) -> None:
         result = self.export()
-        self.assertTrue(result["filename"].endswith(".codemap-ai.yaml"))
-        pack = yaml.safe_load(result["text"])
+        self.assertTrue(result["filename"].endswith(".codemap-ai.md"))
+        self.assertIn("# Định dạng trả về", result["text"])
+        pack = load_pack(result["text"])
         refs = [node["ref"] for node in pack["context"]["nodes"]]
         self.assertIn("api: POST /api/orders", refs)
         self.assertIn("method: OrderController.Create", refs)
@@ -183,13 +196,18 @@ class BusinessApiTests(unittest.TestCase):
         self.assertEqual(flow["id"], FLOW)
         self.assertEqual([step["text"] for step in flow["steps"]], ["", ""])
         self.assertEqual(result["stats"]["locked"], 0)
-        self.assertIn("Quy tắc bắt buộc", pack["instructions"])
-        bare = yaml.safe_load(self.export(code=0, instructions=0)["text"])
+        self.assertIn("Quy tắc bắt buộc", result["text"])
+        plain = self.export(code=0, instructions=0)
+        self.assertTrue(plain["filename"].endswith(".codemap-ai.yaml"))
+        bare = yaml.safe_load(plain["text"])
         self.assertNotIn("evidence", bare["context"])
         self.assertNotIn("instructions", bare)
 
     def test_import_checks_references_and_saves_the_document(self) -> None:
         text = self.fill(self.export()["text"], step_text="[[OrderController.Create]] gọi [[PKG_ORDER.CREATE_ORDER]]. Đọc [[ORDER_DISCOUNT]].")
+        # The AI answers with just the export/flows block, often fenced and with a sentence around it.
+        reply = {key: value for key, value in yaml.safe_load(text).items() if key in ("export", "flows")}
+        text = "Đây là kết quả:\n\n```yaml\n" + yaml.safe_dump(reply, allow_unicode=True, sort_keys=False) + "```\n"
         check = self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": text})
         self.assertTrue(check["ok"])
         errors = [line["message"] for line in check["lines"] if line["level"] == "error"]
@@ -216,7 +234,7 @@ class BusinessApiTests(unittest.TestCase):
         self.assertEqual(approved["flow"]["summary"]["status"], "approved")
         second = self.export()
         self.assertEqual(second["stats"]["locked"], 2)
-        pack = yaml.safe_load(second["text"])
+        pack = load_pack(second["text"])
         s1 = pack["flows"][0]["steps"][0]
         self.assertEqual((s1["locked"], s1["text"]), (True, "Người dùng sửa."))
         s1["locked"] = False  # an AI that ignores the lock
@@ -230,7 +248,7 @@ class BusinessApiTests(unittest.TestCase):
 
     def test_import_rejects_a_pack_from_another_export(self) -> None:
         text = self.fill(self.export()["text"], step_text="x")
-        pack = yaml.safe_load(text)
+        pack = load_pack(text)
         pack["export"]["id"] = "exp-9999"
         check = self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": yaml.safe_dump(pack)})
         self.assertFalse(check["ok"])
@@ -243,7 +261,7 @@ class BusinessApiTests(unittest.TestCase):
         answered = self.call("post", f"/flows/{FLOW}/questions/q1/answer", json={"answer": "Số lượng > 0."})
         self.assertEqual(answered["flow"]["questions"][0]["answer"], "Số lượng > 0.")
         self.assertIn({"q": "Quy tắc kiểm tra dòng đơn gồm những gì?", "a": "Số lượng > 0."},
-                      yaml.safe_load(self.export()["text"])["context"]["answered"])
+                      load_pack(self.export()["text"])["context"]["answered"])
         renamed = self.call("patch", "/items/menu:orders", json={"name": "Đơn hàng", "description": "Màn hình bán hàng"})
         self.assertEqual((self.tree_item(renamed["tree"], "menu:orders")["name"]), "Đơn hàng")
         assigned = self.call("patch", f"/items/entry:{PING}", json={"parent_id": FEATURE})

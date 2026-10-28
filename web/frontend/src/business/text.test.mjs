@@ -57,12 +57,12 @@ assert.equal(routeHash("feature", "feature:screen:web:orders/new"), "#/feature/f
 
 // Expansion placement keeps existing nodes and puts new ones beside their neighbour without overlap.
 const { placeNodes, defaultIntentKeys, visibleBaseEdges } = await import("./graph-place.js");
-const placed = placeNodes(new Map([["a", { x: 0, y: 0 }], ["b", { x: 380, y: 0 }]]), ["a", "b", "c", "d"], [
+const placed = placeNodes(new Map([["a", { x: 0, y: 0 }], ["b", { x: 460, y: 0 }]]), ["a", "b", "c", "d"], [
   { source_node_id: "a", target_node_id: "b" }, { source_node_id: "a", target_node_id: "c" }, { source_node_id: "d", target_node_id: "a" },
 ]);
 assert.deepEqual(placed.get("a"), { x: 0, y: 0 });
-assert.deepEqual(placed.get("c"), { x: 380, y: 150 });
-assert.deepEqual(placed.get("d"), { x: -380, y: 0 });
+assert.deepEqual(placed.get("c"), { x: 460, y: 150 });
+assert.deepEqual(placed.get("d"), { x: -460, y: 0 });
 const base = [{ edge_id: "e", source_node_id: "a", target_node_id: "b" }];
 const keys = defaultIntentKeys(base);
 assert.ok(keys.has("a|out|1") && keys.has("b|in|1"));

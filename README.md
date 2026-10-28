@@ -487,12 +487,14 @@ câu trả lời lưu trong `knowledge.sqlite` (bảng `biz_items`, `biz_flows`,
 
 **Viết bằng AI** (ở trang tính năng hoặc đầu tài liệu luồng):
 
-1. **Xuất cho AI** tạo một file YAML cho tính năng: `export` (mã lần xuất,
-   `graph_hash`), `instructions` (hướng dẫn đầy đủ cho AI: dữ liệu có gì, cần
-   điền gì, quy tắc trích dẫn và bằng chứng, định dạng trả về, ví dụ), `context` (node, cạnh, đoạn code, comment,
-   điều kiện IF/EXCEPTION lấy từ `semantic_tree`, câu trả lời đã có) và
-   `flows` (template cần điền; phần đã sửa tay hoặc đã duyệt có `locked: true`).
-2. Đưa file cho AI, yêu cầu điền theo `instructions` và trả về YAML.
+1. **Xuất cho AI** tạo một file hướng dẫn `.md` cho tính năng gồm: phần hướng
+   dẫn (dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, ví dụ),
+   phần **Dữ liệu** (khối YAML `context`: node, cạnh, đoạn code, comment, điều
+   kiện IF/EXCEPTION lấy từ `semantic_tree`, câu trả lời đã có) và phần **Định
+   dạng trả về** (khối YAML `export` + `flows` cần điền; phần đã sửa tay hoặc đã
+   duyệt có `locked: true`). Bỏ tick "Kèm hướng dẫn cho AI" để chỉ lấy file YAML.
+2. Đính kèm file vào AI; không cần câu lệnh riêng. AI trả về đúng khối YAML
+   `export` + `flows` (có thể nằm trong khối ```` ```yaml ````).
 3. **Nhập kết quả** kiểm tra file thuộc đúng lần xuất của tính năng, graph đã
    đổi chưa, mọi tham chiếu `[[tên]]` / `loại: tên` có trong graph không, quy
    tắc nào thiếu evidence; rồi ghi nội dung mới ở trạng thái "AI viết · chưa

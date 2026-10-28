@@ -71,8 +71,8 @@ REF_KEYS = {
 
 INSTRUCTIONS = """\
 Bạn là chuyên viên phân tích nghiệp vụ (BA) kiêm lập trình viên. Nhiệm vụ: viết tài liệu nghiệp vụ cho
-một tính năng của hệ thống, dựa hoàn toàn vào dữ liệu trong phần `context` của file này. Bạn không có
-quyền truy cập code hay database nào khác.
+một tính năng của hệ thống, dựa hoàn toàn vào dữ liệu trong phần "Dữ liệu" (khối YAML `context`) ở cuối file
+này. Bạn không có quyền truy cập code hay database nào khác. Kết quả trả về theo đúng phần "Định dạng trả về".
 
 # Dữ liệu bạn có
 - `context.feature`: tên, route/jobnet, điểm vào và mô tả hiện có của tính năng.
@@ -86,7 +86,7 @@ quyền truy cập code hay database nào khác.
 - `context.answered`: câu hỏi đã được người dùng trả lời. Coi câu trả lời là sự thật, không hỏi lại.
 
 # Việc cần làm
-Điền vào phần `flows`. Mỗi flow là một luồng nghiệp vụ, đã được hệ thống chia sẵn thành các bước theo
+Điền vào khối YAML ở phần "Định dạng trả về" (`flows`). Mỗi flow là một luồng nghiệp vụ, đã được hệ thống chia sẵn thành các bước theo
 hệ thống mà luồng đi qua (màn hình → API → database …); mỗi bước đã có sẵn danh sách `nodes`.
 - `name` của flow: tên nghiệp vụ ngắn, dạng động từ + đối tượng (vd "Tạo đơn hàng"), không dùng tên kỹ thuật.
 - `summary.text`: 1–3 đoạn. Ai làm, để làm gì, kết quả nghiệp vụ là gì, luồng này không bao gồm việc gì.
@@ -104,14 +104,15 @@ hệ thống mà luồng đi qua (màn hình → API → database …); mỗi b�
 
 # Quy tắc bắt buộc
 1. Chỉ điền các trường đang trống. Không sửa phần có `locked: true` (người đã duyệt hoặc sửa tay); đọc chúng để hiểu ngữ cảnh.
-2. Không sửa `export`, `instructions`, `context`. Giữ nguyên `id` của flow và step, số bước và danh sách `nodes`.
+2. Không sửa `export`. Giữ nguyên `id` của flow và step, số bước và danh sách `nodes`.
 3. Trích dẫn node bằng `[[tên]]`, trong đó `tên` là phần sau dấu `:` của một `ref` trong `context.nodes`
    (vd `[[PKG_ORDER.CREATE_ORDER]]`). Không trích dẫn node không có trong danh sách, không bịa tên bảng/hàm.
 4. Không khẳng định điều không có trong context. Chỗ nào không chắc, viết thành một câu trong `questions`.
 5. Rule nào không có `evidence` sẽ bị hệ thống đánh dấu "Cần xác nhận"; đừng bịa vị trí.
 6. Viết tiếng Việt, câu ngắn, chủ động. Giữ nguyên tên kỹ thuật (bảng, API, giá trị như 'PENDING').
    Các đoạn cách nhau bằng một dòng trống; có thể dùng **đậm** và `code`.
-7. Trả về TOÀN BỘ file dưới dạng YAML hợp lệ (cùng cấu trúc, cùng thứ tự). Không thêm lời giải thích ngoài YAML.
+7. Chỉ trả về MỘT khối YAML hợp lệ: đúng khối ở phần "Định dạng trả về" (`export` và `flows`) đã điền, cùng cấu
+   trúc và thứ tự. Không chép lại `context` hay phần hướng dẫn, không thêm lời giải thích ngoài YAML.
    Dùng block `|` cho các đoạn văn nhiều dòng.
 
 # Ví dụ một bước đã điền
@@ -130,11 +131,6 @@ hệ thống mà luồng đi qua (màn hình → API → database …); mỗi b�
     text: Thân procedure chỉ có NULL nên không dòng nào bị từ chối.
 """
 
-CHAT_PROMPT = (
-    "Đính kèm là file YAML mô tả một tính năng trong hệ thống của tôi (node, cạnh, đoạn code). "
-    "Hãy đọc phần `instructions` ở đầu file và làm đúng theo đó: điền các trường đang trống trong `flows`, "
-    "không sửa phần `locked`, `export`, `context`, rồi trả về toàn bộ file dưới dạng YAML hợp lệ, không kèm lời giải thích."
-)
 
 
 class _BlockDumper(yaml.SafeDumper):
@@ -892,7 +888,6 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     path = " / ".join(step["name"] for step in _path(tree, feature_id))
     pack = {
         "export": {"id": export_id, "feature_id": feature_id, "feature": path, "graph_hash": current_hash, "generated": _now()},
-        **({"instructions": INSTRUCTIONS} if include_instructions else {}),
         "context": {
             "feature": {"name": feature["name"], "route": feature["route"], "entry": ref_of(index.nodes[feature["entry_node_id"]]),
                         "description": feature.get("description", "")},
@@ -903,11 +898,21 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
         },
         "flows": flows,
     }
-    header = (f'# Code Map · gói viết tài liệu cho tính năng "{feature["name"]}"\n'
-              "# `context` là dữ liệu; `flows` là định dạng AI phải trả về (điền các trường trống, giữ nguyên cấu trúc).\n")
-    text = header + yaml.dump(pack, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False, width=100)
     slug = re.sub(r"[^a-z0-9]+", "-", feature["route"].lower()).strip("-") or "feature"
-    return {"export_id": export_id, "filename": f"{slug}.codemap-ai.yaml", "text": text, "prompt": CHAT_PROMPT,
+    dump = lambda value: yaml.dump(value, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False, width=100)
+    if include_instructions:
+        # One instruction file: the guide, the data, and the YAML block the AI fills in and sends back.
+        text = (f'# Hướng dẫn cho AI · viết tài liệu nghiệp vụ cho tính năng "{path}"\n\n{INSTRUCTIONS}\n'
+                "# Dữ liệu\n\nChỉ để đọc, không trả về phần này.\n\n"
+                f"```yaml\n{dump({'context': pack['context']})}```\n\n"
+                "# Định dạng trả về\n\nĐiền các trường trống trong khối dưới đây và trả về đúng một khối YAML này.\n\n"
+                f"```yaml\n{dump({'export': pack['export'], 'flows': pack['flows']})}```\n")
+        filename = f"{slug}.codemap-ai.md"
+    else:
+        text = (f'# Code Map · tính năng "{feature["name"]}". `context` là dữ liệu; `flows` là định dạng trả về.\n'
+                + dump(pack))
+        filename = f"{slug}.codemap-ai.yaml"
+    return {"export_id": export_id, "filename": filename, "text": text,
             "stats": {"nodes": len(nodes), "edges": len(edges), "evidence": len(evidence), "locked": locked, "flows": len(flows)}}
 
 
@@ -945,6 +950,14 @@ def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], i
 def _parse_pack(text: Any) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise BusinessError("invalid_import", "Dán nội dung file AI trả về")
+    blocks = re.findall(r"```(?:ya?ml)?[ \t]*\n(.*?)```", text, flags=re.S)
+    for block in blocks:
+        try:
+            doc = yaml.safe_load(block)
+        except yaml.YAMLError:
+            continue
+        if isinstance(doc, dict) and isinstance(doc.get("flows"), list):
+            return doc
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:

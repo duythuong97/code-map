@@ -294,6 +294,9 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
   const [intents, setIntents] = useState({});
   const [localized, setLocalized] = useState({});
   const [suppressed, setSuppressed] = useState(() => new Set());
+  // Nodes the user dragged keep their spot; `moving` holds the position while a drag is in progress.
+  const [dragged, setDragged] = useState({});
+  const [moving, setMoving] = useState(null);
   const filters = flowFiltersKey(MAX_EXPANSION_NODES);
   const baseEdges = useMemo(() => edges.map((edge) => ({ ...edge, source_node_id: edge.source, target_node_id: edge.target })), [edges]);
   const defaults = useMemo(() => defaultIntentKeys(baseEdges), [baseEdges]);
@@ -365,12 +368,13 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
     setGroups({});
     setGroupStates({});
     setSuppressed(new Set());
+    setDragged({});
     Object.values(intents).forEach((intent) => void loadGroup(intent.node, intent.mode, intent.direction, level));
   }
 
   function clearExpansions() {
     requests.current.forEach((controller) => controller.abort());
-    setGroups({}); setGroupStates({}); setIntents({}); setSuppressed(new Set());
+    setGroups({}); setGroupStates({}); setIntents({}); setSuppressed(new Set()); setDragged({});
   }
 
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
@@ -394,9 +398,21 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
   const positions = useMemo(() => {
     const allEdges = [...baseEdges, ...Object.values(groups).flatMap((group) => group.edges || [])];
     const order = Object.values(groups).flatMap((group) => (group.nodes || []).map((node) => node.node_id));
-    return placeNodes(basePositions, [...nodes.map((node) => node.node_id), ...order], allEdges);
-  }, [basePositions, nodes, baseEdges, groups]);
-  const layout = graph.nodes.map((node) => ({ ...node, position: positions.get(node.node_id) || { x: 0, y: 0 } }));
+    return placeNodes(new Map([...basePositions, ...Object.entries(dragged)]), [...nodes.map((node) => node.node_id), ...order], allEdges);
+  }, [basePositions, nodes, baseEdges, groups, dragged]);
+  const layout = graph.nodes.map((node) => ({ ...node, position: (moving?.id === node.node_id && moving.position) || positions.get(node.node_id) || { x: 0, y: 0 } }));
+  const onNodesChange = useCallback((changes) => {
+    for (const change of changes) {
+      if (change.type !== "position") continue;
+      if (change.dragging && change.position) setMoving({ id: change.id, position: change.position });
+      else if (change.dragging === false) {
+        setMoving((current) => {
+          if (current?.id === change.id) setDragged((saved) => ({ ...saved, [change.id]: change.position || current.position }));
+          return null;
+        });
+      }
+    }
+  }, []);
   const intentsShown = useMemo(() => {
     const merged = { ...intents };
     defaults.forEach((key) => { if (!suppressed.has(key)) merged[key] = true; });
@@ -442,7 +458,7 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
       {expansions ? <button type="button" className="bm-btn sm" onClick={clearExpansions}>Về graph ban đầu</button> : null}
     </div>
     <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} onInit={(value) => { instance.current = value; fit(); }}
-      onNodeClick={(_, node) => onNodeClick(node.id)} nodesConnectable={false} onlyRenderVisibleElements minZoom={0.15} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
+      onNodeClick={(_, node) => onNodeClick(node.id)} onNodesChange={onNodesChange} nodesDraggable nodesConnectable={false} onlyRenderVisibleElements minZoom={0.15} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
       <Background gap={20} size={1.2} />
       <Controls showInteractive={false} />
     </ReactFlow>

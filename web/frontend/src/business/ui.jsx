@@ -58,7 +58,7 @@ export function Modal({ title, children, footer, onClose, wide }) {
 }
 
 export function downloadText(filename, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/yaml;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob([text], { type: filename.endsWith(".md") ? "text/markdown;charset=utf-8" : "text/yaml;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;

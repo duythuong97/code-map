@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Network, PanelLeft } from "lucide-react";
+import { ArrowLeft, Monitor, Moon, Network, PanelLeft, Sun } from "lucide-react";
 import "./business.css";
 import { businessApi } from "./api.js";
 import NavTree from "./NavTree.jsx";
@@ -10,6 +10,30 @@ import { ExportDialog, ImportDialog } from "./AiDialogs.jsx";
 import { parseRoute, routeHash } from "./text.js";
 
 const CodeFlowApp = lazy(() => import("../CodeFlowApp.jsx"));
+
+const THEMES = [["system", "Theo hệ điều hành", Monitor], ["light", "Sáng", Sun], ["dark", "Tối", Moon]];
+
+function readTheme() {
+  try { return localStorage.getItem("bm.theme") || "system"; } catch { return "system"; }
+}
+
+function applyTheme(theme) {
+  if (theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+}
+
+applyTheme(readTheme());
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState(readTheme);
+  useEffect(() => {
+    applyTheme(theme);
+    try { localStorage.setItem("bm.theme", theme); } catch { /* ignore */ }
+  }, [theme]);
+  return <span className="bm-seg bm-theme" role="group" aria-label="Giao diện sáng hoặc tối">
+    {THEMES.map(([key, label, Icon]) => <button key={key} type="button" title={label} aria-label={label} aria-pressed={theme === key} onClick={() => setTheme(key)}><Icon size={14} /></button>)}
+  </span>;
+}
 
 function findItem(tree, id) {
   const stack = [...(tree?.menus || [])];
@@ -88,7 +112,7 @@ export default function BusinessApp() {
         <a className="bm-logo" href="#/"><span className="bm-logo-mark" aria-hidden="true" />Code Map</a>
       </span>
       <SearchBox onPick={pickSearch} />
-      <span className="bm-top-r"><a className="bm-btn ghost" href="#/explore"><Network size={14} /> Khám phá graph</a></span>
+      <span className="bm-top-r"><ThemeToggle /><a className="bm-btn ghost" href="#/explore"><Network size={14} /> Khám phá graph</a></span>
     </header>
     <div className={`bm-body${collapsed ? " collapsed" : ""}${drawer ? " drawer" : ""}`}>
       {tree ? <NavTree tree={tree} selectedId={selectedId} onSelect={openItem} /> : <nav className="bm-nav"><p className="bm-muted bm-pad">{error || "Đang tải cây tính năng…"}</p></nav>}
