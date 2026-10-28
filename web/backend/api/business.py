@@ -814,7 +814,8 @@ def _conditions(tree: Any) -> list[dict[str, Any]]:
 
 
 def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], web_path: Path, feature_id: str,
-                *, include_code: bool = True, include_locked: bool = True, include_answers: bool = True) -> dict[str, Any]:
+                *, include_code: bool = True, include_locked: bool = True, include_answers: bool = True,
+                include_instructions: bool = True) -> dict[str, Any]:
     feature = find_item(tree, feature_id)
     if not feature or feature["kind"] != "feature":
         raise BusinessError("not_found", "Feature not found", 404)
@@ -868,7 +869,7 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     path = " / ".join(step["name"] for step in _path(tree, feature_id))
     pack = {
         "export": {"id": export_id, "feature_id": feature_id, "feature": path, "graph_hash": current_hash, "generated": _now()},
-        "instructions": INSTRUCTIONS,
+        **({"instructions": INSTRUCTIONS} if include_instructions else {}),
         "context": {
             "feature": {"name": feature["name"], "route": feature["route"], "entry": ref_of(index.nodes[feature["entry_node_id"]]),
                         "description": feature.get("description", "")},
@@ -880,7 +881,7 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
         "flows": flows,
     }
     header = (f'# Code Map · gói viết tài liệu cho tính năng "{feature["name"]}"\n'
-              "# Đưa nguyên file này cho AI. AI trả về đúng file này với các trường trống đã được điền.\n")
+              "# `context` là dữ liệu; `flows` là định dạng AI phải trả về (điền các trường trống, giữ nguyên cấu trúc).\n")
     text = header + yaml.dump(pack, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False, width=100)
     slug = re.sub(r"[^a-z0-9]+", "-", feature["route"].lower()).strip("-") or "feature"
     return {"export_id": export_id, "filename": f"{slug}.codemap-ai.yaml", "text": text, "prompt": CHAT_PROMPT,

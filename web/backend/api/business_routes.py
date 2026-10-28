@@ -120,6 +120,7 @@ def business_ai_export(feature_id):
         return jsonify(business.export_pack(
             db, index, tree, web_path, feature_id,
             include_code=_flag("code"), include_locked=_flag("locked"), include_answers=_flag("answers"),
+            include_instructions=_flag("instructions"),
         ))
 
 

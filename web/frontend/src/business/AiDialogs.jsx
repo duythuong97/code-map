@@ -4,13 +4,14 @@ import { businessApi } from "./api.js";
 import { Modal, copyText, downloadText } from "./ui.jsx";
 
 const OPTIONS = [
+  ["instructions", "Kèm hướng dẫn cho AI", "Hướng dẫn đầy đủ: dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, ví dụ. Bỏ chọn nếu bạn tự viết prompt riêng."],
   ["code", "Kèm đoạn code", "Cần để AI viết quy tắc có bằng chứng. Bỏ chọn nếu file quá lớn."],
   ["locked", "Gửi kèm phần đã duyệt và đã sửa tay", "Các phần này bị khoá, AI chỉ đọc để hiểu ngữ cảnh. Bỏ chọn thì AI viết lại cả những phần đó."],
   ["answers", "Kèm câu trả lời đã có", "Để AI không hỏi lại những gì đã được trả lời."],
 ];
 
 export function ExportDialog({ featureId, featureName, onClose, onExported, notify }) {
-  const [flags, setFlags] = useState({ code: true, locked: true, answers: true });
+  const [flags, setFlags] = useState({ instructions: true, code: true, locked: true, answers: true });
   const [pack, setPack] = useState(null);
   const [error, setError] = useState("");
   const preview = useRef(null);
@@ -40,9 +41,9 @@ export function ExportDialog({ featureId, featureName, onClose, onExported, noti
         <span>{label}<small>{hint}</small></span></label>)}
     </div>
     {error ? <p className="bm-error">{error}</p> : null}
-    <label className="bm-field">Xem trước{pack ? ` · ${pack.filename}` : ""}
+    <label className="bm-field">Xem trước{pack ? ` · ${pack.filename}` : ""}<small>Phần <code>flows</code> là định dạng AI phải trả về: điền các trường trống, giữ nguyên cấu trúc.</small>
       <textarea ref={preview} className="bm-code" rows={12} readOnly value={pack?.text || "Đang tạo file…"} spellCheck={false} /></label>
-    <ol className="bm-how"><li>Tải file về. Phần <code>instructions</code> ở đầu file là hướng dẫn đầy đủ cho AI: dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, định dạng trả về.</li>
+    <ol className="bm-how"><li>Tải file về. Nếu chọn “Kèm hướng dẫn cho AI”, phần <code>instructions</code> ở đầu file là hướng dẫn đầy đủ; phần <code>flows</code> là định dạng AI phải trả về.</li>
       <li>Đính kèm file vào AI (ChatGPT, Claude, Copilot…) kèm câu lệnh dưới đây.</li><li>Quay lại tính năng này, bấm “Nhập kết quả” và dán file AI trả về.</li></ol>
     {pack?.prompt ? <div className="bm-prompt"><p>{pack.prompt}</p>
       <div className="bm-actions"><span className="bm-muted small">Câu lệnh gửi kèm file</span>

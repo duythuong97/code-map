@@ -179,8 +179,10 @@ class BusinessApiTests(unittest.TestCase):
         self.assertEqual(flow["id"], FLOW)
         self.assertEqual([step["text"] for step in flow["steps"]], ["", ""])
         self.assertEqual(result["stats"]["locked"], 0)
-        bare = yaml.safe_load(self.export(code=0)["text"])
+        self.assertIn("Quy tắc bắt buộc", pack["instructions"])
+        bare = yaml.safe_load(self.export(code=0, instructions=0)["text"])
         self.assertNotIn("evidence", bare["context"])
+        self.assertNotIn("instructions", bare)
 
     def test_import_checks_references_and_saves_the_document(self) -> None:
         text = self.fill(self.export()["text"], step_text="[[OrderController.Create]] gọi [[PKG_ORDER.CREATE_ORDER]]. Đọc [[ORDER_DISCOUNT]].")
