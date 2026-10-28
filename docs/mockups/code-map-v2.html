@@ -104,33 +104,73 @@ kbd { font-family: var(--font-mono); font-size: 10.5px; border: 1px solid var(--
 .icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg-2); }
 .icon-btn:hover { background: var(--hover); }
 
-/* ---------------- Home ---------------- */
+/* ---------------- Home: cây Menu → Tính năng → Luồng ---------------- */
 .home { overflow-y: auto; }
-.home-in { max-width: 1040px; margin: 0 auto; padding-block: 56px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
-.hero { display: grid; gap: 14px; }
-.hero h1 { margin: 0; font-size: clamp(26px, 3.4vw, 36px); letter-spacing: -.025em; line-height: 1.15; text-wrap: balance; max-width: 22ch; }
-.hero p { margin: 0; color: var(--muted); font-size: 15px; max-width: 62ch; }
+.home-in { max-width: 1280px; margin: 0 auto; padding-block: 36px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.hero { display: grid; gap: 10px; }
+.hero h1 { margin: 0; font-size: clamp(24px, 3vw, 30px); letter-spacing: -.025em; line-height: 1.2; text-wrap: balance; }
+.hero p { margin: 0; color: var(--muted); font-size: 14.5px; max-width: 70ch; }
 .try { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; }
 .try button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
 .try button:hover { border-color: var(--muted); }
 .try .m { font-family: var(--font-mono); font-size: 12px; }
-.sec-t { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.sec-t h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
-.sec-t span { color: var(--muted); font-size: 12.5px; }
-.flows { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-.fcard { display: grid; gap: 12px; text-align: left; padding: 16px 18px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); transition: border-color .15s, transform .15s; }
-.fcard:not([disabled]):hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); transform: translateY(-1px); }
-.fcard[disabled] { cursor: default; }
-.fcard .dom { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
-.fcard h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
-.fcard p { margin: 0; color: var(--fg-2); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.fmeta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); align-items: center; }
-.steps-mini { display: flex; gap: 3px; }
-.steps-mini i { height: 5px; flex: 1; border-radius: 3px; background: var(--line); }
-.steps-mini i.ok { background: var(--ok); }
-.steps-mini i.ed { background: var(--focus); }
-.steps-mini i.ai { background: color-mix(in srgb, var(--ai) 55%, transparent); }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 440px); gap: 20px; align-items: start; }
+.tree-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); min-width: 0; }
+.tree-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 14px 16px 12px; border-bottom: 1px solid var(--line-soft); }
+.tree-head h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+.tree-head p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.tree-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); }
+.chip-f { height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--fg-2); display: inline-flex; align-items: center; gap: 6px; }
+.chip-f[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--fg); }
+.chip-f b { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
+.tree-tools .sp { flex: 1; }
+.tree { list-style: none; margin: 0; padding: 6px; display: grid; gap: 1px; }
+.trow { --d: 0; display: grid; grid-template-columns: 20px 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 38px; padding: 4px 10px 4px calc(8px + var(--d) * 22px); border-radius: 9px; cursor: pointer; position: relative; outline: none;
+  background-image: repeating-linear-gradient(to right, transparent 0 17px, var(--line) 17px 18px, transparent 18px 22px); background-size: calc(var(--d) * 22px) 100%; background-position: 8px 0; background-repeat: no-repeat; }
+.trow:hover { background-color: var(--hover); }
+.trow:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.trow.sel { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
+.trow.sel::after { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--accent); }
+.chev { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; color: var(--muted); border: 0; background: none; padding: 0; transition: transform .15s; }
+.chev:hover { background: var(--line); color: var(--fg); }
+.trow[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.tic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.tname { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.tname b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow.k-feature .tname b { font-weight: 550; }
+.trow.k-flow .tname b, .trow.k-orphan .tname b { font-weight: 450; color: var(--fg-2); }
+.trow.k-orphan .tname b { font-family: var(--font-mono); font-size: 12.5px; }
+.tname code { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tmeta { display: flex; gap: 10px; align-items: center; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.mbar { display: flex; gap: 2px; width: 72px; }
+.mbar i { height: 5px; flex: 1; border-radius: 3px; background: var(--line); }
+.mbar i.ok { background: var(--ok); } .mbar i.ed { background: var(--focus); } .mbar i.ai { background: color-mix(in srgb, var(--ai) 55%, transparent); } .mbar i.none { background: none; box-shadow: inset 0 0 0 1px var(--line); }
+.qb { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); font-weight: 600; }
+.nodoc { color: var(--muted); font-style: italic; }
 
+.side { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 18px 20px; display: grid; gap: 16px; min-width: 0; max-height: calc(100vh - 120px); overflow-y: auto; }
+.side .kind { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
+.side h3 { margin: 4px 0 0; font-size: 21px; letter-spacing: -.02em; line-height: 1.25; text-wrap: balance; }
+.side .path { font-size: 12px; color: var(--muted); }
+.side .prose { font-size: 14px; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--line); }
+.stats div { background: var(--panel); padding: 10px 12px; display: grid; gap: 2px; }
+.stats b { font-size: 18px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stats span { font-size: 11.5px; color: var(--muted); }
+.entry { display: grid; gap: 6px; }
+.entry div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; font-size: 12.5px; align-items: baseline; }
+.entry dt { color: var(--muted); }
+.entry dd { margin: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.entry code { font-size: 11.5px; padding: 1px 6px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); }
+.flist { display: grid; gap: 8px; }
+.fitem { display: grid; gap: 6px; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised); }
+.fitem:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.fitem .fh { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.fitem b { font-size: 14px; }
+.fitem p { margin: 0; font-size: 12.5px; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fitem .tmeta { justify-content: flex-start; }
+.side-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.edit-in { display: grid; gap: 10px; }
 .prov { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); }
 .prov.ai { --c: var(--ai); }
 .prov.edited { --c: var(--focus); }
@@ -301,6 +341,9 @@ kbd { font-family: var(--font-mono); font-size: 10.5px; border: 1px solid var(--
 .toast { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 70; padding: 10px 16px; border-radius: 10px; background: var(--fg); color: var(--bg); font-size: 13px; font-weight: 500; box-shadow: var(--shadow); }
 
 @media (max-width: 1080px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; max-height: none; }
+  .home { height: auto !important; }
   body { overflow: auto; }
   .shell { height: auto; min-height: 100%; }
   .flow { grid-template-columns: minmax(0, 1fr); height: auto; }
@@ -317,7 +360,7 @@ kbd { font-family: var(--font-mono); font-size: 10.5px; border: 1px solid var(--
   .step { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
   .step .num { width: 28px; height: 28px; font-size: 12px; }
   .step::before { left: 13px; top: 32px; }
-  .flows { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { *, .doc, .canvas-wrap { transition: none !important; scroll-behavior: auto !important; } }
 </style>
@@ -432,15 +475,59 @@ Ngay sau đó hệ thống giữ hàng: mỗi dòng đơn sinh một bản ghi [
     { q: "Bản ghi thanh toán FAILED có cần được giữ lại khi tạo đơn thất bại không?", a: "" },
   ],
 };
-const OTHER_FLOWS = [
-  { name: "Huỷ đơn hàng", domain: "Đơn hàng", text: "Nhân viên huỷ đơn từ màn hình chi tiết. Đơn chuyển CANCELLED, giữ hàng bị xoá và ghi audit shipment.", steps: ["ai", "ai"], q: 2 },
-  { name: "Phân bổ tồn kho", domain: "Kho & xuất hàng", text: "Batch ORDER_DAILY phân bổ hàng cho đơn PENDING. Còn hàng thì ALLOCATED, hết hàng thì tạo backorder.", steps: ["ok", "ai", "ai"], q: 1 },
-  { name: "Tạo shipment & xác nhận xuất", domain: "Kho & xuất hàng", text: "Job CREATE_SHIPMENTS tạo shipment và kiện hàng; nhân viên xác nhận xuất trên màn hình shipment.", steps: ["ai", "ai"], q: 2 },
-  { name: "Đối soát cuối ngày", domain: "Vận hành", text: "Tổng hợp số đơn và tổng tiền từ hôm qua vào ORDER_DAILY_SUMMARY, sau đó xuất dữ liệu cho đối tác.", steps: ["ai"], q: 1 },
-];
+/* Cây Menu → Tính năng → Luồng. Menu lấy từ route Angular và jobnet; người dùng đổi tên, gộp, mô tả. */
+const TREE = [
+  { id: "m-orders", kind: "menu", name: "Đơn hàng", src: "Menu customer-web · 2 route", prov: "ok",
+    desc: "Nhóm màn hình nhân viên bán hàng dùng hằng ngày: lập đơn mới cho khách và xử lý đơn đã có (tra cứu, huỷ, đổi trạng thái).", children: [
+    { id: "f-create", kind: "feature", name: "Tạo đơn", route: "orders/new", screen: "CreateOrderComponent", apis: ["POST /api/orders", "POST /api/orders/retry"], tables: ["ORDER_HEADER", "ORDER_LINE", "INVENTORY_RESERVATION", "PAYMENT_TRANSACTION"], prov: "edited",
+      desc: `Màn hình để nhân viên bán hàng lập đơn cho khách. Nhân viên nhập mã khách hàng, các dòng hàng đã được chuẩn bị sẵn ở vùng tạm theo khách, rồi bấm Gửi.
 
+Tính năng chỉ tạo đơn ở trạng thái **chờ xử lý**. Tồn kho được giữ ngay lúc tạo đơn, còn phân bổ thật sự do batch cuối ngày làm. Có một endpoint gửi lại (retry) dùng khi mạng lỗi; theo comment trong code thì gửi lại không tạo đơn trùng, nhưng chưa thấy code kiểm tra.`,
+      children: [{ id: "fl-create", kind: "flow", name: "Tạo đơn hàng", open: true }] },
+    { id: "f-detail", kind: "feature", name: "Chi tiết đơn", route: "orders/:id", screen: "OrderDetailComponent", apis: ["GET /api/orders/{id}", "DELETE …/orders/{id}", "PATCH …/orders/{id}/status"], tables: ["ORDER_HEADER", "INVENTORY_RESERVATION", "SHIPMENT_AUDIT"], prov: "ai",
+      desc: `Xem thông tin một đơn và thao tác trên đơn: huỷ đơn, đổi trạng thái hoặc gửi lại. Huỷ đơn chuyển trạng thái sang CANCELLED, xoá giữ hàng và ghi audit cho các shipment của đơn.
+
+Code huỷ đơn không kiểm tra trạng thái hiện tại, nên đơn đã phân bổ vẫn huỷ được. Đổi trạng thái gọi một endpoint chưa thấy ghi dữ liệu.`,
+      children: [
+        { id: "fl-read", kind: "flow", name: "Tra cứu đơn", steps: ["ok"], q: 0, text: "Mở chi tiết đơn theo mã. Đọc ORDER_HEADER để lấy trạng thái." },
+        { id: "fl-cancel", kind: "flow", name: "Huỷ đơn hàng", steps: ["ai", "ai"], q: 2, text: "Nhân viên huỷ đơn từ màn hình chi tiết. Đơn chuyển CANCELLED, giữ hàng bị xoá và ghi audit shipment." },
+        { id: "fl-status", kind: "flow", name: "Đổi trạng thái đơn", steps: null, text: "" },
+      ] },
+  ] },
+  { id: "m-ship", kind: "menu", name: "Xuất hàng", src: "Menu customer-web · 1 route", prov: "ai",
+    desc: "Màn hình kho dùng để xác nhận các shipment do batch tạo ra.", children: [
+    { id: "f-ship", kind: "feature", name: "Chi tiết shipment", route: "shipments/:id", screen: "ShipmentPageComponent", apis: ["POST …/shipments/{id}/confirm"], tables: ["SHIPMENT", "SHIPMENT_AUDIT"], prov: "ai",
+      desc: `Nhân viên kho mở shipment và bấm xác nhận xuất hàng. Mỗi lần trạng thái shipment đổi, trigger ghi một dòng SHIPMENT_AUDIT.
+
+Màn hình gọi endpoint xác nhận nhưng order-api không có handler khớp. Có thể API nằm ở service chưa được scan.`,
+      children: [{ id: "fl-confirm", kind: "flow", name: "Xác nhận xuất hàng", steps: ["ai"], q: 2, text: "Nhân viên kho xác nhận shipment. Trigger TRG_SHIPMENT_AUDIT ghi lịch sử trạng thái." }] },
+  ] },
+  { id: "m-batch", kind: "menu", name: "Chạy nền", src: "jobnet.csv · không có menu", prov: "ai", batch: true,
+    desc: "Các job chạy theo lịch, không có màn hình. Mỗi jobnet được coi là một tính năng.", children: [
+    { id: "f-daily", kind: "feature", name: "Xử lý đơn cuối ngày", route: "ORDER_DAILY", screen: "OrderFulfillment.exe · OrderReconcile.exe", apis: [], tables: ["FULFILLMENT_ALLOCATION", "BACKORDER", "SHIPMENT", "ORDER_DAILY_SUMMARY"], prov: "ai", batch: true,
+      desc: `Jobnet ORDER_DAILY chạy bốn job nối tiếp: phân bổ tồn kho, tạo shipment, đối soát và xuất dữ liệu cho đối tác. Job sau chỉ chạy khi job trước xong.
+
+Job cuối (UNMAPPED_EXPORT) gọi PartnerExport.exe, chương trình này không có trong executable-mappings.csv nên chưa biết nó đọc ghi gì.`,
+      children: [
+        { id: "fl-alloc", kind: "flow", name: "Phân bổ tồn kho", steps: ["ok", "ai", "ai"], q: 1, text: "Batch phân bổ hàng cho đơn PENDING. Còn hàng thì ALLOCATED, hết hàng thì tạo backorder." },
+        { id: "fl-shipc", kind: "flow", name: "Tạo shipment", steps: ["ai", "ai"], q: 0, text: "Job CREATE_SHIPMENTS tạo shipment và kiện hàng cho đơn đã phân bổ." },
+        { id: "fl-recon", kind: "flow", name: "Đối soát cuối ngày", steps: ["ai"], q: 1, text: "Tổng hợp số đơn và tổng tiền từ hôm qua vào ORDER_DAILY_SUMMARY." },
+        { id: "fl-export", kind: "flow", name: "Xuất dữ liệu đối tác", steps: null, text: "" },
+      ] },
+  ] },
+  { id: "m-none", kind: "menu", name: "Chưa xếp vào tính năng", src: "entry point chưa gán", unsorted: true,
+    desc: "Các entry point extractor tìm thấy nhưng chưa thuộc menu nào. Gán chúng vào một tính năng để AI viết tài liệu cùng tính năng đó.", children: [
+    { id: "o-minimal", kind: "orphan", name: "/api/minimal/orders/*", note: "6 endpoint minimal API trong OrderMinimalEndpoints" },
+    { id: "o-ping", kind: "orphan", name: "GET /api/Tokenized/Ping", note: "TokenizedController.Ping" },
+    { id: "o-dyn", kind: "orphan", name: "DynamicOrderCaller.call", note: "Gọi API theo tên cấu hình truyền vào lúc chạy" },
+  ] },
+];
+const TN = {}; const PARENT = {};
+(function walk(list, parent) { list.forEach(n => { TN[n.id] = n; PARENT[n.id] = parent; if (n.children) walk(n.children, n.id); }); })(TREE, null);
+const pathOf = id => { const out = []; for (let x = id; x; x = PARENT[x]) out.unshift(TN[x]); return out; };
 /* ======================= State ======================= */
-const S = { view: "home", step: null, sel: null, mode: "graph", zoom: .8, editing: null, draft: null, pick: false, regen: false, kb: 0 };
+const S = { view: "home", step: null, sel: null, mode: "graph", zoom: .8, editing: null, draft: null, pick: false, regen: false, kb: 0,
+  tsel: "f-create", open: new Set(["m-orders", "f-create", "f-detail", "m-ship", "f-ship", "m-batch", "f-daily"]), tfilter: "all", tedit: false };
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const sc = i => `--s${(i % 5) + 1}`;
@@ -479,7 +566,11 @@ function searchIndex() {
     out.push({ kind: "step", label: s.name, sub: `${FLOW.name} · Bước ${i + 1}`, text: s.name + " " + s.text, n: i, go: () => openFlow({ step: i }) });
     s.rules.forEach(r => out.push({ kind: "rule", label: r.title, sub: `${FLOW.name} · Bước ${i + 1}`, text: r.title + " " + r.text, go: () => openFlow({ step: i }) }));
   });
-  OTHER_FLOWS.forEach(f => out.push({ kind: "flow", label: f.name, sub: `${f.domain} · mockup chỉ mở luồng Tạo đơn hàng`, text: f.name + " " + f.text, off: true }));
+  Object.values(TN).forEach(n => {
+    const path = pathOf(n.id).slice(0, -1).map(x => x.name).join(" / ");
+    if (n.kind === "menu" || n.kind === "feature") out.push({ kind: "feature", label: n.name, sub: (path ? path + " · " : "") + (n.route || n.src || ""), text: [n.name, n.route, n.screen, n.desc, (n.apis || []).join(" ")].join(" "), fk: n.kind, go: () => openTree(n.id) });
+    if (n.kind === "flow" && !n.open) out.push({ kind: "flow", label: n.name, sub: path + (n.steps ? " · mockup chỉ mở luồng Tạo đơn hàng" : " · chưa có tài liệu"), text: n.name + " " + (n.text || ""), go: () => openTree(n.id) });
+  });
   NODES.forEach(n => out.push({ kind: "node", ty: n.ty, label: n.nm, sub: [n.ty.replace(/_/g, " "), n.term && "từ điển: " + n.term, n.ja].filter(Boolean).join(" · "),
     text: [n.nm, n.term, n.ja, n.en].join(" "), r: stepsOf(n.id).map(i => "B" + (i + 1)).join(" "), go: () => openFlow({ node: n.id }) }));
   OTHER_NODES.forEach(([ty, nm]) => out.push({ kind: "node", ty, label: nm, sub: ty.replace(/_/g, " ") + " · chưa thuộc luồng nào đã viết", text: nm, off: true }));
@@ -500,14 +591,14 @@ function renderDrop() {
   const q = $("#q").value, drop = $("#drop");
   const res = runSearch(q);
   if (!q.trim()) { drop.hidden = true; return; }
-  const groups = [["flow", "Luồng nghiệp vụ"], ["step", "Bước"], ["rule", "Quy tắc"], ["node", "Node trong code"]];
+  const groups = [["feature", "Menu & tính năng"], ["flow", "Luồng nghiệp vụ"], ["step", "Bước"], ["rule", "Quy tắc"], ["node", "Node trong code"]];
   let k = 0, h = "";
   for (const [kind, title] of groups) {
     const items = res.filter(r => r.kind === kind).slice(0, kind === "node" ? 8 : 5);
     if (!items.length) continue;
     h += `<h6>${title}</h6>` + items.map(it => {
-      const idx = res.indexOf(it), c = it.kind === "node" ? tc(it.ty) : it.kind === "rule" ? "--warn" : it.kind === "step" ? sc(it.n) : "--accent";
-      const ic = it.kind === "node" ? it.ty.slice(0, 2) : it.kind === "rule" ? "◆" : it.kind === "step" ? "B" + (it.n + 1) : "✦";
+      const idx = res.indexOf(it), c = it.kind === "node" ? tc(it.ty) : it.kind === "rule" ? "--warn" : it.kind === "step" ? sc(it.n) : it.kind === "feature" ? (it.fk === "menu" ? "--t-ui" : "--s1") : "--accent";
+      const ic = it.kind === "node" ? it.ty.slice(0, 2) : it.kind === "rule" ? "◆" : it.kind === "step" ? "B" + (it.n + 1) : it.kind === "feature" ? (it.fk === "menu" ? "≡" : "▣") : "✦";
       return `<button type="button" class="hit${k++ === S.kb ? " kb" : ""}" data-hit="${idx}" ${it.off ? "disabled" : ""} style="--c:var(${c})"><span class="ic">${ic}</span>
         <span class="t${it.kind === "node" ? " m" : ""}">${hl(it.label, q)}<span class="s">${esc(it.sub)}</span></span><span class="r">${esc(it.r || "")}</span></button>`;
     }).join("");
@@ -530,31 +621,184 @@ $("#q").addEventListener("keydown", e => {
 document.addEventListener("click", e => { if (!e.target.closest("#search")) $("#drop").hidden = true; });
 document.addEventListener("keydown", e => { if (e.key === "/" && !e.target.closest("input,textarea")) { e.preventDefault(); $("#q").focus(); } });
 
-/* ======================= Home ======================= */
+/* ======================= Home: cây ======================= */
+const TICON = {
+  menu: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
+  feature: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg>`,
+  batch: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>`,
+  flow: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/></svg>`,
+  orphan: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 7 4 12l5 5M15 7l5 5-5 5"/></svg>`,
+  chev: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`,
+};
+const TCOLOR = { menu: "--t-ui", feature: "--s1", flow: "--accent", orphan: "--muted" };
+function flowParts(f) { if (f.open) return [FLOW.summary.prov, ...FLOW.steps.map(s => s.prov), FLOW.edge.prov]; return f.steps; }
+function flowQ(f) { return f.open ? FLOW.questions.filter(q => !q.a).length : (f.q || 0); }
+function flowsUnder(n) { return n.kind === "flow" ? [n] : (n.children || []).flatMap(flowsUnder); }
+function agg(n) {
+  const fl = flowsUnder(n), parts = fl.flatMap(f => flowParts(f) || ["none"]);
+  return { flows: fl.length, nodoc: fl.filter(f => !flowParts(f)).length, parts, ok: parts.filter(p => p === "ok").length, q: fl.reduce((a, f) => a + flowQ(f), 0),
+    unrev: parts.filter(p => p === "ai").length };
+}
+function mbar(parts) {
+  const max = 8, list = parts.length > max ? parts.slice(0, max) : parts;
+  return `<span class="mbar" title="${parts.filter(p => p === "ok").length}/${parts.length} phần đã duyệt">${list.map(p => `<i class="${p === "ok" ? "ok" : p === "edited" ? "ed" : p === "none" ? "none" : "ai"}"></i>`).join("")}</span>`;
+}
+function matchFilter(n) {
+  if (S.tfilter === "all") return true;
+  const fl = n.kind === "flow" ? [n] : [];
+  if (!fl.length) return false;
+  const f = fl[0], parts = flowParts(f);
+  if (S.tfilter === "q") return flowQ(f) > 0;
+  if (S.tfilter === "unrev") return parts && parts.some(p => p === "ai");
+  if (S.tfilter === "nodoc") return !parts;
+  return true;
+}
+function visibleRows() {
+  const rows = [];
+  const keep = n => matchFilter(n) || (n.children || []).some(keep);
+  (function walk(list, d) {
+    list.forEach(n => {
+      if (S.tfilter !== "all" && !keep(n)) return;
+      rows.push({ n, d });
+      const isOpen = S.tfilter !== "all" || S.open.has(n.id);
+      if (n.children && isOpen) walk(n.children, d + 1);
+    });
+  })(TREE, 0);
+  return rows;
+}
+function rowHtml({ n, d }) {
+  const has = !!(n.children && n.children.length), open = S.tfilter !== "all" || S.open.has(n.id);
+  const icon = n.kind === "feature" && n.batch ? TICON.batch : TICON[n.kind];
+  let meta = "";
+  if (n.kind === "orphan") meta = `<span class="nodoc">chưa gán</span>`;
+  else if (n.kind === "flow") {
+    const parts = flowParts(n), q = flowQ(n);
+    meta = parts ? `${q ? `<span class="qb">${q} ?</span>` : ""}${mbar(parts)}` : `<span class="nodoc">chưa có tài liệu</span>`;
+  } else if (!n.unsorted) {
+    const a = agg(n);
+    meta = `${a.q ? `<span class="qb">${a.q} ?</span>` : ""}<span>${a.flows} luồng</span>${mbar(a.parts)}`;
+  } else meta = `<span>${n.children.length} mục</span>`;
+  return `<li class="trow k-${n.kind}${S.tsel === n.id ? " sel" : ""}" role="treeitem" tabindex="${S.tsel === n.id ? 0 : -1}" data-t="${n.id}" style="--d:${d}" ${has ? `aria-expanded="${open}"` : ""} aria-level="${d + 1}" aria-selected="${S.tsel === n.id}">
+    ${has ? `<button type="button" class="chev" data-tog="${n.id}" tabindex="-1" aria-label="${open ? "Thu gọn" : "Mở rộng"}">${TICON.chev}</button>` : "<span></span>"}
+    <span class="tic" style="--c:var(${n.unsorted ? "--warn" : TCOLOR[n.kind]})">${icon}</span>
+    <span class="tname"><b>${esc(n.name)}</b>${n.route ? `<code>${esc(n.route)}</code>` : n.kind === "menu" ? `<code>${esc(n.src)}</code>` : n.note ? `<code>${esc(n.note)}</code>` : ""}</span>
+    <span class="tmeta">${meta}</span></li>`;
+}
 function renderHome() {
-  const prog = [FLOW.summary.prov, ...FLOW.steps.map(s => s.prov), FLOW.edge.prov];
+  const all = agg({ children: TREE }), feats = Object.values(TN).filter(n => n.kind === "feature").length;
+  const cnt = { all: all.flows, q: flowsUnder({ children: TREE }).filter(f => flowQ(f) > 0).length, unrev: flowsUnder({ children: TREE }).filter(f => (flowParts(f) || []).some(p => p === "ai")).length, nodoc: all.nodoc };
   $("#main").innerHTML = `<div class="home" style="height:100%"><div class="home-in">
     <section class="hero">
-      <h1>Hiểu một hệ thống bắt đầu từ một câu tìm kiếm</h1>
-      <p>Tìm theo tên method, API, bảng, tên tiếng Nhật hoặc tên nghiệp vụ. Mỗi luồng là một tài liệu do AI viết từ graph, có trích dẫn tới từng node. Bạn đọc, sửa và duyệt.</p>
-      <div class="try">Thử: <button type="button" class="m" data-try="createOrder">createOrder</button><button type="button" class="m" data-try="ORDER_HEADER">ORDER_HEADER</button><button type="button" data-try="注文">注文</button><button type="button" data-try="thuế">thuế</button><button type="button" data-try="trạng thái PENDING">trạng thái PENDING</button></div>
+      <h1>Hiểu hệ thống theo từng tính năng</h1>
+      <p>Mỗi menu là một nhóm tính năng, mỗi tính năng có các luồng nghiệp vụ do AI viết từ graph. Tìm ở ô phía trên, hoặc duyệt cây bên dưới.</p>
+      <div class="try">Thử tìm: <button type="button" class="m" data-try="createOrder">createOrder</button><button type="button" class="m" data-try="ORDER_HEADER">ORDER_HEADER</button><button type="button" data-try="注文">注文</button><button type="button" data-try="huỷ">huỷ</button><button type="button" data-try="trạng thái PENDING">trạng thái PENDING</button></div>
     </section>
-    <section style="display:grid;gap:14px">
-      <div class="sec-t"><h2>Luồng nghiệp vụ</h2><span>5 luồng · AI xuất ngày 27/10 · 4 câu hỏi đang chờ</span></div>
-      <div class="flows">
-        <button type="button" class="fcard" data-open-flow>
-          <span class="dom">${esc(FLOW.domain)}</span><h3>${esc(FLOW.name)}</h3><p>${esc(FLOW.summary.text.replace(/\*\*/g, ""))}</p>
-          <span class="steps-mini">${prog.map(p => `<i class="${p === "ok" ? "ok" : p === "edited" ? "ed" : "ai"}"></i>`).join("")}</span>
-          <span class="fmeta"><span>${FLOW.steps.length} bước</span><span>${prog.filter(p => p === "ok").length}/${prog.length} phần đã duyệt</span><span>${FLOW.questions.filter(q => !q.a).length} câu hỏi</span></span>
-        </button>
-        ${OTHER_FLOWS.map(f => `<button type="button" class="fcard" disabled title="Mockup chỉ có nội dung luồng Tạo đơn hàng">
-          <span class="dom">${esc(f.domain)}</span><h3>${esc(f.name)}</h3><p>${esc(f.text)}</p>
-          <span class="steps-mini">${f.steps.map(p => `<i class="${p === "ok" ? "ok" : "ai"}"></i>`).join("")}</span>
-          <span class="fmeta"><span>${f.steps.length} bước</span><span>${f.steps.filter(p => p === "ok").length}/${f.steps.length} đã duyệt</span><span>${f.q} câu hỏi</span></span></button>`).join("")}
-      </div>
-    </section></div></div>`;
+    <div class="home-grid">
+      <section class="tree-card">
+        <div class="tree-head"><div><h2>Menu và tính năng</h2><p>${TREE.length - 1} menu · ${feats} tính năng · ${all.flows} luồng · cây dựng từ route Angular và jobnet</p></div>
+          <span style="display:flex;gap:6px"><button type="button" class="btn sm ghost" data-expand="1">Mở hết</button><button type="button" class="btn sm ghost" data-expand="0">Thu gọn</button></span></div>
+        <div class="tree-tools" role="group" aria-label="Lọc cây">
+          ${[["all", "Tất cả"], ["unrev", "Chưa duyệt"], ["q", "Có câu hỏi"], ["nodoc", "Chưa có tài liệu"]].map(([k, l]) => `<button type="button" class="chip-f" data-tf="${k}" aria-pressed="${S.tfilter === k}">${l} <b>${cnt[k]}</b></button>`).join("")}
+        </div>
+        <ul class="tree" role="tree" aria-label="Menu và tính năng" id="tree">${visibleRows().map(rowHtml).join("")}</ul>
+      </section>
+      <aside class="side" id="side" aria-live="polite"></aside>
+    </div></div></div>`;
   $("#main").querySelectorAll("[data-try]").forEach(b => b.addEventListener("click", () => { $("#q").value = b.dataset.try; $("#q").focus(); S.kb = 0; renderDrop(); }));
-  $("[data-open-flow]").addEventListener("click", () => openFlow());
+  $("#main").querySelectorAll("[data-tf]").forEach(b => b.addEventListener("click", () => { S.tfilter = b.dataset.tf; renderHome(); }));
+  $("#main").querySelectorAll("[data-expand]").forEach(b => b.addEventListener("click", () => {
+    if (b.dataset.expand === "1") Object.values(TN).forEach(n => n.children && S.open.add(n.id)); else S.open.clear();
+    renderHome();
+  }));
+  bindTree(); renderSide();
+}
+function bindTree() {
+  const tree = $("#tree");
+  tree.querySelectorAll("[data-tog]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); toggle(b.dataset.tog); }));
+  tree.querySelectorAll(".trow").forEach(r => {
+    r.addEventListener("click", () => { selectTree(r.dataset.t); });
+    r.addEventListener("dblclick", () => { const n = TN[r.dataset.t]; if (n.open) openFlow(); else if (n.children) toggle(n.id); });
+  });
+  tree.addEventListener("keydown", e => {
+    const rows = [...tree.querySelectorAll(".trow")], i = rows.findIndex(r => r.dataset.t === S.tsel), n = TN[S.tsel];
+    const go = j => { if (rows[j]) { selectTree(rows[j].dataset.t); } };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "ArrowRight") { if (n.children && !S.open.has(n.id)) toggle(n.id); else go(i + 1); }
+    else if (e.key === "ArrowLeft") { if (n.children && S.open.has(n.id)) toggle(n.id); else if (PARENT[n.id]) selectTree(PARENT[n.id]); }
+    else if (e.key === "Enter") { if (n.open) openFlow(); else if (n.children) toggle(n.id); }
+    else return;
+    e.preventDefault();
+  });
+}
+function toggle(id) { S.open.has(id) ? S.open.delete(id) : S.open.add(id); refreshTree(); }
+function selectTree(id) { S.tsel = id; S.tedit = false; refreshTree(); renderSide(); }
+function refreshTree() {
+  const tree = $("#tree"); if (!tree) return;
+  tree.innerHTML = visibleRows().map(rowHtml).join("");
+  bindTree();
+  tree.querySelector(".trow.sel")?.focus({ preventScroll: false });
+}
+function openTree(id) {
+  S.view = "home"; S.tsel = id; S.tfilter = "all";
+  pathOf(id).slice(0, -1).forEach(n => S.open.add(n.id));
+  render();
+  requestAnimationFrame(() => $("#tree .trow.sel")?.scrollIntoView({ block: "center" }));
+}
+function flowItem(f) {
+  const parts = flowParts(f), q = flowQ(f), txt = f.open ? FLOW.summary.text.replace(/\*\*/g, "") : f.text;
+  return `<button type="button" class="fitem" data-goflow="${f.id}"><span class="fh"><b>${esc(f.name)}</b>${parts ? mbar(parts) : `<span class="nodoc">chưa có tài liệu</span>`}</span>
+    ${txt ? `<p>${esc(txt)}</p>` : ""}<span class="tmeta">${parts ? `<span>${parts.filter(p => p === "ok").length}/${parts.length} phần đã duyệt</span>` : ""}${q ? `<span class="qb">${q} câu hỏi</span>` : ""}${f.open ? `<span style="color:var(--accent)">Mở tài liệu →</span>` : ""}</span></button>`;
+}
+function renderSide() {
+  const n = TN[S.tsel], side = $("#side"); if (!side) return;
+  const path = pathOf(n.id).slice(0, -1).map(x => esc(x.name)).join(" / ");
+  const kindLabel = { menu: "Menu", feature: n.batch ? "Tính năng · chạy nền" : "Tính năng", flow: "Luồng nghiệp vụ", orphan: "Entry point chưa gán" }[n.kind];
+  const head = `<div><div class="kind" style="--c:var(${n.unsorted ? "--warn" : TCOLOR[n.kind]})">${n.kind === "feature" && n.batch ? TICON.batch : TICON[n.kind]} ${kindLabel}</div><h3>${esc(n.name)}</h3>${path ? `<div class="path">${path}</div>` : ""}</div>`;
+  let h = head;
+  if (n.kind === "menu" || n.kind === "feature") {
+    const a = agg(n);
+    if (S.tedit) {
+      h += `<div class="edit-in edit"><div class="field"><label for="te-name">Tên ${n.kind === "menu" ? "menu" : "tính năng"}</label><input id="te-name" value="${esc(n.name)}"></div>
+        <div class="field"><label for="te-desc">Mô tả</label><textarea id="te-desc">${esc(n.desc)}</textarea><small>Đổi tên chỉ đổi phần hiển thị. Route và node gốc giữ nguyên.</small></div>
+        <div class="edit-foot"><span></span><span style="display:flex;gap:8px"><button type="button" class="btn sm" data-tcancel>Huỷ</button><button type="button" class="btn sm pri" data-tsave>Lưu</button></span></div></div>`;
+    } else {
+      h += `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${n.prov ? provHtml(n) : ""}<span class="side-actions"><button type="button" class="btn sm ghost" data-tedit>${ICON.edit} Sửa</button>${n.prov && n.prov !== "ok" ? `<button type="button" class="btn sm" data-tok>${ICON.check} Duyệt</button>` : ""}</span></div>
+        <div class="prose">${rich(n.desc)}</div>`;
+    }
+    if (!n.unsorted) h += `<div class="stats"><div><b>${a.flows}</b><span>luồng</span></div><div><b>${a.ok}/${a.parts.length}</b><span>phần đã duyệt</span></div><div><b>${a.q}</b><span>câu hỏi</span></div></div>`;
+    if (n.kind === "feature") h += `<dl class="entry"><div><dt>${n.batch ? "Jobnet" : "Route"}</dt><dd><code>${esc(n.route)}</code></dd></div><div><dt>${n.batch ? "Chương trình" : "Màn hình"}</dt><dd><code>${esc(n.screen)}</code></dd></div>
+      ${n.apis.length ? `<div><dt>API</dt><dd>${n.apis.map(x => `<code>${esc(x)}</code>`).join("")}</dd></div>` : ""}<div><dt>Bảng ghi</dt><dd>${n.tables.map(x => `<code>${esc(x)}</code>`).join("")}</dd></div></dl>
+      <div class="flist"><span class="label">Luồng nghiệp vụ</span>${n.children.map(flowItem).join("")}</div>`;
+    if (n.kind === "menu" && !n.unsorted) h += `<div class="flist"><span class="label">Tính năng</span>${n.children.map(f => { const fa = agg(f); return `<button type="button" class="fitem" data-tgo="${f.id}"><span class="fh"><b>${esc(f.name)}</b>${mbar(fa.parts)}</span><span class="tmeta"><code>${esc(f.route)}</code><span>${fa.flows} luồng</span>${fa.q ? `<span class="qb">${fa.q} câu hỏi</span>` : ""}</span></button>`; }).join("")}</div>`;
+    if (n.unsorted) h += `<div class="flist"><span class="label">Entry point</span>${n.children.map(o => `<button type="button" class="fitem" data-tgo="${o.id}"><b class="mono" style="font-size:12.5px">${esc(o.name)}</b><p>${esc(o.note)}</p></button>`).join("")}</div>`;
+  } else if (n.kind === "flow") {
+    const parts = flowParts(n);
+    if (n.open) h += `<div class="prose">${rich(FLOW.summary.text)}</div><div class="flist"><span class="label">${FLOW.steps.length} bước</span>${FLOW.steps.map((st, i) => `<button type="button" class="fitem" data-gostep="${i}"><span class="fh"><b>B${i + 1} · ${esc(st.name)}</b>${provHtml(st)}</span><span class="tmeta">${esc(st.actor)} · ${st.nodes.length} node · ${st.rules.length} quy tắc</span></button>`).join("")}</div>
+      <div class="side-actions"><button type="button" class="btn pri" data-goflow="${n.id}">Mở tài liệu</button></div>`;
+    else if (parts) h += `<div class="prose"><p>${esc(n.text)}</p></div><div class="stats"><div><b>${parts.length}</b><span>bước</span></div><div><b>${parts.filter(p => p === "ok").length}/${parts.length}</b><span>đã duyệt</span></div><div><b>${flowQ(n)}</b><span>câu hỏi</span></div></div><p class="note" style="margin:0;color:var(--muted);font-size:12.5px">Mockup chỉ có nội dung đầy đủ cho luồng “Tạo đơn hàng”.</p>`;
+    else h += `<div class="empty-doc prose"><p>Luồng này đã được phát hiện từ code nhưng chưa có tài liệu nghiệp vụ.</p></div><div class="side-actions"><button type="button" class="btn pri" data-askai>✦ Nhờ AI viết</button></div>`;
+  } else if (n.kind === "orphan") {
+    const feats = Object.values(TN).filter(x => x.kind === "feature");
+    h += `<div class="prose"><p>${esc(n.note)}. Extractor tìm thấy entry point này nhưng nó chưa thuộc menu nào, nên chưa có tài liệu.</p></div>
+      <div class="field"><label for="assign-to">Gán vào tính năng</label><select id="assign-to" style="height:34px;border-radius:8px;border:1px solid var(--line);background:var(--raised);padding:0 8px">${feats.map(f => `<option value="${f.id}">${esc(pathOf(f.id).map(x => x.name).join(" / "))}</option>`).join("")}</select></div>
+      <div class="side-actions"><button type="button" class="btn pri" data-assign>Gán</button></div>`;
+  }
+  side.innerHTML = h;
+  const on = (s, fn) => side.querySelectorAll(s).forEach(el => el.addEventListener("click", () => fn(el)));
+  on("[data-goflow]", el => { if (TN[el.dataset.goflow].open) openFlow(); else selectTree(el.dataset.goflow); });
+  on("[data-gostep]", el => openFlow({ step: +el.dataset.gostep }));
+  on("[data-tgo]", el => { pathOf(el.dataset.tgo).slice(0, -1).forEach(x => S.open.add(x.id)); selectTree(el.dataset.tgo); });
+  on("[data-tedit]", () => { S.tedit = true; renderSide(); setTimeout(() => $("#te-name")?.focus(), 0); });
+  on("[data-tcancel]", () => { S.tedit = false; renderSide(); });
+  on("[data-tsave]", () => { n.name = $("#te-name").value.trim() || n.name; n.desc = $("#te-desc").value; n.prov = "edited"; S.tedit = false; refreshTree(); renderSide(); toast("Đã lưu"); });
+  on("[data-tok]", () => { n.prov = "ok"; n.by = "bạn"; renderSide(); toast("Đã duyệt"); });
+  on("[data-askai]", () => toast("Mockup: AI sẽ viết tài liệu cho luồng này từ graph"));
+  on("[data-assign]", () => {
+    const f = TN[$("#assign-to").value], menu = TN["m-none"];
+    menu.children = menu.children.filter(x => x !== n); f.apis.push(n.name); delete TN[n.id];
+    S.open.add(f.id); pathOf(f.id).forEach(x => S.open.add(x.id)); S.tsel = f.id; renderHome(); toast(`Đã gán vào “${f.name}”`);
+  });
 }
 
 /* ======================= Flow ======================= */
@@ -586,7 +830,7 @@ function renderDoc() {
       <button type="button" data-toc="q" style="--c:var(--warn)"><i></i>${open} câu hỏi</button>
     </nav>
     <header class="doc-h" id="sec-sum">
-      <div class="crumb"><button type="button" data-home>Luồng nghiệp vụ</button><span>/</span><span>${esc(FLOW.domain)}</span></div>
+      <div class="crumb">${pathOf("fl-create").slice(0, -1).map(x => `<button type="button" data-crumb="${x.id}">${esc(x.name)}</button><span>/</span>`).join("")}<span>${esc(FLOW.name)}</span></div>
       <h1>${esc(FLOW.name)}</h1>
       <div class="doc-meta">
         <span class="review"><span class="bar"><i style="width:${okN / parts.length * 100}%;background:var(--ok)"></i><i style="width:${edN / parts.length * 100}%;background:var(--focus)"></i></span>${okN}/${parts.length} phần đã duyệt</span>
@@ -650,7 +894,7 @@ function editorHtml(key) {
 function partOf(key) { return key === "summary" ? FLOW.summary : key === "edge" ? FLOW.edge : FLOW.steps[+key]; }
 function bindDoc() {
   const D = $("#doc"), on = (s, fn) => D.querySelectorAll(s).forEach(el => el.addEventListener("click", e => fn(el, e)));
-  on("[data-home]", () => { S.view = "home"; render(); });
+  on("[data-crumb]", el => openTree(el.dataset.crumb));
   on("[data-toc]", el => {
     const t = el.dataset.toc;
     if (/^\d+$/.test(t)) { setStep(+t); document.getElementById("step-" + t).scrollIntoView({ block: "start" }); }
