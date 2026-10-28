@@ -39,9 +39,17 @@ def _context(db):
     cached = _TREE_CACHE.get(str(web_path))
     if cached and cached[0] == key:
         return index, cached[1], web_path
+    return index, _rebuild(db, index, key), web_path
+
+
+def _rebuild(db, index, key=None):
+    """Build the tree and keep it for the next request, unless a file changed while it was being built."""
+    web_path = graph_output() / WEB_DATABASE_NAME
+    key = key or (_stamp(web_path), _stamp(knowledge_db()))
     tree = business.build_tree(db, index)
-    _TREE_CACHE[str(web_path)] = (key, tree)
-    return index, tree, web_path
+    if key == (_stamp(web_path), _stamp(knowledge_db())):
+        _TREE_CACHE[str(web_path)] = (key, tree)
+    return tree
 
 
 def _body(limit: int) -> dict:
@@ -80,8 +88,8 @@ def business_item_update(item_id):
     body = _body(MAX_EDIT_BYTES)
     with connection() as db:
         index, tree, _path = _context(db)
-        business.update_item(db, tree, item_id, body, _who())
-        tree = business.build_tree(db, index)
+        business.update_item(db, tree, item_id, body, _who(), index)
+        tree = _rebuild(db, index)
         item = business.find_item(tree, item_id) or business.find_item(tree, body.get("parent_id", ""))
         return jsonify({"tree": tree, "item": business.feature_detail(db, index, tree, item["id"]) if item and item["kind"] != "entry" else None})
 
@@ -106,7 +114,7 @@ def business_flow_part(flow_id, part):
     with connection() as db:
         index, tree, _path = _context(db)
         business.update_part(db, index, tree, flow_id, part, body, _who())
-        tree = business.build_tree(db, index)
+        tree = _rebuild(db, index)
         return jsonify({**business.load_flow(db, index, tree, flow_id), "tree": tree})
 
 
@@ -116,7 +124,7 @@ def business_flow_answer(flow_id, question_id):
     with connection() as db:
         index, tree, _path = _context(db)
         business.answer_question(db, index, tree, flow_id, question_id, body.get("answer"), _who())
-        tree = business.build_tree(db, index)
+        tree = _rebuild(db, index)
         return jsonify({**business.load_flow(db, index, tree, flow_id), "tree": tree})
 
 
@@ -145,7 +153,7 @@ def business_ai_import(feature_id):
     with connection() as db:
         index, tree, web_path = _context(db)
         result = business.apply_import(db, index, tree, web_path, feature_id, body.get("text"))
-        return jsonify({**result, "tree": business.build_tree(db, index)})
+        return jsonify({**result, "tree": _rebuild(db, index)})
 
 
 @bp.get("/business/search")

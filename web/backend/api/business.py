@@ -22,6 +22,7 @@ reference against the graph and keep reviewed parts untouched.
 from __future__ import annotations
 
 import hashlib
+import uuid
 import json
 import re
 import sqlite3
@@ -37,6 +38,7 @@ PART_STATUSES = ("ai", "edited", "approved")
 RULE_STATUSES = ("ok", "warn", "bad")
 BATCH_MENU = "menu:batch"
 UNSORTED_MENU = "menu:unsorted"
+STRANDED_MENU = "menu:stranded"
 MAX_FLOW_NODES = 150
 MAX_FEATURE_NODES = 400
 MAX_UNASSIGNED = 300
@@ -257,7 +259,9 @@ def graph_index(db: sqlite3.Connection, web_path: Path) -> GraphIndex:
     if cached and cached[0] == key:
         return cached[1]
     index = GraphIndex(db)
-    _INDEX_CACHE[str(web_path)] = (key, index)
+    after = web_path.stat()
+    if (after.st_size, after.st_mtime_ns) == key:  # not replaced by an extract while it was read
+        _INDEX_CACHE[str(web_path)] = (key, index)
     return index
 
 
@@ -298,6 +302,27 @@ def ref_name(node: dict[str, Any]) -> str:
 
 def ref_of(node: dict[str, Any]) -> str:
     return f"{REF_KEYS.get(node['node_type'], node['node_type'].lower())}: {ref_name(node)}"
+
+
+def feature_labels(index: GraphIndex, node_ids: Iterable[str]) -> dict[str, tuple[str, str]]:
+    """(ref, name) for each node, unique within the set: two nodes with the same name (the same table in two
+    databases) are told apart by their system, e.g. `table: DB2.ORDER_HEADER`."""
+    ids = [node_id for node_id in dict.fromkeys(node_ids) if node_id in index.nodes]
+    counts: dict[str, int] = {}
+    for node_id in ids:
+        counts[ref_name(index.nodes[node_id])] = counts.get(ref_name(index.nodes[node_id]), 0) + 1
+    labels: dict[str, tuple[str, str]] = {}
+    taken: set[str] = set()
+    for node_id in ids:
+        node = index.nodes[node_id]
+        name = ref_name(node)
+        if counts[name] > 1:
+            name = f"{node['system']}.{name}" if node.get("system") else name
+            if name in taken:
+                name = f"{name}#{node_id.rsplit(':', 1)[-1][:12]}"
+        taken.add(name)
+        labels[node_id] = (f"{REF_KEYS.get(node['node_type'], node['node_type'].lower())}: {name}", name)
+    return labels
 
 
 # --------------------------------------------------------------------------- tree
@@ -380,32 +405,51 @@ def build_tree(db: sqlite3.Connection, index: GraphIndex) -> dict[str, Any]:
 
     reached: set[str] = set()
     for feature in features.values():
-        entries = [feature["entry_node_id"], *extra_entries.get(feature["id"], [])]
         feature["extra_entries"] = extra_entries.get(feature["id"], [])
-        reached.update(index.reach(entries, MAX_FEATURE_NODES))
-        flows = []
-        for entry in [*feature["flow_entries"], *feature["extra_entries"]]:
+        reached.update(index.reach([feature["entry_node_id"], *feature["extra_entries"]], MAX_FEATURE_NODES))
+
+    # A UI action or job shared by two screens/jobnets is one flow with one owner: the feature its document
+    # was saved under, otherwise the first feature by id. The other features do not list it.
+    owners: dict[str, str] = {}
+    for feature_id in sorted(features):
+        for entry in [*features[feature_id]["flow_entries"], *features[feature_id]["extra_entries"]]:
             flow_id = f"flow:{entry}"
+            stored = docs.get(flow_id)
+            if stored and stored["feature_id"] == feature_id:
+                owners[flow_id] = feature_id
+            else:
+                owners.setdefault(flow_id, feature_id)
+    for feature in features.values():
+        flows = []
+        for entry in dict.fromkeys([*feature["flow_entries"], *feature["extra_entries"]]):
+            flow_id = f"flow:{entry}"
+            if owners.get(flow_id) != feature["id"]:
+                continue
             stored = docs.pop(flow_id, None)
-            doc = stored["doc"] if stored else {}
-            flows.append(_flow_item(flow_id, doc or None, index.nodes[entry], feature["id"]))
+            flows.append(_flow_item(flow_id, (stored or {}).get("doc") or None, index.nodes[entry], feature["id"]))
         feature["children"] = flows
 
-    # Flows imported for a feature under an id the graph no longer proposes.
+    # Flows imported for a feature under an id the graph no longer proposes; documents whose feature is gone
+    # after a re-extract are kept reachable under their own menu so nobody's text is lost.
+    stranded = []
     for flow_id, stored in docs.items():
         if stored["feature_id"] in features:
             features[stored["feature_id"]]["children"].append(_flow_item(flow_id, stored["doc"], None, stored["feature_id"]))
+        else:
+            stranded.append(_flow_item(flow_id, stored["doc"], None, stored["feature_id"]))
 
+    assigned = {node_id for entries in extra_entries.values() for node_id in entries}
     unassigned = sorted(
-        (node_id for node_id in index.by_type.get("API_OPERATION", []) if node_id not in reached and f"entry:{node_id}" not in items),
+        (node_id for node_id in index.by_type.get("API_OPERATION", []) if node_id not in reached and node_id not in assigned),
         key=lambda value: index.nodes[value]["technical_name"],
     )
     # A large system can have thousands; the tree lists the first ones, search finds the rest.
-    orphans = [
-        {"id": f"entry:{node_id}", "kind": "entry", "name": ref_name(index.nodes[node_id]), "node_id": node_id,
-         "node_type": index.nodes[node_id]["node_type"]}
-        for node_id in unassigned[:MAX_UNASSIGNED]
-    ]
+    orphans = []
+    for node_id in unassigned[:MAX_UNASSIGNED]:
+        orphan = {"id": f"entry:{node_id}", "kind": "entry", "name": ref_name(index.nodes[node_id]), "node_id": node_id,
+                  "node_type": index.nodes[node_id]["node_type"]}
+        _apply_item(orphan, items.get(orphan["id"]))
+        orphans.append(orphan)
 
     for feature in features.values():
         _apply_item(feature, items.get(feature["id"]))
@@ -418,6 +462,9 @@ def build_tree(db: sqlite3.Connection, index: GraphIndex) -> dict[str, Any]:
         menu_item["children"].sort(key=lambda child: (child.get("sort_order") or 0, child["name"].lower()))
     # Ordered by the route key, so renaming a menu does not move it.
     ordered = sorted(menus.values(), key=lambda m: (m.get("sort_order") or 0, m["id"] == BATCH_MENU, m["id"]))
+    if stranded:
+        ordered.append({"id": STRANDED_MENU, "kind": "menu", "name": "Tài liệu không còn tính năng", "source": "graph",
+                        "stranded": True, "children": stranded})
     ordered.append({"id": UNSORTED_MENU, "kind": "menu", "name": "Chưa xếp vào tính năng", "source": "graph",
                     "unsorted": True, "children": orphans, "total": len(unassigned)})
     for item in ordered:
@@ -639,9 +686,13 @@ def _text(value: Any, limit: int, field: str) -> str:
     return value.strip()
 
 
-def update_item(db: sqlite3.Connection, tree: dict[str, Any], item_id: str, body: dict[str, Any], who: str) -> None:
+def update_item(db: sqlite3.Connection, tree: dict[str, Any], item_id: str, body: dict[str, Any], who: str,
+                index: GraphIndex | None = None) -> None:
     item = find_item(tree, item_id)
-    if not item or item["kind"] not in {"menu", "feature", "entry"} or item_id == UNSORTED_MENU:
+    if not item and index is not None and item_id.startswith("entry:") and item_id[6:] in index.nodes:
+        # Entry points past the tree's first page (or currently attached to a feature) are still assignable.
+        item = {"id": item_id, "kind": "entry"}
+    if not item or item["kind"] not in {"menu", "feature", "entry"} or item_id in {UNSORTED_MENU, STRANDED_MENU}:
         raise BusinessError("not_found", "Menu, feature or entry point not found", 404)
     allowed = {"name", "description", "status", "parent_id"}
     if not body or set(body) - allowed:
@@ -655,7 +706,7 @@ def update_item(db: sqlite3.Connection, tree: dict[str, Any], item_id: str, body
     if "parent_id" in body:
         parent = find_item(tree, body["parent_id"]) if isinstance(body["parent_id"], str) else None
         wanted = "feature" if item["kind"] == "entry" else "menu"
-        if item["kind"] == "menu" or not parent or parent["kind"] != wanted or parent["id"] == UNSORTED_MENU:
+        if item["kind"] == "menu" or not parent or parent["kind"] != wanted or parent["id"] in {UNSORTED_MENU, STRANDED_MENU}:
             raise BusinessError("invalid_business", f"parent_id must be a {wanted}")
         row["parent_id"] = parent["id"]
     if "status" in body:
@@ -683,6 +734,14 @@ def _save_flow(db: sqlite3.Connection, flow_id: str, feature_id: str, doc: dict[
     )
 
 
+def _begin(db: sqlite3.Connection) -> None:
+    """Read-modify-write of a flow document under a write lock, so two edits (or an edit and an import)
+    cannot overwrite each other."""
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+
+
 def _stored_or_skeleton(db: sqlite3.Connection, index: GraphIndex, item: dict[str, Any]) -> dict[str, Any]:
     row = db.execute("SELECT doc_json FROM kn.biz_flows WHERE flow_id=?", (item["id"],)).fetchone()
     return _json(row[0], {}) if row else skeleton(index, item["id"], item["entry_node_id"], item["name"])
@@ -693,6 +752,7 @@ def update_part(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     item = find_item(tree, flow_id)
     if not item or item["kind"] != "flow":
         raise BusinessError("not_found", "Flow not found", 404)
+    _begin(db)
     doc = _stored_or_skeleton(db, index, item)
     if part == "summary":
         target, fields = doc.setdefault("summary", {"text": "", "status": "ai"}), {"text": 50_000, "name": 200}
@@ -720,7 +780,7 @@ def update_part(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
             target["items"] = [_text(value, 4000, "item") for value in values if isinstance(value, str) and value.strip()]
         elif key == "nodes":
             values = body[key]
-            if not isinstance(values, list) or any(value not in index.nodes for value in values):
+            if not isinstance(values, list) or any(not isinstance(value, str) or value not in index.nodes for value in values):
                 raise BusinessError("invalid_business", "nodes must be existing node ids")
             target["nodes"] = list(dict.fromkeys(values))
         elif key == "rules":
@@ -745,7 +805,8 @@ def _clean_rules(values: Any, previous: list[dict[str, Any]]) -> list[dict[str, 
     for position, value in enumerate(values):
         if not isinstance(value, dict):
             raise BusinessError("invalid_business", "each rule must be an object")
-        old = previous[position] if position < len(previous) else {}
+        # A rule keeps an omitted field only when the client sent the same rule (same title) back.
+        old = previous[position] if position < len(previous) and previous[position].get("title") == value.get("title") else {}
         rules.append({
             "title": _text(value.get("title", old.get("title", "")), 400, "rule title"),
             "text": _text(value.get("text", old.get("text", "")), 8000, "rule text"),
@@ -761,6 +822,7 @@ def answer_question(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, A
     item = find_item(tree, flow_id)
     if not item or item["kind"] != "flow":
         raise BusinessError("not_found", "Flow not found", 404)
+    _begin(db)
     doc = _stored_or_skeleton(db, index, item)
     question = next((q for q in doc.get("questions", []) if q.get("id") == question_id), None)
     if question is None:
@@ -840,6 +902,9 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
         raise BusinessError("not_found", "Feature not found", 404)
     node_ids = index.reach([feature["entry_node_id"], *feature.get("extra_entries", [])], MAX_FEATURE_NODES)
     facts = node_facts(db, index, node_ids)
+    labels = feature_labels(index, node_ids)
+    for node_id, (ref, name) in labels.items():
+        facts[node_id]["ref"], facts[node_id]["name"] = ref, name
     edges = index.edges_within(node_ids)
     evidence: dict[str, dict[str, str]] = {}
     if include_code:
@@ -873,14 +938,14 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     flows, locked, answered = [], 0, []
     for item in feature["children"]:
         doc = _stored_or_skeleton(db, index, item)
-        exported, count = _export_flow(index, doc, item, include_locked)
+        exported, count = _export_flow(index, doc, item, include_locked, labels)
         locked += count
         flows.append(exported)
         if include_answers:
             answered += [{"q": q["text"], "a": q["answer"]} for q in doc.get("questions", []) if q.get("answer")]
 
     count = db.execute("SELECT COUNT(*) FROM kn.biz_exports").fetchone()[0]
-    export_id = f"exp-{count + 1:04d}-{hashlib.sha1(f'{feature_id}{_now()}'.encode()).hexdigest()[:6]}"
+    export_id = f"exp-{count + 1:04d}-{uuid.uuid4().hex[:8]}"
     current_hash = graph_hash(web_path)
     db.execute("INSERT INTO kn.biz_exports(export_id,feature_id,graph_hash,created_at) VALUES(?,?,?,?)",
                (export_id, feature_id, current_hash, _now()))
@@ -889,7 +954,7 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     pack = {
         "export": {"id": export_id, "feature_id": feature_id, "feature": path, "graph_hash": current_hash, "generated": _now()},
         "context": {
-            "feature": {"name": feature["name"], "route": feature["route"], "entry": ref_of(index.nodes[feature["entry_node_id"]]),
+            "feature": {"name": feature["name"], "route": feature["route"], "entry": labels[feature["entry_node_id"]][0],
                         "description": feature.get("description", "")},
             "nodes": nodes,
             "edges": [[facts[e["source"]]["name"], e["edge_type"], facts[e["target"]]["name"]] for e in edges],
@@ -916,7 +981,8 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
             "stats": {"nodes": len(nodes), "edges": len(edges), "evidence": len(evidence), "locked": locked, "flows": len(flows)}}
 
 
-def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], include_locked: bool) -> tuple[dict, int]:
+def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], include_locked: bool,
+                 labels: dict[str, tuple[str, str]]) -> tuple[dict, int]:
     locked = 0
 
     def part(source: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
@@ -927,7 +993,7 @@ def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], i
         return {key: [] if isinstance(value, list) else "" for key, value in body.items()}
 
     def names(node_ids: list[str]) -> list[str]:
-        return [ref_of(index.nodes[node_id]) for node_id in node_ids if node_id in index.nodes]
+        return [labels[node_id][0] if node_id in labels else ref_of(index.nodes[node_id]) for node_id in node_ids if node_id in index.nodes]
 
     summary = doc.get("summary") or {}
     steps = []
@@ -939,7 +1005,7 @@ def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], i
     edge_cases = doc.get("edge_cases") or {}
     return {
         "id": item["id"], "name": doc.get("name") or ("" if not item["has_doc"] else item["name"]),
-        "entry": ref_of(index.nodes[item["entry_node_id"]]) if item.get("entry_node_id") in index.nodes else "",
+        "entry": names([item["entry_node_id"]])[0] if item.get("entry_node_id") in index.nodes else "",
         "summary": part(summary, {"text": summary.get("text", "")}),
         "steps": steps,
         "edge_cases": part(edge_cases, {"items": edge_cases.get("items", [])}) if edge_cases.get("items") else {"items": []},
@@ -947,19 +1013,30 @@ def _export_flow(index: GraphIndex, doc: dict[str, Any], item: dict[str, Any], i
     }, locked
 
 
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _load_yaml(text: str) -> Any:
+    """safe_load without anchors/aliases: an alias chain is a few bytes that expand to gigabytes once stored."""
+    for event in yaml.parse(text, Loader=_YAML_LOADER):
+        if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
+            raise BusinessError("invalid_import", "File dùng anchor/alias YAML (&, *). Hãy dán YAML thường.")
+    return yaml.load(text, Loader=_YAML_LOADER)
+
+
 def _parse_pack(text: Any) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise BusinessError("invalid_import", "Dán nội dung file AI trả về")
-    blocks = re.findall(r"```(?:ya?ml)?[ \t]*\n(.*?)```", text, flags=re.S)
-    for block in blocks:
+    text = text.replace("\r\n", "\n")
+    for block in re.findall(r"```(?:ya?ml)?[ \t]*\n(.*?)```", text, flags=re.S):
         try:
-            doc = yaml.safe_load(block)
+            doc = _load_yaml(block)
         except yaml.YAMLError:
             continue
         if isinstance(doc, dict) and isinstance(doc.get("flows"), list):
             return doc
     try:
-        doc = yaml.safe_load(text)
+        doc = _load_yaml(text)
     except yaml.YAMLError as exc:
         first = str(exc).splitlines()[0] if str(exc) else "YAML error"
         raise BusinessError("invalid_import", f"YAML sai cú pháp: {first}") from exc
@@ -968,23 +1045,42 @@ def _parse_pack(text: Any) -> dict[str, Any]:
     return doc
 
 
+def _str(value: Any, limit: int) -> str:
+    """Text the AI wrote; numbers are fine, anything structured is dropped rather than stringified."""
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        value = str(value)
+    return value.strip()[:limit] if isinstance(value, str) else ""
+
+
+def _strs(value: Any, limit: int, most: int) -> list[str]:
+    """A list of texts; a single text where a list was expected counts as a one-item list."""
+    values = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [text for text in (_str(item, limit) for item in values[:most]) if text]
+
+
 def _resolver(index: GraphIndex, node_ids: list[str]):
-    by_ref, by_name = {}, {}
-    for node_id in node_ids:
+    by_ref: dict[str, list[str]] = {}
+    by_name: dict[str, list[str]] = {}
+    for node_id, (ref, name) in feature_labels(index, node_ids).items():
         node = index.nodes[node_id]
-        by_ref[ref_of(node)] = node_id
-        by_name.setdefault(ref_name(node), []).append(node_id)
+        for key in {ref, ref_of(node)}:
+            by_ref.setdefault(key, []).append(node_id)
+        for key in {name, ref_name(node)}:
+            by_name.setdefault(key, []).append(node_id)
 
     def resolve(value: Any) -> str | None:
         if isinstance(value, dict) and len(value) == 1:
             key, name = next(iter(value.items()))
             value = f"{key}: {name}"
-        text = str(value or "").strip()
-        if text in by_ref:
-            return by_ref[text]
+        text = _str(value, 1000)
+        matches = by_ref.get(text, [])
+        if len(set(matches)) == 1:
+            return matches[0]
         name = text.split(":", 1)[1].strip() if re.match(r"^[a-z_]+:\s", text) else text
         matches = by_name.get(name, [])
-        return matches[0] if len(matches) == 1 else None
+        return matches[0] if len(set(matches)) == 1 else None
 
     return resolve
 
@@ -994,7 +1090,11 @@ def check_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
     feature = find_item(tree, feature_id)
     if not feature or feature["kind"] != "feature":
         raise BusinessError("not_found", "Feature not found", 404)
-    pack = _parse_pack(text)
+    return _check(db, index, feature, web_path, _parse_pack(text))
+
+
+def _check(db: sqlite3.Connection, index: GraphIndex, feature: dict[str, Any], web_path: Path, pack: dict[str, Any]) -> dict[str, Any]:
+    feature_id = feature["id"]
     lines: list[dict[str, str]] = []
     blocking = False
     export = pack.get("export") if isinstance(pack.get("export"), dict) else {}
@@ -1010,7 +1110,15 @@ def check_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
         if row[1] == graph_hash(web_path):
             lines.append({"level": "ok", "message": "Graph chưa đổi kể từ lúc xuất"})
         else:
-            lines.append({"level": "warn", "message": "Graph đã đổi kể từ lúc xuất. Nên xuất lại để AI viết trên code mới."})
+            # Steps of a flow nobody saved yet are numbered from the current graph, so after a re-extract the
+            # ids in the file may point at different steps. Those flows need a fresh export.
+            unsaved = [item["name"] for item in feature["children"] if not item["has_doc"]
+                       and any(isinstance(flow, dict) and flow.get("id") == item["id"] for flow in pack["flows"])]
+            if unsaved:
+                lines.append({"level": "error", "message": "Graph đã đổi kể từ lúc xuất và các luồng sau chưa từng được lưu, "
+                              f"các bước có thể đã lệch: {', '.join(unsaved)}. Hãy xuất lại."}); blocking = True
+            else:
+                lines.append({"level": "warn", "message": "Graph đã đổi kể từ lúc xuất. Nên xuất lại để AI viết trên code mới."})
 
     node_ids = index.reach([feature["entry_node_id"], *feature.get("extra_entries", [])], MAX_FEATURE_NODES)
     resolve = _resolver(index, node_ids)
@@ -1020,30 +1128,31 @@ def check_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
     for flow in pack["flows"]:
         if not isinstance(flow, dict):
             continue
-        if flow.get("id") not in known_flows:
+        if not isinstance(flow.get("id"), str) or flow["id"] not in known_flows:
             lines.append({"level": "warn", "message": f"Luồng {flow.get('id')!r} không thuộc tính năng này, sẽ bỏ qua"})
             continue
-        questions += len([q for q in flow.get("questions") or [] if isinstance(q, str) and q.strip()])
-        for part in [flow.get("summary"), *(flow.get("steps") or [])]:
+        questions += len(_strs(flow.get("questions"), 2000, 50))
+        edge = flow.get("edge_cases") if isinstance(flow.get("edge_cases"), dict) else {}
+        if not edge.get("locked") and _strs(edge.get("items"), 4000, 100):
+            filled += 1
+        steps = flow.get("steps") if isinstance(flow.get("steps"), list) else []
+        for part in [flow.get("summary"), *steps]:
             if not isinstance(part, dict):
                 continue
             if part.get("locked"):
                 kept += 1
                 continue
-            if str(part.get("text") or "").strip():
+            rules = [rule for rule in part.get("rules") or [] if isinstance(rule, dict)] if isinstance(part.get("rules"), list) else []
+            if _str(part.get("text"), 50_000) or _str(part.get("name"), 200) or rules:
                 filled += 1
-            for name in re.findall(r"\[\[(.+?)\]\]", str(part.get("text") or "")):
+            for name in re.findall(r"\[\[(.+?)\]\]", _str(part.get("text"), 50_000)):
                 if resolve(name) is None:
                     bad[name] = None
-            for ref in part.get("nodes") or []:
-                if resolve(ref) is None:
-                    bad[str(ref)] = None
-            for rule in part.get("rules") or []:
-                if isinstance(rule, dict):
-                    if rule.get("at") and resolve(rule["at"]) is None:
-                        bad[str(rule["at"])] = None
-                    if not rule.get("evidence"):
-                        lines.append({"level": "warn", "message": f"Quy tắc “{rule.get('title', '')}” không có evidence, sẽ được đánh dấu “Cần xác nhận”"})
+            for rule in rules:
+                if rule.get("at") and resolve(rule["at"]) is None:
+                    bad[_str(rule["at"], 400)] = None
+                if not _str(rule.get("evidence"), 400):
+                    lines.append({"level": "warn", "message": f"Quy tắc “{_str(rule.get('title'), 400)}” không có evidence, sẽ được đánh dấu “Cần xác nhận”"})
     lines.append({"level": "ok", "message": f"{filled} phần được AI điền"})
     if kept:
         lines.append({"level": "ok", "message": f"{kept} phần khoá được giữ nguyên"})
@@ -1056,59 +1165,65 @@ def check_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
 
 def apply_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], web_path: Path, feature_id: str,
                  text: Any) -> dict[str, Any]:
-    result = check_import(db, index, tree, web_path, feature_id, text)
+    feature = find_item(tree, feature_id)
+    if not feature or feature["kind"] != "feature":
+        raise BusinessError("not_found", "Feature not found", 404)
+    pack = _parse_pack(text)
+    result = _check(db, index, feature, web_path, pack)
     if not result["ok"]:
         reasons = "; ".join(line["message"] for line in result["lines"] if line["level"] == "error")
         raise BusinessError("invalid_import", "File chưa nhập được: " + (reasons or "không có nội dung mới"))
-    pack = _parse_pack(text)
-    feature = find_item(tree, feature_id)
     node_ids = index.reach([feature["entry_node_id"], *feature.get("extra_entries", [])], MAX_FEATURE_NODES)
     resolve = _resolver(index, node_ids)
     items = {item["id"]: item for item in feature["children"]}
     applied_parts = 0
     applied_flows = []
+    locked = {"edited", "approved"}
+    _begin(db)
     for flow in pack["flows"]:
-        if not isinstance(flow, dict) or flow.get("id") not in items:
+        if not isinstance(flow, dict) or not isinstance(flow.get("id"), str) or flow["id"] not in items:
             continue
         item = items[flow["id"]]
         doc = _stored_or_skeleton(db, index, item)
         changed = 0
-        if isinstance(flow.get("name"), str) and flow["name"].strip() and doc.get("summary", {}).get("status") not in {"edited", "approved"}:
-            doc["name"] = flow["name"].strip()[:200]
+        summary_now = doc.setdefault("summary", {"text": "", "status": "ai"})
+        if _str(flow.get("name"), 200) and summary_now.get("status") not in locked:
+            doc["name"] = _str(flow.get("name"), 200)
         summary = flow.get("summary") if isinstance(flow.get("summary"), dict) else {}
-        if summary.get("text") and not summary.get("locked") and doc["summary"].get("status") not in {"edited", "approved"}:
-            doc["summary"] = {"text": str(summary["text"]).strip(), "status": "ai"}
+        if _str(summary.get("text"), 50_000) and not summary.get("locked") and summary_now.get("status") not in locked:
+            doc["summary"] = {"text": _str(summary.get("text"), 50_000), "status": "ai"}
             changed += 1
-        incoming = {step.get("id"): step for step in flow.get("steps") or [] if isinstance(step, dict)}
+        incoming = {step["id"]: step for step in (flow.get("steps") if isinstance(flow.get("steps"), list) else [])
+                    if isinstance(step, dict) and isinstance(step.get("id"), str)}
         for step in doc.get("steps", []):
             new = incoming.get(step["id"])
-            if not new or new.get("locked") or step.get("status") in {"edited", "approved"}:
+            if not new or new.get("locked") or step.get("status") in locked:
                 continue
-            if not any(str(new.get(key) or "").strip() for key in ("name", "text")) and not new.get("rules"):
+            rules = [rule for rule in new.get("rules") or [] if isinstance(rule, dict)] if isinstance(new.get("rules"), list) else []
+            if not (_str(new.get("name"), 200) or _str(new.get("text"), 50_000) or rules):
                 continue
+            # The step's nodes come from the graph (or a person); the AI only writes about them.
             step.update({
-                "name": str(new.get("name") or step.get("name", "")).strip()[:200],
-                "actor": str(new.get("actor") or step.get("actor", "")).strip()[:200],
-                "text": str(new.get("text") or "").strip(),
+                "name": _str(new.get("name"), 200) or step.get("name", ""),
+                "actor": _str(new.get("actor"), 200) or step.get("actor", ""),
+                "text": _str(new.get("text"), 50_000),
                 "status": "ai",
-                "rules": [_import_rule(rule, resolve) for rule in new.get("rules") or [] if isinstance(rule, dict)],
+                "rules": [_import_rule(rule, resolve) for rule in rules[:50]],
             })
-            refs = [resolve(ref) for ref in new.get("nodes") or []]
-            if refs and all(refs):
-                step["nodes"] = list(dict.fromkeys(refs))
-            step["orphans"] = [str(ref) for ref, node_id in zip(new.get("nodes") or [], refs) if node_id is None]
             changed += 1
         edge = flow.get("edge_cases") if isinstance(flow.get("edge_cases"), dict) else {}
-        if edge.get("items") and not edge.get("locked") and doc.get("edge_cases", {}).get("status") not in {"edited", "approved"}:
-            doc["edge_cases"] = {"items": [str(value).strip() for value in edge["items"] if str(value).strip()][:100], "status": "ai"}
+        edge_items = _strs(edge.get("items"), 4000, 100)
+        if edge_items and not edge.get("locked") and doc.get("edge_cases", {}).get("status") not in locked:
+            doc["edge_cases"] = {"items": edge_items, "status": "ai"}
             changed += 1
         existing = {q.get("text") for q in doc.get("questions", [])}
-        for question in flow.get("questions") or []:
-            if isinstance(question, str) and question.strip() and question.strip() not in existing:
-                doc.setdefault("questions", []).append({"id": f"q{len(doc['questions']) + 1}", "text": question.strip(), "answer": ""})
+        for question in _strs(flow.get("questions"), 2000, 50):
+            if question not in existing:
+                existing.add(question)
+                doc.setdefault("questions", []).append({"id": f"q{len(doc['questions']) + 1}", "text": question, "answer": ""})
                 changed += 1
         if changed:
-            doc["export_id"] = (pack.get("export") or {}).get("id")
+            doc["export_id"] = _str((pack.get("export") if isinstance(pack.get("export"), dict) else {}).get("id"), 100)
             doc["imported_at"] = _now()
             _save_flow(db, item["id"], feature_id, doc)
             applied_parts += changed
@@ -1118,29 +1233,47 @@ def apply_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
 
 
 def _import_rule(rule: dict[str, Any], resolve) -> dict[str, Any]:
-    at = str(rule.get("at") or "").strip()
-    evidence = str(rule.get("evidence") or "").strip()
-    status = rule.get("status") if rule.get("status") in RULE_STATUSES else "warn"
+    at = _str(rule.get("at"), 400)
+    evidence = _str(rule.get("evidence"), 400)
+    status = rule.get("status") if isinstance(rule.get("status"), str) and rule.get("status") in RULE_STATUSES else "warn"
     if not evidence:
         status = "warn"
-    return {"title": str(rule.get("title") or "").strip()[:400], "text": str(rule.get("text") or "").strip()[:8000],
-            "at": at, "at_node_id": resolve(at) if at else None, "evidence": evidence[:400], "status": status}
+    return {"title": _str(rule.get("title"), 400), "text": _str(rule.get("text"), 8000),
+            "at": at, "at_node_id": resolve(at) if at else None, "evidence": evidence, "status": status}
 
 
 # --------------------------------------------------------------------------- search
+
+_NODE_FLOWS: dict[str, Any] = {}
+
+
+def node_flows(index: GraphIndex, tree: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """node id -> the features and flows that reach it, built once per (graph, tree) instead of per request."""
+    key = (id(index), id(tree))
+    if _NODE_FLOWS.get("key") == key:
+        return _NODE_FLOWS["value"]
+    found: dict[str, list[dict[str, str]]] = {}
+    for menu in tree["menus"]:
+        for feature in menu.get("children", []):
+            if feature["kind"] != "feature":
+                continue
+            for node_id in index.reach([feature["entry_node_id"], *feature.get("extra_entries", [])], MAX_FEATURE_NODES):
+                found.setdefault(node_id, []).append({"kind": "feature", "id": feature["id"], "name": feature["name"], "path": menu["name"]})
+            for flow in feature["children"]:
+                if not flow.get("entry_node_id"):
+                    continue
+                for node_id in index.reach([flow["entry_node_id"]], MAX_FLOW_NODES):
+                    found.setdefault(node_id, []).append({"kind": "flow", "id": flow["id"], "name": flow["name"],
+                                                          "path": f"{menu['name']} / {feature['name']}", "feature_id": feature["id"]})
+    _NODE_FLOWS.update(key=key, value=found, tree=tree, index=index)  # keep both alive so their ids stay unique
+    return found
+
 
 def node_page(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], node_id: str) -> dict[str, Any]:
     """One code node: its display facts and every documented flow that reaches it."""
     if node_id not in index.nodes:
         raise BusinessError("not_found", "Node not found", 404)
-    flows = []
-    for menu in tree["menus"]:
-        for feature in menu.get("children", []):
-            if feature["kind"] != "feature":
-                continue
-            for flow in feature["children"]:
-                if flow.get("entry_node_id") and node_id in index.reach([flow["entry_node_id"]], MAX_FLOW_NODES):
-                    flows.append({"id": flow["id"], "name": flow["name"], "path": f"{menu['name']} / {feature['name']}"})
+    flows = [{key: hit[key] for key in ("id", "name", "path")} for hit in node_flows(index, tree).get(node_id, []) if hit["kind"] == "flow"]
     return {"node": node_facts(db, index, [node_id])[node_id], "flows": flows}
 
 
@@ -1156,23 +1289,20 @@ def search_nodes(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
            ORDER BY CASE WHEN technical_name=? COLLATE NOCASE THEN 0 ELSE 1 END, length(technical_name), node_id LIMIT ?""",
         (like, like, like, like, query.strip(), limit),
     ).fetchall()
-    features = [item for menu in tree["menus"] for item in menu.get("children", []) if item["kind"] == "feature"]
+    reach = node_flows(index, tree)
     results = []
     for (node_id,) in rows:
         if node_id not in index.nodes:
             continue
         node = index.nodes[node_id]
         hit = {"kind": "node", "id": node_id, "label": ref_name(node), "node_type": node["node_type"], "feature_id": None, "flow_id": None}
-        for feature in features:
-            if node_id in index.reach([feature["entry_node_id"], *feature.get("extra_entries", [])], MAX_FEATURE_NODES):
-                hit["feature_id"] = feature["id"]
-                hit["path"] = feature["name"]
-                for flow in feature["children"]:
-                    if flow.get("entry_node_id") and node_id in index.reach([flow["entry_node_id"]], MAX_FLOW_NODES):
-                        hit["flow_id"] = flow["id"]
-                        hit["path"] = f"{feature['name']} / {flow['name']}"
-                        break
-                break
+        owners = reach.get(node_id, [])
+        feature = next((owner for owner in owners if owner["kind"] == "feature"), None)
+        if feature:
+            hit["feature_id"], hit["path"] = feature["id"], feature["name"]
+            flow = next((owner for owner in owners if owner["kind"] == "flow" and owner["feature_id"] == feature["id"]), None)
+            if flow:
+                hit["flow_id"], hit["path"] = flow["id"], f"{feature['name']} / {flow['name']}"
         results.append(hit)
     return results
 

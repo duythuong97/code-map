@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -293,6 +294,68 @@ class BusinessApiTests(unittest.TestCase):
         self.call("patch", f"/items/{FEATURE}", json={"name": "Tạo đơn"})
         write_rag_database(self.output / "graph.sqlite", self.output / "codemap-rag.sqlite", input_root=None)
         self.assertEqual(self.tree_item(self.call("get", "/tree"), FEATURE)["name"], "Tạo đơn")
+
+    # ---- regressions from the audit
+
+    def reply(self, mutate) -> str:
+        """The AI's answer: the export/flows block of a fresh export, changed by `mutate`."""
+        pack = load_pack(self.fill(self.export()["text"], step_text="Viết lại."))
+        pack = {"export": pack["export"], "flows": pack["flows"]}
+        mutate(next(flow for flow in pack["flows"] if flow["id"] == FLOW))
+        return yaml.safe_dump(pack, allow_unicode=True, sort_keys=False)
+
+    def test_yaml_aliases_are_refused(self) -> None:
+        bomb = "a: &a [x, x, x, x, x, x, x, x, x, x]\nb: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]\nflows: [*b]\n"
+        result = self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": bomb}, status=400)
+        self.assertIn("alias", json.dumps(result, ensure_ascii=False))
+
+    def test_import_keeps_the_step_nodes_and_accepts_text_where_a_list_was_expected(self) -> None:
+        before = self.call("get", f"/flows/{FLOW}")["flow"]["steps"][0]["nodes"]
+
+        def mutate(flow):
+            flow["steps"][0]["nodes"] = ["table: ORDER_HEADER"]
+            flow["questions"] = "Có kiểm tra tồn kho không?"
+            flow["edge_cases"] = {"items": "Đơn rỗng"}
+        self.call("post", f"/features/{FEATURE}/ai-import", json={"text": self.reply(mutate)})
+        flow = self.call("get", f"/flows/{FLOW}")["flow"]
+        self.assertEqual(flow["steps"][0]["nodes"], before)
+        self.assertEqual([q["text"] for q in flow["questions"]], ["Có kiểm tra tồn kho không?"])
+        self.assertEqual(flow["edge_cases"]["items"], ["Đơn rỗng"])
+
+    def test_structured_ids_are_rejected_not_crashing(self) -> None:
+        self.call("patch", f"/flows/{FLOW}/parts/step:s1", json={"nodes": [["x"]]}, status=400)
+
+        def mutate(flow):
+            flow["steps"][0]["id"] = {"a": 1}
+        self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": self.reply(mutate)})
+        text = yaml.safe_dump({"export": load_pack(self.export()["text"])["export"], "flows": [{"id": [1]}]})
+        self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": text})
+
+    def test_renamed_or_far_entry_points_stay_assignable(self) -> None:
+        self.call("patch", f"/items/entry:{PING}", json={"name": "Ping"})
+        tree = self.call("get", "/tree")
+        self.assertEqual(self.tree_item(tree, f"entry:{PING}")["name"], "Ping")
+        tree = self.call("patch", f"/items/entry:{PING}", json={"parent_id": FEATURE})["tree"]
+        self.assertIn(f"flow:{PING}", [child["id"] for child in self.tree_item(tree, FEATURE)["children"]])
+
+    def test_stranded_documents_stay_reachable(self) -> None:
+        # A document saved for a screen and UI action that a later extract no longer has.
+        self.call("get", "/tree")
+        gone = "flow:ui-action:web:old-screen:save"
+        with closing(sqlite3.connect(self.serving.KNOWLEDGE_DB)) as db, db:
+            db.execute("INSERT INTO biz_flows(flow_id,feature_id,doc_json,updated_at) VALUES(?,?,?,?)",
+                       (gone, "feature:screen:web:old", json.dumps({"name": "Lưu", "summary": {"text": "Người dùng viết.", "status": "edited"}, "steps": []}), "now"))
+        stranded = self.tree_item(self.call("get", "/tree"), "menu:stranded")
+        self.assertEqual([child["id"] for child in stranded["children"]], [gone])
+        self.assertEqual(self.call("get", f"/flows/{gone}")["flow"]["summary"]["text"], "Người dùng viết.")
+
+    def test_unsaved_flow_import_is_blocked_after_the_graph_changed(self) -> None:
+        text = self.reply(lambda flow: None)
+        stamp = self.output / "codemap-web.sqlite"
+        os.utime(stamp, ns=(stamp.stat().st_atime_ns, stamp.stat().st_mtime_ns + 5_000_000_000))
+        check = self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": text})
+        self.assertFalse(check["ok"])
+        self.assertTrue(any("Hãy xuất lại" in line["message"] for line in check["lines"]))
 
 
 if __name__ == "__main__":
