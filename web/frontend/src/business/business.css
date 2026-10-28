@@ -1,6 +1,6 @@
 /* Business documentation UI. Scoped under .bm so the graph explorer keeps its own styles.
    One accent for selection, neutrals for node types and steps, status colours only where attention is needed. */
-.bm, .bm-modal, .bm-explore {
+.bm, .bm-modal {
   --bg: #090d16; --panel: #0e1420; --raised: #141b2a; --hover: #1a2233; --line: #222b3d; --line-soft: #1a2232;
   --fg: #e8ecf4; --fg-2: #c3cad8; --muted: #8791a6; --accent: #7aa2ff; --accent-ink: #0a1022;
   --ok: #45c58c; --warn: #f0b84b; --bad: #f2675c; --node: #f4f6fb; --node-fg: #111827; --dot: #1b2438;
@@ -10,7 +10,7 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) :is(.bm, .bm-modal, .bm-explore) {
+  :root:not([data-theme="dark"]) :is(.bm, .bm-modal) {
     --bg: #f5f6f9; --panel: #ffffff; --raised: #f8f9fc; --hover: #eff2f7; --line: #e1e5ec; --line-soft: #edf0f5;
     --fg: #121826; --fg-2: #2f3747; --muted: #667086; --accent: #2f63d6; --accent-ink: #ffffff;
     --ok: #17875a; --warn: #a77405; --bad: #cc3b30; --node: #ffffff; --node-fg: #111827; --dot: #d9dee8;
@@ -18,7 +18,7 @@
     color-scheme: light;
   }
 }
-:root[data-theme="light"] :is(.bm, .bm-modal, .bm-explore) {
+:root[data-theme="light"] :is(.bm, .bm-modal) {
   --bg: #f5f6f9; --panel: #ffffff; --raised: #f8f9fc; --hover: #eff2f7; --line: #e1e5ec; --line-soft: #edf0f5;
   --fg: #121826; --fg-2: #2f3747; --muted: #667086; --accent: #2f63d6; --accent-ink: #ffffff;
   --ok: #17875a; --warn: #a77405; --bad: #cc3b30; --node: #ffffff; --node-fg: #111827; --dot: #d9dee8;
@@ -332,8 +332,6 @@
 .bm-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 70; padding: 10px 16px; border-radius: 10px; background: var(--fg); color: var(--bg); font-size: 13px; font-weight: 500; box-shadow: var(--shadow); }
 
 /* graph explorer kept as before */
-.bm-explore { position: fixed; inset: 0; }
-.bm-explore-back { position: fixed; right: 16px; bottom: 16px; z-index: 80; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); text-decoration: none; font: 500 12.5px var(--font-ui); box-shadow: var(--shadow); }
 
 @media (max-width: 1080px) {
   .bm { position: static; min-height: 100vh; }
@@ -361,3 +359,23 @@
 /* Nodes grow to show the full name, up to a width that still fits the layout columns. */
 .bm-canvas .flow-node { width: max-content; min-width: 210px; max-width: 360px; }
 .bm-canvas .node-identity > span { white-space: normal; overflow-wrap: anywhere; }
+/* node page: graph from any code node, explorer detail on the right */
+.bm-node-page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); height: 100%; min-height: 0; }
+.bm-node-title { font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.bm-node-side { min-width: 0; overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+.bm-node-flows { display: grid; gap: 6px; padding: 14px 16px; border-bottom: 1px solid var(--line-soft); }
+.bm-node-none { padding: 14px 16px; border-bottom: 1px solid var(--line-soft); }
+.bm .bm-node-flow { display: flex; gap: 8px; align-items: flex-start; text-align: left; border: 1px solid var(--line); background: var(--raised); border-radius: 9px; padding: 8px 10px; color: var(--fg); }
+.bm .bm-node-flow:hover { background: var(--hover); }
+.bm-node-flow svg { margin-top: 3px; flex: none; color: var(--muted); }
+.bm-node-flow span { display: grid; min-width: 0; }
+.bm-node-flow small { color: var(--muted); font-size: 11.5px; }
+.bm-node-actions { padding: 12px 16px 0; }
+.bm-node-detail { display: grid; gap: 8px; padding: 12px 16px 24px; align-content: start; }
+.bm-node-detail .code-flow-detail-shell { padding: 0; border: 0; background: none; }
+.bm-pop > .bm-btn { justify-self: start; }
+@media (max-width: 1080px) {
+  .bm-node-page { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .bm-node-page .bm-stage { height: 620px; }
+  .bm-node-side { border-left: 0; border-top: 1px solid var(--line); }
+}

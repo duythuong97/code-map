@@ -1,15 +1,15 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Monitor, Moon, Network, PanelLeft, Sun } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Monitor, Moon, PanelLeft, Sun } from "lucide-react";
 import "./business.css";
 import { businessApi } from "./api.js";
 import NavTree from "./NavTree.jsx";
 import SearchBox from "./SearchBox.jsx";
 import FeaturePage from "./FeaturePage.jsx";
 import FlowView from "./FlowView.jsx";
+import NodePage from "./NodePage.jsx";
 import { ExportDialog, ImportDialog } from "./AiDialogs.jsx";
 import { parseRoute, routeHash } from "./text.js";
 
-const CodeFlowApp = lazy(() => import("../CodeFlowApp.jsx"));
 
 const THEMES = [["system", "Theo hệ điều hành", Monitor], ["light", "Sáng", Sun], ["dark", "Tối", Moon]];
 
@@ -82,7 +82,7 @@ export default function BusinessApp() {
   }, [go]);
 
   function pickSearch(hit) {
-    if (hit.group === "node") { if (hit.flow_id) go("flow", hit.flow_id); else if (hit.feature_id) go("feature", hit.feature_id); return; }
+    if (hit.group === "node") { go("node", hit.id); return; }
     if (hit.kind === "flow" || hit.kind === "step" || hit.kind === "rule") go("flow", hit.id);
     else go("feature", hit.id);
   }
@@ -97,13 +97,6 @@ export default function BusinessApp() {
   const exportDialog = (featureId) => setDialog({ type: "export", featureId });
   const importDialog = (featureId) => setDialog({ type: "import", featureId });
 
-  if (route.view === "explore") {
-    return <div className="bm-explore">
-      <a className="bm-explore-back" href="#/"><ArrowLeft size={14} /> Về tài liệu nghiệp vụ</a>
-      <Suspense fallback={<p className="bm-muted">Đang tải graph…</p>}><CodeFlowApp /></Suspense>
-    </div>;
-  }
-
   const selectedId = route.id;
   return <div className="bm">
     <header className="bm-top">
@@ -112,7 +105,7 @@ export default function BusinessApp() {
         <a className="bm-logo" href="#/"><span className="bm-logo-mark" aria-hidden="true" />Code Map</a>
       </span>
       <SearchBox onPick={pickSearch} />
-      <span className="bm-top-r"><ThemeToggle /><a className="bm-btn ghost" href="#/explore"><Network size={14} /> Khám phá graph</a></span>
+      <span className="bm-top-r"><ThemeToggle /></span>
     </header>
     <div className={`bm-body${collapsed ? " collapsed" : ""}${drawer ? " drawer" : ""}`}>
       {tree ? <NavTree tree={tree} selectedId={selectedId} onSelect={openItem} /> : <nav className="bm-nav"><p className="bm-muted bm-pad">{error || "Đang tải cây tính năng…"}</p></nav>}
@@ -121,7 +114,9 @@ export default function BusinessApp() {
         {error ? <div className="bm-page"><p className="bm-error">{error}</p></div>
           : !tree ? null
             : route.view === "flow" && selectedId
-              ? <FlowView key={`${selectedId}:${refresh}`} flowId={selectedId} onTree={onTree} onOpenItem={openItem} onExport={exportDialog} onImport={importDialog} notify={setToast} />
+              ? <FlowView key={`${selectedId}:${refresh}`} flowId={selectedId} onTree={onTree} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} onExport={exportDialog} onImport={importDialog} notify={setToast} />
+              : route.view === "node" && selectedId
+                ? <NodePage key={selectedId} nodeId={selectedId} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} notify={setToast} />
               : <div className="bm-page-wrap"><FeaturePage itemId={selectedId} tree={tree} onTree={onTree} onOpen={openItem} onExport={exportDialog} onImport={importDialog} notify={setToast} /></div>}
       </main>
     </div>

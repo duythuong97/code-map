@@ -465,8 +465,11 @@ gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 
 ## Tài liệu nghiệp vụ (menu → tính năng → luồng)
 
-Màn hình chính của web là tài liệu nghiệp vụ gắn với graph. Graph explorer cũ
-vẫn còn, mở bằng nút **Khám phá graph** (`#/explore`).
+Màn hình chính của web là tài liệu nghiệp vụ gắn với graph. Graph explorer cũ đã
+gộp vào đây thành **trang node** (`#/node/<node_id>`): tìm một method, API, bảng…
+ở ô tìm kiếm, hoặc bấm "Chi tiết và graph từ node này" trên một node trong luồng.
+Trang node có graph với checkbox 1/W/R/E, panel chi tiết (nghĩa nghiệp vụ, cột,
+semantic tree) và danh sách luồng có chứa node.
 
 **Cây tính năng dựng tự động từ graph** sau mỗi lần extract:
 
@@ -516,6 +519,7 @@ API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
 | `POST /business/features/<id>/ai-export` | tạo file cho AI (`?code=0&locked=0&answers=0` để bỏ bớt) |
 | `POST /business/features/<id>/ai-import/check`, `.../ai-import` | kiểm tra, nhập file AI trả về |
 | `GET /business/search?q=` | tìm trong nghiệp vụ và node |
+| `GET /business/nodes/<node_id>` | thông tin node và các luồng có chứa node |
 
 Người duyệt lấy từ header `X-Code-Map-User` nếu có.
 
@@ -538,7 +542,7 @@ extractor/
   pyproject.toml, requirements.txt
 web/
   backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
-  frontend/             # React UI (src/business: tài liệu nghiệp vụ; CodeFlowApp: graph explorer)
+  frontend/             # React UI (src/business: tài liệu nghiệp vụ và trang node; src/code-flow: node graph, panel chi tiết)
   configs/, ecosystem.config.js (pm2), requirements.txt
 vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
 shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu

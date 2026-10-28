@@ -269,6 +269,12 @@ class BusinessApiTests(unittest.TestCase):
         self.assertIn(f"flow:{PING}", [flow["id"] for flow in self.tree_item(assigned["tree"], FEATURE)["children"]])
         self.call("patch", "/items/menu:orders", json={"status": "rejected"}, status=400)
 
+    def test_node_page_lists_the_flows_that_reach_it(self) -> None:
+        page = self.call("get", f"/nodes/{CREATE_PROC}")
+        self.assertEqual(page["node"]["name"], "PKG_ORDER.CREATE_ORDER")
+        self.assertIn(FLOW, [flow["id"] for flow in page["flows"]])
+        self.call("get", "/nodes/procedure:DB1:NOPE", status=404)
+
     def test_feature_detail_and_search(self) -> None:
         detail = self.call("get", f"/items/{FEATURE}")
         self.assertEqual(detail["apis"], ["POST /api/orders"])

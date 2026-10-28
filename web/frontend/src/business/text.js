@@ -97,14 +97,13 @@ export function typeLabel(nodeType = "") {
   return nodeType.replace(/_/g, " ");
 }
 
-// Hash routes: #/feature/<id>, #/flow/<id>, #/explore.
+// Hash routes: #/feature/<id>, #/flow/<id>, #/node/<node_id>. The old #/explore lands on the home page.
 export function parseRoute(hash = "") {
-  const match = String(hash).replace(/^#/, "").match(/^\/(feature|flow|explore)(?:\/(.*))?$/);
+  const match = String(hash).replace(/^#/, "").match(/^\/(feature|flow|node)(?:\/(.*))?$/);
   if (!match) return { view: "home", id: null };
   return { view: match[1], id: match[2] ? decodeURIComponent(match[2]) : null };
 }
 
 export function routeHash(view, id) {
-  if (view === "explore") return "#/explore";
   return id ? `#/${view}/${encodeURIComponent(id)}` : "#/";
 }

@@ -17,5 +17,6 @@ export const businessApi = {
   exportPack: (featureId, flags) => api(`/business/features/${id(featureId)}/ai-export?${new URLSearchParams(flags)}`, { method: "POST" }),
   checkImport: (featureId, text) => api(`/business/features/${id(featureId)}/ai-import/check`, json("POST", { text })),
   applyImport: (featureId, text) => api(`/business/features/${id(featureId)}/ai-import`, json("POST", { text })),
+  node: (nodeId) => api(`/business/nodes/${id(nodeId)}`),
   search: (query, signal) => api(`/business/search?q=${encodeURIComponent(query)}`, { signal }),
 };

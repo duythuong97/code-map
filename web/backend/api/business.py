@@ -1129,6 +1129,21 @@ def _import_rule(rule: dict[str, Any], resolve) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- search
 
+def node_page(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """One code node: its display facts and every documented flow that reaches it."""
+    if node_id not in index.nodes:
+        raise BusinessError("not_found", "Node not found", 404)
+    flows = []
+    for menu in tree["menus"]:
+        for feature in menu.get("children", []):
+            if feature["kind"] != "feature":
+                continue
+            for flow in feature["children"]:
+                if flow.get("entry_node_id") and node_id in index.reach([flow["entry_node_id"]], MAX_FLOW_NODES):
+                    flows.append({"id": flow["id"], "name": flow["name"], "path": f"{menu['name']} / {feature['name']}"})
+    return {"node": node_facts(db, index, [node_id])[node_id], "flows": flows}
+
+
 def search_nodes(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], query: str, limit: int = 10) -> list[dict[str, Any]]:
     """Code nodes matching the query, each with the feature and flow that reach it (if any)."""
     if len(query.strip()) < 2:

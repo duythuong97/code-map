@@ -51,7 +51,8 @@ assert.equal(stepSystem({ nodes: ["a", "t", "m"] }, byId), "order-api");
 assert.equal(stepSystem({ nodes: [], system: "Jobnet" }, byId), "Jobnet");
 
 assert.deepEqual(parseRoute("#/flow/flow%3Aui-action%3Aweb%3Ax"), { view: "flow", id: "flow:ui-action:web:x" });
-assert.deepEqual(parseRoute("#/explore"), { view: "explore", id: null });
+assert.deepEqual(parseRoute("#/explore"), { view: "home", id: null });
+assert.deepEqual(parseRoute("#/node/procedure%3ADB1%3APKG.P"), { view: "node", id: "procedure:DB1:PKG.P" });
 assert.deepEqual(parseRoute(""), { view: "home", id: null });
 assert.equal(routeHash("feature", "feature:screen:web:orders/new"), "#/feature/feature%3Ascreen%3Aweb%3Aorders%2Fnew");
 

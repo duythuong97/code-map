@@ -93,6 +93,13 @@ def business_flow(flow_id):
         return jsonify(business.load_flow(db, index, tree, flow_id))
 
 
+@bp.get("/business/nodes/<path:node_id>")
+def business_node(node_id):
+    with connection() as db:
+        index, tree, _path = _context(db)
+        return jsonify(business.node_page(db, index, tree, node_id))
+
+
 @bp.patch("/business/flows/<path:flow_id>/parts/<part>")
 def business_flow_part(flow_id, part):
     body = _body(MAX_EDIT_BYTES)

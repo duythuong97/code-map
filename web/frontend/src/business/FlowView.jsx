@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Background, Controls, MarkerType, ReactFlow } from "@xyflow/react";
-import { Check, Cpu, Download, PanelLeftClose, PanelLeftOpen, Pencil, Upload, User, X } from "lucide-react";
+import { Check, Cpu, Download, Network, PanelLeftClose, PanelLeftOpen, Pencil, Upload, User, X } from "lucide-react";
 import { businessApi } from "./api.js";
 import { buildAutoLayout } from "../code-flow/layout.js";
 import { api } from "../code-flow/api.js";
@@ -21,7 +21,7 @@ import { Inline, RichText, RuleStatus, Status } from "./ui.jsx";
 import { citedNames, flowParts, nodeLookup, reviewCounts, swimlanes, typeLabel } from "./text.js";
 
 
-export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImport, notify }) {
+export default function FlowView({ flowId, onTree, onOpenItem, onOpenNode, onExport, onImport, notify }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [activeStep, setActiveStep] = useState(null);
@@ -218,7 +218,7 @@ export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImpor
         ? <FlowGraph nodes={nodes} edges={data.edges || []} levels={data.levels} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
             picking={picking} entry={steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} notify={notify} />
         : <Swimlane steps={steps} stepNodes={stepNodes} nodesById={nodesById} activeStep={activeStep} selected={selected} onStep={setActiveStep} onNode={onNodeClick} />}
-      {selected && mode === "graph" && !picking ? <NodeCard node={nodesById.get(selected)} flow={flow} onClose={() => setSelected(null)} onStep={(id) => { setActiveStep(id); docRef.current?.querySelector(`#bm-step-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }} /> : null}
+      {selected && mode === "graph" && !picking ? <NodeCard node={nodesById.get(selected) || { node_id: selected, name: selected, node_type: "" }} flow={flow} onOpenNode={onOpenNode} onClose={() => setSelected(null)} onStep={(id) => { setActiveStep(id); docRef.current?.querySelector(`#bm-step-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }} /> : null}
     </section>
   </div>;
 }
@@ -285,7 +285,7 @@ function toGraphNode(node) {
   return { ...node, technical_name: node.name || node.technical_name, default_display_name: node.display_name || node.name };
 }
 
-function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick, notify }) {
+export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps = [], stepNodes = [], activeStep, selected, picking, entry, initialExpand, onNodeClick, notify }) {
   const instance = useRef(null);
   const canvasRef = useRef(null);
   const requests = useRef(new Map());
@@ -369,6 +369,13 @@ function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, st
     setIntents((current) => mergeExpansionIntent(current, node, mode, direction));
     void loadGroup(node, mode, direction, semantic);
   }, [semantic, filters, loadGroup, defaults]);
+
+  // A graph opened from a single node starts with its own 1-hop neighbours, like ticking "1" on both sides.
+  useEffect(() => {
+    const root = flowNodesAll.find((node) => node.node_id === entry);
+    if (!root || !initialExpand?.length) return;
+    initialExpand.forEach(([mode, direction]) => toggleFlow(toGraphNode(root), mode, direction, true));
+  }, [entry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function changeSemantic(level) {
     if (level === semantic) return;
@@ -545,7 +552,7 @@ function Swimlane({ steps, stepNodes, nodesById, activeStep, selected, onStep, o
   </div>;
 }
 
-function NodeCard({ node, flow, onClose, onStep }) {
+function NodeCard({ node, flow, onClose, onStep, onOpenNode }) {
   if (!node) return null;
   const mentions = [];
   (flow.steps || []).forEach((step, index) => {
@@ -565,5 +572,6 @@ function NodeCard({ node, flow, onClose, onStep }) {
     </dl>
     {mentions.length ? <div className="bm-mentions"><span className="bm-label">Được nhắc trong tài liệu</span>
       {mentions.map(([stepId, label], index) => <button key={index} type="button" onClick={() => onStep(stepId)}>{label}</button>)}</div> : null}
+    {onOpenNode ? <button type="button" className="bm-btn sm" onClick={() => onOpenNode(node.node_id)}><Network size={14} /> Chi tiết và graph từ node này</button> : null}
   </div>;
 }
