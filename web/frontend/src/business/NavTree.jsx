@@ -113,6 +113,9 @@ export default function NavTree({ tree, selectedId, onSelect }) {
     event.preventDefault();
   }
 
+  // Roving tabindex: the selected row, or the first row when the selection is not in the visible tree.
+  const tabStop = rows.some((row) => row.item.id === selectedId) ? selectedId : rows[0]?.item.id;
+
   function focusRow(id) {
     requestAnimationFrame(() => listRef.current?.querySelector(`[data-id="${CSS.escape(id)}"]`)?.focus());
   }
@@ -134,7 +137,7 @@ export default function NavTree({ tree, selectedId, onSelect }) {
         const hasChildren = Boolean(item.children?.length);
         const expanded = filter !== "all" || open.has(item.id);
         return <li key={item.id} data-id={item.id} role="treeitem" aria-level={depth + 1} aria-selected={item.id === selectedId}
-          aria-expanded={hasChildren ? expanded : undefined} tabIndex={item.id === selectedId ? 0 : -1}
+          aria-expanded={hasChildren ? expanded : undefined} tabIndex={item.id === tabStop ? 0 : -1}
           className={`bm-row k-${item.kind}${item.id === selectedId ? " sel" : ""}`} style={{ "--d": depth }}
           onClick={() => onSelect(item)}>
           {hasChildren

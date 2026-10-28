@@ -17,7 +17,7 @@ export function placeNodes(positions, nodeIds, edges) {
     links.get(edge.source_node_id).push([edge.target_node_id, -1]);
   }
   const taken = (point) => [...placed.values()].some((other) => Math.abs(other.x - point.x) < NODE_W && Math.abs(other.y - point.y) < NODE_H);
-  const pending = nodeIds.filter((id) => !placed.has(id));
+  const pending = [...new Set(nodeIds)].filter((id) => !placed.has(id));
   let progress = true;
   while (pending.length && progress) {
     progress = false;
@@ -155,4 +155,17 @@ export function connectedNodes(seeds, edges) {
     }
   }
   return seen;
+}
+
+// One seed per connected part of the flow graph (the entry for its own part), so unticking can drop what hangs
+// off a hop without dropping parts that were never joined to the entry, such as a hand-added node.
+export function componentSeeds(nodeIds, edges, entry) {
+  const seeds = [];
+  const covered = new Set();
+  for (const id of [entry, ...nodeIds]) {
+    if (!id || covered.has(id) || !nodeIds.includes(id)) continue;
+    seeds.push(id);
+    connectedNodes([id], edges).forEach((member) => covered.add(member));
+  }
+  return seeds;
 }

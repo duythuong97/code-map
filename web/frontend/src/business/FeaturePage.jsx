@@ -12,8 +12,9 @@ export default function FeaturePage({ itemId, tree, onTree, onOpen, onExport, on
   const [parent, setParent] = useState("");
   const entry = findEntry(tree, itemId);
 
+  // Only a different item closes the editor; a tree refresh (export, rename elsewhere) keeps unsaved text.
+  useEffect(() => { setEditing(false); setItem(null); }, [itemId]);
   useEffect(() => {
-    setEditing(false);
     setError("");
     if (!itemId || entry) { setItem(null); return undefined; }
     let live = true;
@@ -29,9 +30,10 @@ export default function FeaturePage({ itemId, tree, onTree, onOpen, onExport, on
   const counts = reviewCounts(item.parts || []);
   async function save(body, message) {
     try {
-      const result = await businessApi.updateItem(item.id, body);
+      const savedId = item.id;
+      const result = await businessApi.updateItem(savedId, body);
       onTree(result.tree);
-      if (result.item) setItem(result.item);
+      if (result.item && result.item.id === savedId) setItem(result.item);
       setEditing(false);
       notify(message);
     } catch (reason) {

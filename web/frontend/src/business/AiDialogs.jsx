@@ -19,6 +19,7 @@ export function ExportDialog({ featureId, featureName, onClose, onExported, noti
   useEffect(() => {
     let live = true;
     setError("");
+    setPack(null); // never offer the previous options' file while the new one is being made
     businessApi.exportPack(featureId, Object.fromEntries(Object.entries(flags).map(([key, value]) => [key, value ? "1" : "0"])))
       .then((body) => { if (live) { setPack(body); onExported?.(); } })
       .catch((reason) => { if (live) setError(reason.message); });
@@ -85,7 +86,7 @@ export function ImportDialog({ featureId, featureName, onClose, onImported, noti
   </>;
   return <Modal title={`Nhập kết quả AI · ${featureName}`} onClose={onClose} footer={footer} wide>
     <p>Dán file AI trả về hoặc chọn file. Hệ thống kiểm tra file có đúng lần xuất của tính năng này không, tham chiếu node có hợp lệ không, và giữ nguyên các phần đã khoá. Nội dung mới vào ở trạng thái “AI viết · chưa duyệt”.</p>
-    <label className="bm-btn file"><Upload size={14} /> Chọn file<input type="file" accept=".yaml,.yml,.md,.txt" hidden onChange={(event) => readFile(event.target.files[0])} /></label>
+    <label className="bm-btn file"><Upload size={14} /> Chọn file<input type="file" accept=".yaml,.yml,.md,.txt" className="bm-visually-hidden" onChange={(event) => readFile(event.target.files[0])} /></label>
     <textarea className="bm-code" rows={14} value={text} spellCheck={false} aria-label="Nội dung file AI trả về" placeholder="export:\n  id: exp-…\nflows:\n  - id: flow:…"
       onChange={(event) => { setText(event.target.value); setCheck(null); }} />
     {error ? <p className="bm-error">{error}</p> : null}

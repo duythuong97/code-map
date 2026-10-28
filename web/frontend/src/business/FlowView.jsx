@@ -6,7 +6,7 @@ import { buildAutoLayout } from "../code-flow/layout.js";
 import { api } from "../code-flow/api.js";
 import { edgeColor, flowFiltersKey, flowKey } from "../code-flow/constants.js";
 import { FlowNode } from "../code-flow/FlowNode.jsx";
-import { baseIntentChecked, baseIntentEdges, connectedNodes, placeNodes, toggleBaseIntent } from "./graph-place.js";
+import { baseIntentChecked, baseIntentEdges, componentSeeds, connectedNodes, placeNodes, toggleBaseIntent } from "./graph-place.js";
 import {
   expansionIntentKey,
   materializeGroups,
@@ -214,10 +214,12 @@ export default function FlowView({ flowId, onTree, onOpenItem, onOpenNode, onExp
         <span className="bm-seg"><button type="button" aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>Graph</button><button type="button" aria-pressed={mode === "lane"} onClick={() => setMode("lane")}>Swimlane</button></span>
         <span className="bm-muted small">{nodes.length} node · {(data.edges || []).length} cạnh{activeStep ? ` · đang xem bước ${steps.findIndex((step) => step.id === activeStep) + 1}` : ""}{picking ? " · nhấn node để thêm hoặc bỏ khỏi bước" : ""}</span>
       </div>
-      {mode === "graph"
-        ? <FlowGraph nodes={nodes} edges={data.edges || []} levels={data.levels} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
-            picking={picking} entry={steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} notify={notify} />
-        : <Swimlane steps={steps} stepNodes={stepNodes} nodesById={nodesById} activeStep={activeStep} selected={selected} onStep={setActiveStep} onNode={onNodeClick} />}
+      {/* The graph stays mounted in Swimlane mode so expansions, hidden edges and dragged nodes survive. */}
+      <div className="bm-graph-slot" hidden={mode !== "graph"}>
+        <FlowGraph nodes={nodes} edges={data.edges || []} levels={data.levels} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
+          picking={picking} entry={data.entry_node_id || steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} notify={notify} />
+      </div>
+      {mode === "lane" ? <Swimlane steps={steps} stepNodes={stepNodes} nodesById={nodesById} activeStep={activeStep} selected={selected} onStep={setActiveStep} onNode={onNodeClick} /> : null}
       {selected && mode === "graph" && !picking ? <NodeCard node={nodesById.get(selected) || { node_id: selected, name: selected, node_type: "" }} flow={flow} onOpenNode={onOpenNode} onClose={() => setSelected(null)} onStep={(id) => { setActiveStep(id); docRef.current?.querySelector(`#bm-step-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }} /> : null}
     </section>
   </div>;
@@ -307,6 +309,10 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   // Nodes the user dragged keep their spot; `moving` holds the position while a drag is in progress.
   const [dragged, setDragged] = useState({});
   const [moving, setMoving] = useState(null);
+  // Sizes React Flow measured; handed back on every render so nodes are not re-measured (and hidden) each time.
+  const [measured, setMeasured] = useState(() => new Map());
+  const lastPlaced = useRef(new Map());
+  const autoFitted = useRef(false);
   const filters = flowFiltersKey(MAX_EXPANSION_NODES);
   const baseEdges = useMemo(() => edges.map((edge) => ({ ...edge, source_node_id: edge.source, target_node_id: edge.target })), [edges]);
   const owned = useMemo(() => baseIntentEdges(baseEdges), [baseEdges]);
@@ -316,7 +322,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     nodes.forEach((node) => {
       if (node.names?.ja || node.names?.en) names[node.node_id] = { ja: { name: node.names.ja }, en: { name: node.names.en } };
     });
-    setLocalized((current) => ({ ...names, ...current }));
+    setLocalized((current) => ({ ...current, ...names }));
   }, [nodes]);
 
   useEffect(() => () => requests.current.forEach((controller) => controller.abort()), []);
@@ -330,11 +336,15 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     try {
       const data = await api(`/flow?node_id=${encodeURIComponent(node.node_id)}&mode=${mode}&direction=${direction}&max_nodes=${MAX_EXPANSION_NODES}&semantic_level=${level}`, { signal: controller.signal });
       if (requests.current.get(key) !== controller) return;
-      setGroups((current) => mergeGroup(current, key, withoutStructure(node.node_id, data)));
+      const group = withoutStructure(node.node_id, data);
+      setGroups((current) => mergeGroup(current, key, group));
+      // Ticking an expansion means the user wants its edges, including flow edges they hid earlier.
+      const ids = new Set(group.edges.map((edge) => edge.edge_id));
+      setHidden((current) => ([...current].some((id) => ids.has(id)) ? new Set([...current].filter((id) => !ids.has(id))) : current));
       setGroupStates((current) => setGroupLoadState(current, key, { loading: false, error: "", truncated: Boolean(data.truncated) }));
-      const ids = (data.nodes || []).map((item) => item.node_id).slice(0, 300);
-      if (ids.length) {
-        const body = await api(`/localization?${ids.map((id) => `target_id=${encodeURIComponent(id)}`).join("&")}`).catch(() => null);
+      const named = (data.nodes || []).map((item) => item.node_id).slice(0, 300);
+      if (named.length) {
+        const body = await api(`/localization?${named.map((id) => `target_id=${encodeURIComponent(id)}`).join("&")}`).catch(() => null);
         if (body?.items) setLocalized((current) => ({ ...current, ...body.items }));
       }
       if (data.truncated) notify?.(`Đã cắt ở ${MAX_EXPANSION_NODES} node`);
@@ -350,12 +360,12 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
 
   const toggleFlow = useCallback((node, mode, direction, checked) => {
     const intent = expansionIntentKey(node.node_id, mode, direction);
+    const key = flowKey(node.node_id, mode, direction, semantic, filters);
     if (owned.has(intent)) {
       // A walk the flow already shows (E/W/R): unticking hides its edges, ticking shows them again.
       setHidden((current) => toggleBaseIntent(current, owned, intent, checked));
-      return;
+      if (checked) return;
     }
-    const key = flowKey(node.node_id, mode, direction, semantic, filters);
     if (!checked) {
       requests.current.get(key)?.abort();
       setIntents((current) => removeExpansionIntent(current, node.node_id, mode, direction));
@@ -388,6 +398,16 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   function clearExpansions() {
     requests.current.forEach((controller) => controller.abort());
     setGroups({}); setGroupStates({}); setIntents({}); setHidden(new Set()); setDragged({});
+    lastPlaced.current = new Map();
+    autoFitted.current = false;
+    // A node page's starting point is its 1-hop neighbourhood, so "back to the start" means that again.
+    const root = flowNodesAll.find((node) => node.node_id === entry);
+    if (root && initialExpand?.length) {
+      initialExpand.forEach(([mode, direction]) => {
+        setIntents((current) => mergeExpansionIntent(current, toGraphNode(root), mode, direction));
+        void loadGroup(toGraphNode(root), mode, direction, semantic);
+      });
+    }
   }
 
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
@@ -398,13 +418,11 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     expanded.nodes.forEach((node) => { if (!byId.has(node.node_id)) byId.set(node.node_id, { ...node, expanded: true }); });
     const shown = new Map(baseEdges.filter((edge) => !hidden.has(edge.edge_id)).map((edge) => [edge.edge_id, edge]));
     expanded.edges.forEach((edge) => {
-      if (!shown.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) shown.set(edge.edge_id, edge);
+      if (!shown.has(edge.edge_id) && !hidden.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) shown.set(edge.edge_id, edge);
     });
-    // Nodes stay while a shown edge still connects them to the entry. Flow nodes that never had an edge
-    // (added to a step by hand) always stay.
-    const touched = new Set(baseEdges.flatMap((edge) => [edge.source_node_id, edge.target_node_id]));
-    const seeds = nodes.filter((node) => node.node_id === entry || !touched.has(node.node_id)).map((node) => node.node_id);
-    if (!seeds.length && nodes.length) seeds.push(nodes[0].node_id);
+    // Nodes stay while a shown edge still connects them to a seed: the entry, or one node of every part of the
+    // flow graph that is not joined to it (a level projection can split the flow; a hand-added node has no edges).
+    const seeds = componentSeeds(nodes.map((node) => node.node_id), baseEdges, entry);
     const linked = connectedNodes(seeds, [...shown.values()]);
     const keep = [...byId.values()].filter((node) => linked.has(node.node_id));
     return { nodes: keep, edges: [...shown.values()].filter((edge) => linked.has(edge.source_node_id) && linked.has(edge.target_node_id)) };
@@ -413,11 +431,28 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
   const basePositions = useMemo(() => new Map(buildAutoLayout(nodes.map(toGraphNode), baseEdges, entry, {}).map((node) => [node.node_id, node.position])), [nodes, baseEdges, entry]);
   const positions = useMemo(() => {
     const allEdges = [...baseEdges, ...Object.values(groups).flatMap((group) => group.edges || [])];
-    const order = Object.values(groups).flatMap((group) => (group.nodes || []).map((node) => node.node_id));
-    return placeNodes(new Map([...basePositions, ...Object.entries(dragged)]), [...nodes.map((node) => node.node_id), ...order], allEdges);
+    const order = [...new Set(Object.values(groups).flatMap((group) => (group.nodes || []).map((node) => node.node_id)))];
+    // Expansion nodes already on screen keep their place when other groups come and go.
+    const kept = order.filter((id) => lastPlaced.current.has(id)).map((id) => [id, lastPlaced.current.get(id)]);
+    const placed = placeNodes(new Map([...kept, ...basePositions, ...Object.entries(dragged)]), [...nodes.map((node) => node.node_id), ...order], allEdges);
+    lastPlaced.current = placed;
+    return placed;
   }, [basePositions, nodes, baseEdges, groups, dragged]);
-  const layout = graph.nodes.map((node) => ({ ...node, position: (moving?.id === node.node_id && moving.position) || positions.get(node.node_id) || { x: 0, y: 0 } }));
+  const layout = useMemo(() => graph.nodes.map((node) => ({ ...node, position: (moving?.id === node.node_id && moving.position) || positions.get(node.node_id) || { x: 0, y: 0 } })), [graph, positions, moving]);
   const onNodesChange = useCallback((changes) => {
+    const sizes = changes.filter((change) => change.type === "dimensions" && change.dimensions);
+    if (sizes.length) {
+      setMeasured((current) => {
+        const changed = sizes.filter((change) => {
+          const old = current.get(change.id);
+          return !old || old.width !== change.dimensions.width || old.height !== change.dimensions.height;
+        });
+        if (!changed.length) return current;
+        const next = new Map(current);
+        changed.forEach((change) => next.set(change.id, change.dimensions));
+        return next;
+      });
+    }
     for (const change of changes) {
       if (change.type !== "position") continue;
       if (change.dragging && change.position) setMoving({ id: change.id, position: change.position });
@@ -436,16 +471,16 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     return merged;
   }, [intents, owned, graph]);
 
-  const flowNodes = layout.map((node) => {
+  const flowNodes = useMemo(() => layout.map((node) => {
     const tags = stepNodes.map((ids, index) => (ids.includes(node.node_id) ? index + 1 : 0)).filter(Boolean);
     const inFocus = focus?.has(node.node_id);
     return {
-      id: node.node_id, type: "flowNode", position: node.position,
+      id: node.node_id, type: "flowNode", position: node.position, measured: measured.get(node.node_id),
       className: [selected === node.node_id ? "bm-sel" : "", focus && !inFocus ? "bm-dim" : "", inFocus ? "bm-focus" : "", picking ? "bm-pick" : "", node.expanded ? "bm-expanded" : ""].filter(Boolean).join(" "),
       data: { node, tags, localized, groups, loadStates: groupStates, intents: intentsShown, onToggleFlow: toggleFlow, semantic, filters },
     };
-  });
-  const flowEdges = graph.edges.map((edge) => {
+  }), [layout, stepNodes, activeIndex, selected, picking, measured, localized, groups, groupStates, intentsShown, toggleFlow, semantic, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flowEdges = useMemo(() => graph.edges.map((edge) => {
     const dim = focus && !(focus.has(edge.source_node_id) && focus.has(edge.target_node_id));
     return {
       id: edge.edge_id, source: edge.source_node_id, target: edge.target_node_id, label: edge.edge_type, type: "default",
@@ -454,7 +489,7 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
       markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(edge.edge_type), width: 14, height: 14 },
       labelBgPadding: [6, 3], labelBgBorderRadius: 8,
     };
-  });
+  }), [graph, activeIndex]); // eslint-disable-line react-hooks/exhaustive-deps
   const fit = useCallback(() => {
     const ids = focus ? [...focus] : null;
     instance.current?.fitView({ padding: 0.15, duration: 300, minZoom: 0.65, maxZoom: 1, nodes: ids?.map((id) => ({ id })) });
@@ -464,6 +499,14 @@ export function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, st
     return () => clearTimeout(timer);
   }, [semantic]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const timer = setTimeout(fit, 30); return () => clearTimeout(timer); }, [fit]);
+  // A node page starts from one node; fit once its first expansions have arrived.
+  const loading = Object.values(groupStates).some((state) => state?.loading);
+  useEffect(() => {
+    if (!initialExpand?.length || autoFitted.current || loading || !Object.keys(groups).length) return undefined;
+    autoFitted.current = true;
+    const timer = setTimeout(fit, 60);
+    return () => clearTimeout(timer);
+  }, [loading, groups]); // eslint-disable-line react-hooks/exhaustive-deps
   // Selecting a node never zooms; the view only pans when the node is off screen (e.g. picked from the doc).
   useEffect(() => {
     const flow = instance.current;

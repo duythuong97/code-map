@@ -86,9 +86,8 @@ export default function SearchBox({ onPick }) {
           {hits.map((hit) => {
             position += 1;
             const index = position;
-            const disabled = hit.group === "node" && !hit.feature_id;
             return <button key={`${hit.group}:${hit.id}:${hit.step_id || ""}:${index}`} type="button" role="option" aria-selected={index === active}
-              className={`bm-hit${index === active ? " kb" : ""}`} disabled={disabled} onMouseEnter={() => setActive(index)} onClick={() => pick(hit)}>
+              className={`bm-hit${index === active ? " kb" : ""}`} onMouseEnter={() => setActive(index)} onClick={() => pick(hit)}>
               <span className="bm-hit-ic">{hit.group === "node" ? hit.node_type.slice(0, 2) : hit.group === "rule" ? "◆" : hit.group === "step" ? "B" : hit.group === "flow" ? "≡" : "▣"}</span>
               <span className="bm-hit-t"><b className={hit.group === "node" ? "mono" : ""}>{hit.label}</b>
                 <small>{hit.group === "node" ? [typeLabel(hit.node_type), hit.path || "chưa thuộc tính năng nào"].join(" · ") : hit.path || hit.route || ""}</small></span>

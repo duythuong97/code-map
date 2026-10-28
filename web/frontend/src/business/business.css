@@ -379,3 +379,11 @@
   .bm-node-page .bm-stage { height: 620px; }
   .bm-node-side { border-left: 0; border-top: 1px solid var(--line); }
 }
+.bm-graph-slot { min-height: 0; height: 100%; }
+.bm-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.bm .bm-btn.file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The explorer's detail panel only has dark styles; in light mode it sits on its own dark card so it stays readable. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .bm-node-detail .code-flow-detail-shell { background: #0e1420; color: #e8ecf4; border-radius: 12px; padding: 12px; color-scheme: dark; }
+}
+:root[data-theme="light"] .bm-node-detail .code-flow-detail-shell { background: #0e1420; color: #e8ecf4; border-radius: 12px; padding: 12px; color-scheme: dark; }

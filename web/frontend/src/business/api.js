@@ -5,7 +5,7 @@ const json = (method, body) => ({
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body ?? {}),
 });
-const id = (value) => encodeURIComponent(value).replace(/%2F/g, "/");
+const id = (value) => encodeURIComponent(value);
 
 export const businessApi = {
   tree: () => api("/business/tree"),

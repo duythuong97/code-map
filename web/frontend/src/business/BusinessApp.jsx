@@ -117,7 +117,7 @@ export default function BusinessApp() {
               ? <FlowView key={`${selectedId}:${refresh}`} flowId={selectedId} onTree={onTree} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} onExport={exportDialog} onImport={importDialog} notify={setToast} />
               : route.view === "node" && selectedId
                 ? <NodePage key={selectedId} nodeId={selectedId} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} notify={setToast} />
-              : <div className="bm-page-wrap"><FeaturePage itemId={selectedId} tree={tree} onTree={onTree} onOpen={openItem} onExport={exportDialog} onImport={importDialog} notify={setToast} /></div>}
+              : <div className="bm-page-wrap"><FeaturePage key={selectedId || "home"} itemId={selectedId} tree={tree} onTree={onTree} onOpen={openItem} onExport={exportDialog} onImport={importDialog} notify={setToast} /></div>}
       </main>
     </div>
     {dialog?.type === "export" ? <ExportDialog featureId={dialog.featureId} featureName={featureOf(dialog.featureId)?.name || ""} notify={setToast}

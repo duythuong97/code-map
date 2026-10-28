@@ -604,7 +604,7 @@ def load_flow(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], f
         "flow": {**doc, "id": flow_id, "name": doc.get("name") or item["name"]},
         "has_doc": bool(row), "feature_id": item["feature_id"], "feature_name": feature["name"] if feature else "",
         "path": _path(tree, flow_id), "nodes": list(node_facts(db, index, node_ids).values()),
-        "edges": index.edges_within(node_ids),
+        "edges": index.edges_within(node_ids), "entry_node_id": item["entry_node_id"],
         "levels": semantic_levels(db, node_ids, item["entry_node_id"]),
     }
 

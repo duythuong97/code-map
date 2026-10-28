@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, FileText, Network } from "lucide-react";
 import { businessApi } from "./api.js";
 import { api } from "../code-flow/api.js";
@@ -7,6 +7,7 @@ import { FlowGraph } from "./FlowView.jsx";
 import { typeLabel } from "./text.js";
 
 const START = [["1", "in"], ["1", "out"]];
+const NO_EDGES = [];
 
 // Graph from any code node (what the old explorer did), with the explorer's detail panel beside it.
 export default function NodePage({ nodeId, onOpenItem, onOpenNode, notify }) {
@@ -41,6 +42,8 @@ export default function NodePage({ nodeId, onOpenItem, onOpenNode, notify }) {
     setSelected(id);
   }
 
+  const rootNodes = useMemo(() => (page ? [page.node] : []), [page]);
+
   if (error) return <div className="bm-pad"><p className="bm-error">{error}</p></div>;
   if (!page) return <div className="bm-pad"><p className="bm-muted">Đang tải…</p></div>;
   const node = page.node;
@@ -52,7 +55,7 @@ export default function NodePage({ nodeId, onOpenItem, onOpenNode, notify }) {
         <strong className="bm-node-title" title={node.node_id}>{node.name}</strong>
         <span className="bm-muted small">Tick 1 / W / R / E hai bên node để mở rộng</span>
       </div>
-      <FlowGraph key={node.node_id} nodes={[node]} edges={[]} entry={node.node_id} initialExpand={START}
+      <FlowGraph key={node.node_id} nodes={rootNodes} edges={NO_EDGES} entry={node.node_id} initialExpand={START}
         selected={selected} onNodeClick={select} notify={notify} />
     </section>
     <aside className="bm-node-side">

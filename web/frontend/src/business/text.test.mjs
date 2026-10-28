@@ -52,12 +52,13 @@ assert.equal(stepSystem({ nodes: [], system: "Jobnet" }, byId), "Jobnet");
 
 assert.deepEqual(parseRoute("#/flow/flow%3Aui-action%3Aweb%3Ax"), { view: "flow", id: "flow:ui-action:web:x" });
 assert.deepEqual(parseRoute("#/explore"), { view: "home", id: null });
+assert.deepEqual(parseRoute("#/flow/100%"), { view: "flow", id: "100%" });
 assert.deepEqual(parseRoute("#/node/procedure%3ADB1%3APKG.P"), { view: "node", id: "procedure:DB1:PKG.P" });
 assert.deepEqual(parseRoute(""), { view: "home", id: null });
 assert.equal(routeHash("feature", "feature:screen:web:orders/new"), "#/feature/feature%3Ascreen%3Aweb%3Aorders%2Fnew");
 
 // Expansion placement keeps existing nodes and puts new ones beside their neighbour without overlap.
-const { placeNodes, defaultIntentKeys, baseIntentEdges, toggleBaseIntent, baseIntentChecked, connectedNodes } = await import("./graph-place.js");
+const { componentSeeds, placeNodes, defaultIntentKeys, baseIntentEdges, toggleBaseIntent, baseIntentChecked, connectedNodes } = await import("./graph-place.js");
 const placed = placeNodes(new Map([["a", { x: 0, y: 0 }], ["b", { x: 460, y: 0 }]]), ["a", "b", "c", "d"], [
   { source_node_id: "a", target_node_id: "b" }, { source_node_id: "a", target_node_id: "c" }, { source_node_id: "d", target_node_id: "a" },
 ]);
@@ -113,3 +114,10 @@ const diamondHidden = toggleBaseIntent(new Set(), baseIntentEdges(diamond), "api
 assert.deepEqual([...connectedNodes(["screen"], diamond.filter((edge) => !diamondHidden.has(edge.edge_id)))].sort(), ["api", "orders", "prices", "proc", "screen"]);
 
 console.log("business text self-check passed");
+
+// Duplicate ids are placed once (an expansion node listed by two groups must not jump).
+const twice = placeNodes(new Map([["r", { x: 0, y: 0 }]]), ["r", "x", "x"], [{ source_node_id: "r", target_node_id: "x" }]);
+assert.deepEqual(twice.get("x"), { x: 460, y: 0 });
+// One seed per separate part of the flow, the entry for its own part.
+assert.deepEqual(componentSeeds(["a", "b", "c", "lonely"], [{ source_node_id: "a", target_node_id: "b" }, { source_node_id: "c", target_node_id: "b" }], "c"), ["c", "lonely"]);
+console.log("graph placement regressions passed");

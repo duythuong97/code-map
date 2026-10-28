@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { PART_LABELS, RULE_LABELS, inlineTokens, paragraphs, resolveCitation, reviewCounts } from "./text.js";
 
@@ -43,13 +43,29 @@ export function Inline({ text, lookup, selected, onCite }) {
 }
 
 export function Modal({ title, children, footer, onClose, wide }) {
+  const card = useRef(null);
   useEffect(() => {
-    const onKey = (event) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !card.current) return;
+      // Keep Tab inside the dialog.
+      const focusable = [...card.current.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter((el) => !el.disabled);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { last.focus(); event.preventDefault(); }
+      else if (!event.shiftKey && document.activeElement === last) { first.focus(); event.preventDefault(); }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  useEffect(() => {
+    const before = document.activeElement;
+    card.current?.querySelector("textarea, input, button:not(.bm-icon-btn)")?.focus();
+    return () => before?.focus?.();
+  }, []);
   return <div className="bm-modal" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className={`bm-modal-card${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={card} className={`bm-modal-card${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
       <div className="bm-modal-head"><h3>{title}</h3><button type="button" className="bm-icon-btn" onClick={onClose} aria-label="Đóng"><X size={16} /></button></div>
       <div className="bm-modal-body">{children}</div>
       {footer ? <div className="bm-modal-foot">{footer}</div> : null}
