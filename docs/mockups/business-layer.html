@@ -1,0 +1,823 @@
+<title>Code Map Business Layer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: app bar + 4 view (Tổng quan · Luồng nghiệp vụ · Graph · Gán nghiệp vụ). Tầng nghiệp vụ nằm trên, graph node nằm dưới, nối bằng "neo". */
+:root {
+  color-scheme: dark;
+  --bg: #0b1020; --surface: #121a2e; --surface-2: #18223a; --line: #24314f;
+  --fg: #e6ebf5; --muted: #8b97b3; --accent: #f0a04b;
+  --biz: #3fb8a8; --rule: #e8b84a; --ui: #5aa9f0; --api: #a58cf0; --logic: #8fa3c8;
+  --batch: #d68cf0; --data: #5cc98a; --ext: #ee7aa0;
+  --bad: #f2645a; --ok: #4cc38a; --warn: #e8b84a;
+  --node-bg: #f3f5fa; --node-fg: #121a2e; --grid-dot: #1f2a44;
+  --font-display: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #eef1f7; --surface: #ffffff; --surface-2: #f5f7fb; --line: #d7ddea; --fg: #172036; --muted: #5d6883; --accent: #c86a12;
+    --biz: #138a7c; --rule: #a87810; --ui: #1f74c4; --api: #6c4fd1; --logic: #4d5f85; --batch: #9b3fc0; --data: #1f8a52; --ext: #c2416d;
+    --bad: #c9362c; --ok: #1f8a52; --warn: #a87810; --node-bg: #ffffff; --node-fg: #172036; --grid-dot: #d3d9e6;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef1f7; --surface: #ffffff; --surface-2: #f5f7fb; --line: #d7ddea; --fg: #172036; --muted: #5d6883; --accent: #c86a12;
+  --biz: #138a7c; --rule: #a87810; --ui: #1f74c4; --api: #6c4fd1; --logic: #4d5f85; --batch: #9b3fc0; --data: #1f8a52; --ext: #c2416d;
+  --bad: #c9362c; --ok: #1f8a52; --warn: #a87810; --node-bg: #ffffff; --node-fg: #172036; --grid-dot: #d3d9e6;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 13px; line-height: 1.45; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: 11.5px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+.muted { color: var(--muted); }
+
+/* ---------- App bar ---------- */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--surface); }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 15px; white-space: nowrap; }
+.brand small { font-weight: 400; color: var(--muted); font-size: 11.5px; margin-left: 6px; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; }
+.tabs a { text-decoration: none; color: var(--muted); padding: 6px 12px; border-radius: 7px; font-weight: 500; display: inline-flex; gap: 6px; align-items: center; }
+.tabs a:hover { background: var(--surface-2); color: var(--fg); }
+.tabs a[aria-current="page"] { background: var(--surface-2); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; }
+.badge { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--bg); font-size: 10.5px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+.ws { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11.5px; }
+.ws code { color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); padding: 2px 7px; border-radius: 6px; }
+
+.view { padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; align-content: start; }
+.view-h { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.view-h h1 { font-size: 22px; }
+.view-h p { margin: 4px 0 0; color: var(--muted); max-width: 78ch; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.sec-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sec-h h2 { font-size: 15px; }
+.eyebrow { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); font-size: 11.5px; white-space: nowrap; background: var(--surface); }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--surface); flex-wrap: wrap; }
+.seg button { border: 0; background: none; padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--fg); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
+.ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ctl > span { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.btn { border: 1px solid var(--line); background: var(--surface-2); border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.btn:hover { border-color: var(--muted); }
+.btn.pri { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+
+/* ---------- Overview ---------- */
+.model { padding: 16px; display: grid; gap: 12px; }
+.model-wrap { overflow-x: auto; }
+.model svg { display: block; min-width: 900px; width: 100%; max-width: 1100px; height: auto; }
+.model svg text { font-family: var(--font-body); }
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.caps { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.cap { padding: 14px; display: grid; gap: 10px; text-align: left; cursor: pointer; }
+.cap:hover { border-color: var(--muted); }
+.cap .dom { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--biz); font-weight: 700; }
+.cap h3 { font-size: 14.5px; }
+.cap .entry { display: flex; gap: 6px; flex-wrap: wrap; }
+.meter { display: grid; gap: 4px; font-size: 11.5px; color: var(--muted); }
+.meter .track { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: flex; }
+.meter .track i { display: block; height: 100%; }
+.meter .row { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.gaps { padding: 6px 0; }
+.gap { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); align-items: start; }
+.gap:first-child { border-top: 0; }
+.gap .ic { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: var(--bg); }
+.gap b { display: block; font-weight: 600; }
+.gap span { color: var(--muted); font-size: 12px; }
+.life { padding: 16px; display: grid; gap: 12px; }
+.life-wrap { overflow-x: auto; }
+.life svg { display: block; min-width: 560px; width: 100%; height: auto; }
+.life svg text { font-family: var(--font-body); }
+
+/* ---------- Swimlane ---------- */
+.flow-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.board-wrap { overflow: auto; position: relative; max-height: 78vh; }
+.board { position: relative; display: grid; grid-template-columns: 132px repeat(6, 222px); width: max-content; }
+.board svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: visible; }
+.stage-h { padding: 10px 12px; border-bottom: 1px solid var(--line); border-left: 1px dashed var(--line); background: var(--surface); position: sticky; top: 0; z-index: 3; }
+.stage-h .no { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.stage-h .nm { font-weight: 600; }
+.stage-h .sb { font-size: 11px; color: var(--muted); }
+.corner { position: sticky; left: 0; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+.band { grid-column: 1 / -1; padding: 5px 12px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; background: var(--surface-2); border-block: 1px solid var(--line); }
+.band span { position: sticky; left: 12px; }
+.lane-h { position: sticky; left: 0; z-index: 4; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--lc); }
+.lane-h .ln { font-weight: 600; font-size: 12.5px; }
+.lane-h .lt { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono); }
+.cell { padding: 12px 10px; border-bottom: 1px solid var(--line); border-left: 1px dashed var(--line); display: flex; flex-direction: column; gap: 12px; min-height: 64px; background: color-mix(in srgb, var(--lc) 4%, transparent); }
+.node { position: relative; z-index: 2; width: 178px; text-align: left; cursor: pointer; border-radius: 9px; padding: 7px 9px 8px; background: var(--node-bg); color: var(--node-fg); border: 1.5px solid color-mix(in srgb, var(--lc) 55%, transparent); transition: opacity .15s, box-shadow .15s; }
+.node.shift { margin-left: 24px; }
+.node .ty { display: flex; align-items: center; gap: 6px; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--lc) 75%, var(--node-fg)); }
+.node .ty .flag { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; }
+.node .tt { font-weight: 600; font-size: 12px; margin-top: 2px; line-height: 1.3; overflow-wrap: anywhere; }
+.node .tt.m { font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.node .st { font-size: 10.5px; opacity: .72; margin-top: 2px; overflow-wrap: anywhere; }
+.node.fail { background: color-mix(in srgb, var(--bad) 12%, var(--node-bg)); border: 1.5px dashed var(--bad); }
+.node.fail .ty { color: var(--bad); }
+.node.gap-n { border: 1.5px dashed var(--warn); }
+.node.sel { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent); }
+.node.impl { box-shadow: 0 0 0 3px color-mix(in srgb, var(--rule) 60%, transparent); }
+.board.focus .node:not(.sel):not(.nb):not(.impl) { opacity: .4; }
+.edge { fill: none; stroke-width: 1.5; }
+.board.focus .edge-g:not(.hot) { opacity: .14; }
+.edge-g.hot .edge { stroke-width: 2.3; }
+.elabel rect { fill: var(--surface); stroke: var(--line); }
+.elabel text { fill: var(--fg); font-size: 10px; font-family: var(--font-body); font-weight: 600; }
+
+/* ---------- Detail panel (dùng chung) ---------- */
+.detail { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; background: var(--surface); }
+.d-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); display: grid; gap: 5px; }
+.pill { justify-self: start; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--lc); color: var(--lc); }
+.d-head h3 { font-size: 16px; overflow-wrap: anywhere; }
+.d-head .where { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.d-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.d-tabs button { border: 0; background: none; padding: 8px 10px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 12.5px; }
+.d-tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.d-body { padding: 14px 16px 22px; display: grid; gap: 14px; align-content: start; overflow-y: auto; }
+.sec { display: grid; gap: 6px; }
+.sec h5 { margin: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.sec p { margin: 0; max-width: 60ch; }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rules li { display: grid; grid-template-columns: 16px 1fr; gap: 6px; padding: 7px 9px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); }
+.rules li::before { content: "◆"; color: var(--rule); font-size: 10px; line-height: 1.8; }
+.rules li.x::before { content: "✕"; color: var(--bad); font-size: 12px; line-height: 1.5; }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+.links button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 6px; padding: 3px 8px; cursor: pointer; font-family: var(--font-mono); font-size: 11px; display: inline-flex; align-items: center; gap: 6px; text-align: left; }
+.links button i { width: 8px; height: 8px; border-radius: 2px; background: var(--lc); flex: none; }
+pre { margin: 0; padding: 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); overflow-x: auto; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55; color: var(--fg); }
+pre .c { color: var(--muted); font-style: italic; }
+pre .k { color: var(--api); }
+pre .s { color: var(--data); }
+pre .hl { background: color-mix(in srgb, var(--rule) 22%, transparent); display: inline-block; width: 100%; }
+.kv { display: grid; grid-template-columns: 96px 1fr; gap: 4px 10px; font-size: 12px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.note { font-size: 11.5px; color: var(--muted); margin: 0; }
+.alert { border: 1px dashed var(--bad); border-radius: 8px; padding: 8px 10px; background: color-mix(in srgb, var(--bad) 8%, transparent); }
+.alert.w { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.names { display: grid; grid-template-columns: 28px 1fr; gap: 3px 8px; font-size: 12px; }
+.names span:nth-child(odd) { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+
+/* ---------- Graph view ---------- */
+.g-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-height: 620px; background: var(--surface); }
+.g-layout .detail { border-left: 0; border-right: 1px solid var(--line); }
+.canvas-wrap { overflow: auto; background-color: var(--bg); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px); background-size: 18px 18px; position: relative; }
+.canvas-bar { position: sticky; top: 0; left: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 10px 14px; background: color-mix(in srgb, var(--bg) 88%, transparent); border-bottom: 1px solid var(--line); }
+.canvas { position: relative; }
+.canvas svg { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.frame { position: absolute; border: 1.5px dashed color-mix(in srgb, var(--biz) 70%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--biz) 6%, transparent); }
+.frame .fl { position: absolute; top: -11px; left: 12px; background: var(--bg); color: var(--biz); font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--biz) 60%, transparent); white-space: nowrap; }
+.gnode { position: absolute; width: 196px; padding: 7px 10px 8px; border-radius: 10px; background: var(--node-bg); color: var(--node-fg); border: 1.5px solid color-mix(in srgb, var(--lc) 60%, transparent); cursor: pointer; text-align: left; z-index: 2; transition: opacity .15s; }
+.gnode .ty { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--lc) 75%, var(--node-fg)); display: flex; gap: 6px; align-items: center; }
+.gnode .tt { font-family: var(--font-mono); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+.gnode .bz { margin-top: 5px; display: flex; gap: 4px; flex-wrap: wrap; }
+.gnode .bz span { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--biz) 16%, transparent); color: color-mix(in srgb, var(--biz) 70%, var(--node-fg)); font-weight: 600; }
+.gnode .bz span.r { background: color-mix(in srgb, var(--rule) 18%, transparent); color: color-mix(in srgb, var(--rule) 70%, var(--node-fg)); }
+.gnode.sel { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 70%, transparent); }
+.gnode.gap-n { border-style: dashed; border-color: var(--warn); }
+.gedge { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.gedge.read { stroke: var(--data); stroke-dasharray: 6 4; }
+.gedge.write { stroke: var(--data); }
+.gedge.ext { stroke: var(--ext); stroke-dasharray: 4 4; }
+.glabel rect { fill: var(--surface); stroke: var(--line); }
+.glabel text { fill: var(--fg); font-size: 9.5px; font-weight: 700; font-family: var(--font-body); }
+
+/* ---------- Inbox ---------- */
+.inbox { display: grid; gap: 10px; }
+.sugg { display: grid; grid-template-columns: minmax(0, 1fr) 46px minmax(0, 1fr) 150px; gap: 14px; padding: 14px; align-items: center; }
+.sugg.done { opacity: .55; }
+.sugg .from, .sugg .to { display: grid; gap: 3px; min-width: 0; }
+.sugg .t { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--lc); }
+.sugg .n { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.sugg .to .n { font-family: var(--font-body); font-weight: 600; font-size: 13px; }
+.sugg .why { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+.sugg .why span { border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; background: var(--surface-2); }
+.arrow { text-align: center; color: var(--muted); font-size: 11px; display: grid; gap: 2px; justify-items: center; }
+.arrow b { font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.acts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.state { font-size: 12px; font-weight: 600; }
+
+@media (max-width: 1100px) {
+  .ov-grid, .flow-layout, .g-layout { grid-template-columns: minmax(0, 1fr); }
+  .detail { border-left: 0; border-top: 1px solid var(--line); }
+  .g-layout .detail { border-right: 0; border-top: 0; border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 640px) {
+  .sugg { grid-template-columns: minmax(0, 1fr); }
+  .arrow { justify-items: start; text-align: left; }
+  .acts { justify-content: flex-start; }
+  .board { grid-template-columns: 100px repeat(6, 210px); }
+  .ws { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="bar">
+  <div class="brand">Code Map<small>tầng nghiệp vụ · mockup</small></div>
+  <nav class="tabs" aria-label="Màn hình">
+    <a href="#overview" data-v="overview">Tổng quan</a>
+    <a href="#flow" data-v="flow">Luồng nghiệp vụ</a>
+    <a href="#graph" data-v="graph">Graph</a>
+    <a href="#inbox" data-v="inbox">Gán nghiệp vụ <span class="badge" id="inbox-count">0</span></a>
+  </nav>
+  <div class="ws">Dữ liệu: <code>output/demo</code> · <code>examples/sample-source</code></div>
+</header>
+
+<!-- ================= TỔNG QUAN ================= -->
+<section class="view" id="v-overview">
+  <div class="view-h">
+    <div>
+      <h1>Hệ thống đặt hàng</h1>
+      <p>Tầng nghiệp vụ đặt lên trên graph node mà extractor sinh ra. Mỗi phần tử nghiệp vụ (chức năng, luồng, bước, quy tắc, đối tượng) được neo vào một hoặc nhiều node. Từ nghiệp vụ đi xuống được code, từ code đi lên biết nó phục vụ nghiệp vụ nào.</p>
+    </div>
+    <div class="ctl"><span class="chip"><span class="dot" style="background:var(--ok)"></span>41 neo đã xác nhận</span><span class="chip"><span class="dot" style="background:var(--warn)"></span>8 neo gợi ý chờ duyệt</span><span class="chip"><span class="dot" style="background:var(--bad)"></span>5 lỗ hổng</span></div>
+  </div>
+
+  <div class="card model">
+    <div class="sec-h"><h2>Hai tầng, nối bằng neo</h2><span class="muted">Ví dụ: chức năng “Đặt hàng” trong demo</span></div>
+    <div class="model-wrap">
+      <svg viewBox="0 0 960 270" role="img" aria-label="Sơ đồ tầng nghiệp vụ neo vào graph node">
+        <defs><marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+        <text x="0" y="16" style="fill:var(--biz);font-size:11px;font-weight:700;letter-spacing:.08em">TẦNG NGHIỆP VỤ · knowledge.sqlite</text>
+        <g style="font-size:12px">
+          <rect x="0" y="30" width="150" height="54" rx="10" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="12" y="50" style="fill:var(--muted);font-size:10px;font-weight:700">MIỀN</text><text x="12" y="70" style="fill:var(--fg);font-weight:600">Đơn hàng</text>
+          <rect x="190" y="30" width="150" height="54" rx="10" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="202" y="50" style="fill:var(--muted);font-size:10px;font-weight:700">CHỨC NĂNG</text><text x="202" y="70" style="fill:var(--fg);font-weight:600">Đặt hàng</text>
+          <rect x="380" y="30" width="170" height="54" rx="10" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="392" y="50" style="fill:var(--muted);font-size:10px;font-weight:700">LUỒNG</text><text x="392" y="70" style="fill:var(--fg);font-weight:600">Vòng đời đơn hàng</text>
+          <rect x="590" y="30" width="160" height="54" rx="10" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="602" y="50" style="fill:var(--muted);font-size:10px;font-weight:700">BƯỚC</text><text x="602" y="70" style="fill:var(--fg);font-weight:600">B3 Ghi đơn &amp; giữ hàng</text>
+          <rect x="790" y="30" width="170" height="54" rx="10" style="fill:var(--surface-2);stroke:var(--rule)"/><text x="802" y="50" style="fill:var(--rule);font-size:10px;font-weight:700">QUY TẮC</text><text x="802" y="70" style="fill:var(--fg);font-weight:600">Đơn mới = PENDING</text>
+          <path d="M150,57 L188,57" style="stroke:var(--muted)" marker-end="url(#am)"/><path d="M340,57 L378,57" style="stroke:var(--muted)" marker-end="url(#am)"/><path d="M550,57 L588,57" style="stroke:var(--muted)" marker-end="url(#am)"/><path d="M750,57 L788,57" style="stroke:var(--muted)" marker-end="url(#am)"/>
+        </g>
+        <g style="font-size:10px;font-weight:600">
+          <path d="M265,84 C265,140 75,140 75,196" style="fill:none;stroke:var(--biz);stroke-dasharray:4 4"/><text x="120" y="140" style="fill:var(--biz)">neo: màn hình vào</text>
+          <path d="M670,84 C670,140 465,140 465,196" style="fill:none;stroke:var(--biz);stroke-dasharray:4 4"/><text x="520" y="132" style="fill:var(--biz)">neo: hiện thực bước</text>
+          <path d="M670,84 C670,140 665,140 665,196" style="fill:none;stroke:var(--biz);stroke-dasharray:4 4"/>
+          <path d="M875,84 C875,140 860,140 860,196" style="fill:none;stroke:var(--rule);stroke-dasharray:4 4"/><text x="880" y="140" style="fill:var(--rule)">neo: dòng code</text>
+        </g>
+        <text x="0" y="186" style="fill:var(--api);font-size:11px;font-weight:700;letter-spacing:.08em">GRAPH NODE · graph.sqlite</text>
+        <g style="font-size:11px">
+          <rect x="0" y="196" width="150" height="58" rx="9" style="fill:var(--node-bg);stroke:var(--ui)"/><text x="10" y="214" style="fill:var(--ui);font-size:9.5px;font-weight:700">SCREEN</text><text x="10" y="234" style="fill:var(--node-fg);font-family:var(--font-mono)">CreateOrderComp…</text>
+          <rect x="190" y="196" width="150" height="58" rx="9" style="fill:var(--node-bg);stroke:var(--api)"/><text x="200" y="214" style="fill:var(--api);font-size:9.5px;font-weight:700">API_OPERATION</text><text x="200" y="234" style="fill:var(--node-fg);font-family:var(--font-mono)">POST /api/orders</text>
+          <rect x="390" y="196" width="150" height="58" rx="9" style="fill:var(--node-bg);stroke:var(--logic)"/><text x="400" y="214" style="fill:var(--logic);font-size:9.5px;font-weight:700">PROCEDURE</text><text x="400" y="234" style="fill:var(--node-fg);font-family:var(--font-mono)">PKG_ORDER.CREATE_…</text>
+          <rect x="590" y="196" width="150" height="58" rx="9" style="fill:var(--node-bg);stroke:var(--data)"/><text x="600" y="214" style="fill:var(--data);font-size:9.5px;font-weight:700">TABLE</text><text x="600" y="234" style="fill:var(--node-fg);font-family:var(--font-mono)">ORDER_HEADER</text>
+          <rect x="790" y="196" width="170" height="58" rx="9" style="fill:var(--node-bg);stroke:var(--data)"/><text x="800" y="214" style="fill:var(--data);font-size:9.5px;font-weight:700">COLUMN · WRITES_COLUMN</text><text x="800" y="234" style="fill:var(--node-fg);font-family:var(--font-mono)">ORDER_HEADER.STATUS</text>
+          <path d="M150,225 L188,225" style="stroke:var(--accent)" marker-end="url(#am)"/><path d="M340,225 L388,225" style="stroke:var(--accent)" marker-end="url(#am)"/><path d="M540,225 L588,225" style="stroke:var(--data)" marker-end="url(#am)"/><path d="M740,225 L788,225" style="stroke:var(--data)" marker-end="url(#am)"/>
+        </g>
+      </svg>
+    </div>
+    <p class="note">Graph node do extractor sinh lại sau mỗi lần extract. Neo và phần tử nghiệp vụ nằm ở knowledge.sqlite, gắn theo node_id nên không mất khi extract lại. Node đổi id thì neo chuyển sang trạng thái “mồ côi” để người dùng gán lại.</p>
+  </div>
+
+  <div class="ov-grid">
+    <div style="display:grid;gap:12px;min-width:0">
+      <div class="sec-h"><h2>Chức năng theo miền</h2><span class="muted">Độ phủ = phần node trong luồng đã được neo vào nghiệp vụ</span></div>
+      <div class="caps" id="caps"></div>
+    </div>
+    <div style="display:grid;gap:20px;min-width:0">
+      <div style="display:grid;gap:12px">
+        <div class="sec-h"><h2>Lỗ hổng cần xử lý</h2><span class="muted">phát hiện từ graph</span></div>
+        <div class="card gaps" id="gaps"></div>
+      </div>
+      <div class="card life">
+        <div class="sec-h"><h2>Vòng đời <code>ORDER_HEADER.STATUS</code></h2><span class="muted">từ cạnh WRITES_COLUMN</span></div>
+        <div class="life-wrap">
+          <svg viewBox="0 0 560 190" role="img" aria-label="Vòng đời trạng thái đơn hàng">
+            <defs><marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/></marker></defs>
+            <rect x="10" y="70" width="120" height="44" rx="22" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="70" y="90" text-anchor="middle" style="fill:var(--fg);font-size:12px;font-weight:700">PENDING</text><text x="70" y="105" text-anchor="middle" style="fill:var(--muted);font-size:10px">Chờ xử lý</text>
+            <rect x="250" y="20" width="120" height="44" rx="22" style="fill:var(--surface-2);stroke:var(--biz)"/><text x="310" y="40" text-anchor="middle" style="fill:var(--fg);font-size:12px;font-weight:700">ALLOCATED</text><text x="310" y="55" text-anchor="middle" style="fill:var(--muted);font-size:10px">Đã phân bổ</text>
+            <rect x="250" y="126" width="120" height="44" rx="22" style="fill:var(--surface-2);stroke:var(--bad)"/><text x="310" y="146" text-anchor="middle" style="fill:var(--fg);font-size:12px;font-weight:700">CANCELLED</text><text x="310" y="161" text-anchor="middle" style="fill:var(--muted);font-size:10px">Đã huỷ</text>
+            <rect x="430" y="20" width="120" height="44" rx="22" style="fill:none;stroke:var(--warn);stroke-dasharray:4 4"/><text x="490" y="40" text-anchor="middle" style="fill:var(--warn);font-size:12px;font-weight:700">SHIPPED?</text><text x="490" y="55" text-anchor="middle" style="fill:var(--muted);font-size:10px">chưa thấy code ghi</text>
+            <path d="M130,84 C190,84 190,42 248,42" style="fill:none;stroke:var(--accent)" marker-end="url(#al)"/><text x="148" y="56" style="fill:var(--fg);font-size:10px;font-family:var(--font-mono)">ALLOCATE_ORDER</text>
+            <path d="M130,100 C190,100 190,148 248,148" style="fill:none;stroke:var(--accent)" marker-end="url(#al)"/><text x="150" y="140" style="fill:var(--fg);font-size:10px;font-family:var(--font-mono)">CANCEL_ORDER</text>
+            <path d="M310,64 L310,124" style="fill:none;stroke:var(--accent);stroke-dasharray:3 3" marker-end="url(#al)"/><text x="316" y="98" style="fill:var(--muted);font-size:10px">không chặn</text>
+            <path d="M370,42 L428,42" style="fill:none;stroke:var(--warn);stroke-dasharray:4 4" marker-end="url(#al)"/>
+          </svg>
+        </div>
+        <p class="note">CANCEL_ORDER cập nhật STATUS mà không kiểm tra trạng thái hiện tại, nên đơn đã ALLOCATED vẫn huỷ được. Đây là câu hỏi cho BA: có được huỷ sau khi phân bổ không?</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LUỒNG ================= -->
+<section class="view" id="v-flow" hidden>
+  <div class="view-h">
+    <div>
+      <div class="eyebrow">Đơn hàng › Đặt hàng</div>
+      <h1>Vòng đời đơn hàng</h1>
+      <p>Từ lúc nhân viên gửi đơn trên web đến khi batch cuối ngày đối soát. Băng trên là nghiệp vụ, băng dưới là graph node hiện thực từng bước. Nhấn một ô để xem quy tắc, node và code.</p>
+    </div>
+    <div class="ctl">
+      <span>Góc nhìn</span>
+      <span class="seg" id="seg-view"><button type="button" data-view="biz" aria-pressed="false">Nghiệp vụ</button><button type="button" data-view="all" aria-pressed="true">Nghiệp vụ + graph</button></span>
+    </div>
+  </div>
+  <div class="flow-layout">
+    <div class="board-wrap"><div class="board" id="board"></div></div>
+    <aside class="detail" id="flow-detail" aria-live="polite"></aside>
+  </div>
+</section>
+
+<!-- ================= GRAPH ================= -->
+<section class="view" id="v-graph" hidden>
+  <div class="view-h">
+    <div>
+      <div class="eyebrow">Graph · bắt đầu từ <code>createOrder</code></div>
+      <h1>Graph node có lớp nghiệp vụ</h1>
+      <p>Graph giữ nguyên như hiện tại nhưng thêm khung bước nghiệp vụ phía sau node và nhãn nghiệp vụ trên node. Panel trái trả lời câu “node này phục vụ nghiệp vụ gì”.</p>
+    </div>
+  </div>
+  <div class="g-layout">
+    <aside class="detail" id="graph-detail" aria-live="polite"></aside>
+    <div class="canvas-wrap" id="canvas-wrap">
+      <div class="canvas-bar">
+        <div class="ctl"><span>Mức chi tiết</span>
+          <span class="seg" id="seg-level"><button type="button" data-level="SYSTEM" aria-pressed="false">System</button><button type="button" data-level="APPLICATION" aria-pressed="true">Application</button><button type="button" data-level="TECHNICAL" aria-pressed="false">Technical</button></span>
+        </div>
+        <div class="ctl"><span>Lớp nghiệp vụ</span>
+          <span class="seg" id="seg-frames"><button type="button" data-frames="on" aria-pressed="true">Hiện khung bước</button><button type="button" data-frames="off" aria-pressed="false">Ẩn</button></span>
+        </div>
+      </div>
+      <div class="canvas" id="canvas"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= GÁN NGHIỆP VỤ ================= -->
+<section class="view" id="v-inbox" hidden>
+  <div class="view-h">
+    <div>
+      <h1>Gán nghiệp vụ</h1>
+      <p>Extractor đề xuất neo dựa trên từ điển nghiệp vụ, tên tiếng Nhật/Anh/Việt, comment và nhánh điều kiện trong code. BA hoặc dev duyệt từng đề xuất. Chỉ neo đã duyệt mới hiện là “đã xác nhận” trên luồng và graph.</p>
+    </div>
+    <div class="ctl"><span>Lọc</span><span class="seg" id="seg-inbox"><button type="button" data-f="all" aria-pressed="true">Tất cả</button><button type="button" data-f="anchor" aria-pressed="false">Neo node</button><button type="button" data-f="rule" aria-pressed="false">Quy tắc từ code</button><button type="button" data-f="none" aria-pressed="false">Chưa có gợi ý</button></span></div>
+  </div>
+  <div class="inbox" id="inbox"></div>
+</section>
+
+<script>
+/* ======================= DỮ LIỆU MẪU (lấy theo examples/sample-source) ======================= */
+const COLORS = { biz: "--biz", rule: "--rule", ui: "--ui", api: "--api", logic: "--logic", batch: "--batch", data: "--data", ext: "--ext" };
+const TYPE_LANE = { SCREEN: "ui", UI_ACTION: "ui", METHOD: "ui", API_CALL_REFERENCE: "ui", API_OPERATION: "api", CONTROLLER: "api", SERVICE: "logic", REPOSITORY: "logic",
+  PROCEDURE: "logic", FUNCTION: "logic", TRIGGER: "logic", SQL_FILE: "logic", JOB_NETWORK: "batch", JOB: "batch", EXECUTABLE: "batch", TABLE: "data", VIEW: "data",
+  EXTERNAL_DATABASE_OBJECT: "ext", EXTERNAL_API_OPERATION: "ext", UNRESOLVED_REFERENCE: "ext" };
+
+const CAPS = [
+  { dom: "Đơn hàng", nm: "Đặt hàng", entry: ["SCREEN orders/new", "POST /api/orders"], cov: 82, ok: 9, warn: 3, gaps: 1, flow: true },
+  { dom: "Đơn hàng", nm: "Huỷ đơn hàng", entry: ["SCREEN orders/:id", "DELETE …/orders/{id}"], cov: 54, ok: 2, warn: 2, gaps: 1 },
+  { dom: "Đơn hàng", nm: "Tra cứu đơn", entry: ["GET /api/orders/{id}"], cov: 90, ok: 3, warn: 0, gaps: 0 },
+  { dom: "Kho & xuất hàng", nm: "Phân bổ tồn kho", entry: ["JOB ALLOCATE_ORDERS"], cov: 68, ok: 2, warn: 2, gaps: 1 },
+  { dom: "Kho & xuất hàng", nm: "Xuất hàng", entry: ["JOB CREATE_SHIPMENTS", "SCREEN shipments/:id"], cov: 41, ok: 2, warn: 1, gaps: 1 },
+  { dom: "Vận hành cuối ngày", nm: "Đối soát & xuất đối tác", entry: ["JOBNET ORDER_DAILY"], cov: 35, ok: 1, warn: 1, gaps: 1 },
+];
+const GAPS = [
+  { c: "--bad", i: "!", t: "Quy tắc khai báo nhưng chưa có code", d: "PKG_ORDER.VALIDATE_LINES chỉ có NULL. Bước “Kiểm tra dòng đơn” đang không kiểm tra gì.", go: "r2a" },
+  { c: "--bad", i: "?", t: "API gọi từ màn hình nhưng không có handler", d: "ShipmentPageComponent gọi POST /order-api/api/shipments/{id}/confirm, không có API_OPERATION khớp.", go: "x5" },
+  { c: "--warn", i: "~", t: "SQL động không xác định được bảng", d: "EXECUTE IMMEDIATE trong ALLOCATE_ORDER. Graph ghi UNRESOLVED_REFERENCE.", go: "u4" },
+  { c: "--warn", i: "~", t: "Job không map được executable", d: "UNMAPPED_EXPORT (PartnerExport.exe) trong jobnet ORDER_DAILY.", go: "j6b" },
+  { c: "--muted", i: "∅", t: "Code không thuộc nghiệp vụ nào", d: "UnusedService, UnusedRepository: không có entry point. Có thể là code chết.", go: null },
+];
+
+const STAGES = [
+  { id: "s1", nm: "Tạo đơn", sb: "Nhân viên gửi đơn trên web" },
+  { id: "s2", nm: "Kiểm tra & tính tiền", sb: "Dòng đơn, tổng tiền, thuế" },
+  { id: "s3", nm: "Ghi đơn & giữ hàng", sb: "Đơn PENDING, giữ tồn kho" },
+  { id: "s4", nm: "Phân bổ tồn kho", sb: "Batch ORDER_DAILY" },
+  { id: "s5", nm: "Xuất hàng", sb: "Shipment + xác nhận" },
+  { id: "s6", nm: "Đối soát cuối ngày", sb: "Tổng hợp, xuất đối tác" },
+];
+const LANES = [
+  { id: "biz", nm: "Tác nhân & bước", lt: "người / lịch chạy", band: "biz" },
+  { id: "rule", nm: "Quy tắc nghiệp vụ", lt: "rule · điều kiện", band: "biz" },
+  { id: "ui", nm: "Màn hình", lt: "Angular", band: "sys" },
+  { id: "api", nm: "API", lt: ".NET controller", band: "sys" },
+  { id: "logic", nm: "Xử lý", lt: "C# service · PL/SQL", band: "sys" },
+  { id: "batch", nm: "Batch", lt: "jobnet · exe", band: "sys" },
+  { id: "data", nm: "Dữ liệu", lt: "Oracle ORDER_DB", band: "sys" },
+  { id: "ext", nm: "Ngoài / chưa rõ", lt: "DB link · unresolved", band: "sys" },
+];
+const BIZ_LANES = new Set(["biz", "rule"]);
+
+/* conf: ok = neo đã xác nhận · warn = gợi ý/suy luận · bad = lỗ hổng */
+const N = [
+  { id: "b1", lane: "biz", st: "s1", ty: "Bước · Nhân viên", tt: "Nhập & gửi đơn", sub: "Màn hình orders/new",
+    biz: "Nhân viên bán hàng nhập khách hàng và dòng hàng rồi bấm Submit. Gửi lại cùng request key không tạo đơn mới.", names: { vi: "Tạo đơn hàng", en: "Create order", ja: "注文登録" } },
+  { id: "r1", lane: "rule", st: "s1", ty: "Quy tắc", tt: "Gửi lại không tạo đơn trùng", sub: "Request key đã có → trả đơn cũ", conf: "warn", impl: ["a1b"],
+    biz: "Suy ra từ comment trong OrderController: “Idempotency: existing request key returns prior order”. Code hiện tại gọi cùng CreateOrder, chưa thấy chỗ tra request key.",
+    rules: ["Cùng RequestKey → trả về đơn đã tạo", "Không ghi ORDER_HEADER lần hai"] },
+  { id: "u1", lane: "ui", st: "s1", ty: "SCREEN", tt: "CreateOrderComponent", m: 1, sub: "route orders/new", conf: "ok", nid: "screen:customer-web:orders/new" },
+  { id: "u1b", lane: "ui", st: "s1", ty: "UI_ACTION", tt: "submitOrder()", m: 1, sub: "→ OrderService.createOrder", conf: "ok", nid: "ui_action:CreateOrderComponent.submitOrder",
+    code: { file: "customer-web/src/app/order-flow.ts", lang: "TypeScript", snip:
+`<span class="k">export class</span> CreateOrderComponent {
+  submitOrder() {
+    <span class="k">const</span> request = { customerId: <span class="s">100</span>, lines: [] };
+    <span class="k">return this</span>.service.createOrder(request);
+  }
+}
+<span class="c">// OrderService</span>
+createOrder(request: CreateOrderRequest) {
+  <span class="k">return this</span>.http.post(<span class="k">this</span>.config.createOrder, request);  <span class="c">// appconfig: /order-api/api/orders</span>
+}` } },
+  { id: "a1", lane: "api", st: "s1", ty: "API_OPERATION", tt: "POST /api/orders", m: 1, sub: "OrderController.Create", conf: "ok", nid: "api:order-api:POST:/api/orders",
+    names: { vi: "Tạo đơn hàng", en: "Create order", ja: "注文登録" },
+    code: { file: "order-api/OrderFlow.cs", lang: "C#", snip:
+`[HttpPost]
+<span class="k">public</span> IActionResult Create([FromBody] CreateOrderRequest request)
+{
+    <span class="k">var</span> order = _service.CreateOrder(request);
+    <span class="k">return</span> Ok(order);
+}` } },
+  { id: "a1b", lane: "api", st: "s1", ty: "API_OPERATION", tt: "POST /api/orders/retry", m: 1, sub: "OrderController.Retry", conf: "warn", nid: "api:order-api:POST:/api/orders/retry",
+    code: { file: "order-api/OrderFlow.cs", lang: "C#", snip:
+`<span class="hl"><span class="c">// Idempotency: existing request key returns prior order.</span></span>
+[HttpPost(RetryRoute)]
+<span class="k">public</span> IActionResult Retry([FromBody] CreateOrderRequest request)
+{
+    <span class="k">var</span> order = _service.CreateOrder(request);
+    <span class="k">return</span> Ok(order);
+}` } },
+
+  { id: "b2", lane: "biz", st: "s2", ty: "Bước · Hệ thống", tt: "Kiểm tra dòng đơn & tính tổng tiền", sub: "Thuế lấy từ hệ thống thuế",
+    biz: "Trước khi ghi đơn, hệ thống kiểm tra dòng hàng và tính tổng tiền gồm thuế. Thuế suất đọc qua DB link sang TAX_DB." },
+  { id: "r2", lane: "rule", st: "s2", ty: "Quy tắc", tt: "Tổng tiền = Σ SL × đơn giá × thuế suất", sub: "đọc ORDER_STAGING_LINES, TAX_RATE", conf: "ok", impl: ["l2b"],
+    rules: ["Tổng = SUM(QUANTITY × UNIT_PRICE) của dòng tạm", "Nhân thuế suất TAX_SCHEMA.TAX_RATE@TAX_DB_LINK"] },
+  { id: "r2a", lane: "rule", st: "s2", ty: "Lỗ hổng", tt: "Dòng đơn phải hợp lệ", sub: "VALIDATE_LINES chỉ có NULL", fail: 1, conf: "bad", impl: ["l2a"],
+    biz: "Tài liệu yêu cầu kiểm tra dòng đơn nhưng procedure VALIDATE_LINES rỗng. Đơn với dòng sai vẫn được ghi.",
+    rules: ["Số lượng > 0", "Sản phẩm tồn tại", "Chưa hiện thực trong code"], x: 1 },
+  { id: "l2", lane: "logic", st: "s2", ty: "SERVICE", tt: "OrderService.CreateOrder", m: 1, sub: "→ OrderRepository.CreateOrder", conf: "ok", nid: "method:Demo.OrderApi.OrderService.CreateOrder" },
+  { id: "l2a", lane: "logic", st: "s2", ty: "PROCEDURE", tt: "PKG_ORDER.VALIDATE_LINES", m: 1, sub: "thân hàm: NULL", conf: "bad", nid: "procedure:ORDER_DB:PKG_ORDER.VALIDATE_LINES",
+    code: { file: "order-db/order_flow.sql", lang: "PL/SQL", snip:
+`<span class="k">PROCEDURE</span> VALIDATE_LINES(p_customer_id <span class="k">IN NUMBER</span>) <span class="k">IS</span>
+<span class="k">BEGIN</span>
+<span class="hl">    <span class="k">NULL</span>;</span>
+<span class="k">END</span> VALIDATE_LINES;` } },
+  { id: "l2b", lane: "logic", st: "s2", ty: "FUNCTION", tt: "PKG_ORDER.CALCULATE_TOTAL", m: 1, sub: "SUM × rate", conf: "ok", nid: "function:ORDER_DB:PKG_ORDER.CALCULATE_TOTAL",
+    code: { file: "order-db/order_flow.sql", lang: "PL/SQL", snip:
+`<span class="k">FUNCTION</span> CALCULATE_TOTAL(p_customer_id <span class="k">IN NUMBER</span>) <span class="k">RETURN NUMBER IS</span>
+<span class="k">BEGIN</span>
+    <span class="k">SELECT SUM</span>(QUANTITY * UNIT_PRICE) <span class="k">INTO</span> v_total
+      <span class="k">FROM</span> ORDER_STAGING_LINES <span class="k">WHERE</span> CUSTOMER_ID = p_customer_id;
+<span class="hl">    <span class="k">SELECT</span> rate <span class="k">FROM</span> TAX_SCHEMA.TAX_RATE@TAX_DB_LINK <span class="k">INTO</span> v_rate;</span>
+    <span class="k">RETURN</span> v_total * v_rate;
+<span class="k">END</span> CALCULATE_TOTAL;` } },
+  { id: "d2", lane: "data", st: "s2", ty: "TABLE", tt: "ORDER_STAGING_LINES", m: 1, sub: "注文明細一時領域 · READS", conf: "ok", names: { vi: "Dòng đơn tạm", en: "Order Staging Lines", ja: "注文明細一時領域" } },
+  { id: "e2", lane: "ext", st: "s2", ty: "EXTERNAL_DATABASE_OBJECT", tt: "TAX_RATE@TAX_DB_LINK", m: 1, sub: "REMOTE_READS · hệ thống thuế", conf: "ok" },
+
+  { id: "b3", lane: "biz", st: "s3", ty: "Bước · Hệ thống", tt: "Ghi đơn ở trạng thái Chờ xử lý", sub: "Giữ hàng + tạo thanh toán chờ",
+    biz: "Một giao dịch ghi đơn, dòng đơn, giữ tồn kho và một bản ghi thanh toán đang chờ." },
+  { id: "r3", lane: "rule", st: "s3", ty: "Quy tắc", tt: "Đơn mới = PENDING", sub: "giữ hàng RESERVED · thanh toán PENDING", conf: "ok", impl: ["l3", "d3"],
+    rules: ["ORDER_HEADER.STATUS = 'PENDING'", "INVENTORY_RESERVATION.STATUS = 'RESERVED' cho mọi dòng", "PAYMENT_TRANSACTION.STATUS = 'PENDING', AMOUNT = tổng tiền"] },
+  { id: "r3x", lane: "rule", st: "s3", ty: "Ngoại lệ", tt: "Trùng khoá → thanh toán FAILED", sub: "WHEN DUP_VAL_ON_INDEX, rồi RAISE", fail: 1, conf: "warn", impl: ["l3"],
+    biz: "Khi trùng khoá, code ghi thêm một PAYMENT_TRANSACTION FAILED rồi ném lỗi lại. Vì RAISE làm rollback, bản ghi FAILED có thể không còn. Cần xác nhận ý đồ.",
+    rules: ["Ghi PAYMENT_TRANSACTION STATUS = 'FAILED', AMOUNT = 0", "Ném lỗi về API"] },
+  { id: "l3", lane: "logic", st: "s3", ty: "PROCEDURE", tt: "PKG_ORDER.CREATE_ORDER", m: 1, sub: "4 INSERTS · 1 EXCEPTION", conf: "ok", nid: "procedure:ORDER_DB:PKG_ORDER.CREATE_ORDER",
+    code: { file: "order-db/order_flow.sql", lang: "PL/SQL", snip:
+`<span class="k">PROCEDURE</span> CREATE_ORDER(p_customer_id <span class="k">IN NUMBER</span>, p_request_key <span class="k">IN VARCHAR2</span>) <span class="k">IS</span>
+<span class="k">BEGIN</span>
+    v_order_id := ORDER_SEQ.NEXTVAL;
+    VALIDATE_LINES(p_customer_id);
+    v_total := CALCULATE_TOTAL(p_customer_id);
+<span class="hl">    <span class="k">INSERT INTO</span> ORDER_HEADER (..., STATUS, TOTAL_AMOUNT, ...)</span>
+<span class="hl">    <span class="k">VALUES</span> (v_order_id, p_customer_id, <span class="s">'PENDING'</span>, v_total, SYSTIMESTAMP);</span>
+    <span class="k">INSERT INTO</span> ORDER_LINE ... <span class="k">FROM</span> ORDER_STAGING_LINES ...;
+    <span class="k">INSERT INTO</span> INVENTORY_RESERVATION ... <span class="s">'RESERVED'</span> ...;
+    <span class="k">INSERT INTO</span> PAYMENT_TRANSACTION ... <span class="s">'PENDING'</span>, v_total);
+<span class="k">EXCEPTION</span>
+    <span class="k">WHEN</span> DUP_VAL_ON_INDEX <span class="k">THEN</span>
+        <span class="k">INSERT INTO</span> PAYMENT_TRANSACTION ... <span class="s">'FAILED'</span>, <span class="s">0</span>);
+        <span class="k">RAISE</span>;
+<span class="k">END</span> CREATE_ORDER;` } },
+  { id: "d3", lane: "data", st: "s3", ty: "TABLE", tt: "ORDER_HEADER", m: 1, sub: "注文 · INSERTS", conf: "ok", names: { vi: "Đơn hàng", en: "Order Header", ja: "注文" } },
+  { id: "d3b", lane: "data", st: "s3", ty: "TABLE", tt: "ORDER_LINE · INVENTORY_RESERVATION · PAYMENT_TRANSACTION", m: 1, sub: "INSERTS", conf: "ok" },
+
+  { id: "b4", lane: "biz", st: "s4", ty: "Bước · Lịch chạy", tt: "Phân bổ tồn kho hằng ngày", sub: "Còn hàng → phân bổ, hết → backorder",
+    biz: "Batch ORDER_DAILY chạy job ALLOCATE_ORDERS. Đơn còn hàng chuyển ALLOCATED, đơn hết hàng tạo backorder." },
+  { id: "r4", lane: "rule", st: "s4", ty: "Quy tắc", tt: "Còn hàng → ALLOCATED, hết → BACKORDER", sub: "IF v_stock > 0", conf: "warn", impl: ["l4"],
+    biz: "Điều kiện v_stock > 0 đang đếm số dòng ORDER_HEADER, không phải tồn kho. Rất có thể là lỗi: cần BA/dev xác nhận.",
+    rules: ["v_stock > 0 → INSERT FULFILLMENT_ALLOCATION, STATUS = 'ALLOCATED'", "Ngược lại → INSERT BACKORDER", "v_stock đang đếm ORDER_HEADER, không phải tồn kho"] },
+  { id: "j4", lane: "batch", st: "s4", ty: "JOB", tt: "ORDER_DAILY / ALLOCATE_ORDERS", m: 1, sub: "OrderFulfillment.exe --mode allocate", conf: "ok", nid: "job:ORDER_DAILY:ALLOCATE_ORDERS" },
+  { id: "l4", lane: "logic", st: "s4", ty: "PROCEDURE", tt: "PKG_ORDER.ALLOCATE_ORDER", m: 1, sub: "IF / ELSE · EXECUTE IMMEDIATE", conf: "ok", nid: "procedure:ORDER_DB:PKG_ORDER.ALLOCATE_ORDER",
+    code: { file: "order-db/order_flow.sql", lang: "PL/SQL", snip:
+`<span class="k">SELECT COUNT</span>(*) <span class="k">INTO</span> v_stock <span class="k">FROM</span> ORDER_HEADER <span class="k">WHERE</span> ORDER_ID = p_order_id;
+<span class="hl"><span class="k">IF</span> v_stock &gt; <span class="s">0</span> <span class="k">THEN</span></span>
+    <span class="k">INSERT INTO</span> FULFILLMENT_ALLOCATION ... <span class="s">'ALLOCATED'</span>;
+    <span class="k">UPDATE</span> ORDER_HEADER <span class="k">SET</span> STATUS = <span class="s">'ALLOCATED'</span> ...;
+<span class="k">ELSE</span>
+    <span class="c">-- Insufficient stock creates BACKORDER</span>
+    <span class="k">INSERT INTO</span> BACKORDER ...;
+<span class="k">END IF</span>;
+v_sql := <span class="s">'UPDATE ORDER_HEADER SET STATUS = ''ALLOCATED'' ...'</span>;
+<span class="k">EXECUTE IMMEDIATE</span> v_sql;   <span class="c">-- Runtime SQL target cannot be resolved</span>` } },
+  { id: "d4", lane: "data", st: "s4", ty: "TABLE", tt: "FULFILLMENT_ALLOCATION · BACKORDER", m: 1, sub: "履行割当 · 入荷待ち注文", conf: "ok" },
+  { id: "u4", lane: "ext", st: "s4", ty: "UNRESOLVED_REFERENCE", tt: "EXECUTE IMMEDIATE v_sql", m: 1, sub: "không xác định bảng lúc extract", conf: "warn", gap: 1 },
+
+  { id: "b5", lane: "biz", st: "s5", ty: "Bước · Lịch chạy + Nhân viên", tt: "Tạo shipment & xác nhận xuất hàng", sub: "Mỗi lần đổi trạng thái có audit",
+    biz: "Job CREATE_SHIPMENTS tạo shipment và kiện hàng. Nhân viên xác nhận trên màn hình shipment." },
+  { id: "r5", lane: "rule", st: "s5", ty: "Quy tắc", tt: "Đổi trạng thái shipment phải lưu audit", sub: "TRG_SHIPMENT_AUDIT", conf: "ok", impl: ["l5"],
+    rules: ["AFTER UPDATE OF STATUS ON SHIPMENT", "Chỉ khi OLD.STATUS <> NEW.STATUS", "INSERT SHIPMENT_AUDIT"] },
+  { id: "u5", lane: "ui", st: "s5", ty: "UI_ACTION", tt: "ShipmentPageComponent.confirmShipment()", m: 1, sub: "route shipments/:id", conf: "ok" },
+  { id: "x5", lane: "api", st: "s5", ty: "API_CALL_REFERENCE", tt: "POST …/api/shipments/{id}/confirm", m: 1, sub: "không có handler khớp", conf: "bad", gap: 1, fail: 1,
+    biz: "Màn hình gọi endpoint này nhưng order-api không có controller nào xử lý. Hoặc API nằm ở service chưa được scan, hoặc nút đang hỏng." },
+  { id: "j5", lane: "batch", st: "s5", ty: "JOB", tt: "ORDER_DAILY / CREATE_SHIPMENTS", m: 1, sub: "--mode ship", conf: "ok" },
+  { id: "l5", lane: "logic", st: "s5", ty: "TRIGGER", tt: "TRG_SHIPMENT_AUDIT", m: 1, sub: "AFTER UPDATE OF STATUS", conf: "ok",
+    code: { file: "order-db/order_flow.sql", lang: "PL/SQL", snip:
+`<span class="k">CREATE OR REPLACE TRIGGER</span> TRG_SHIPMENT_AUDIT
+<span class="k">AFTER UPDATE OF</span> STATUS <span class="k">ON</span> SHIPMENT
+<span class="k">FOR EACH ROW</span>
+<span class="hl"><span class="k">WHEN</span> (OLD.STATUS &lt;&gt; NEW.STATUS)</span>
+<span class="k">BEGIN</span>
+    <span class="k">INSERT INTO</span> SHIPMENT_AUDIT (AUDIT_ID, SHIPMENT_ID, STATUS)
+    <span class="k">VALUES</span> (SHIPMENT_AUDIT_SEQ.NEXTVAL, :NEW.SHIPMENT_ID, :NEW.STATUS);
+<span class="k">END</span>;` } },
+  { id: "d5", lane: "data", st: "s5", ty: "TABLE", tt: "SHIPMENT · SHIPMENT_PACKAGE · SHIPMENT_AUDIT", m: 1, sub: "出荷 · 出荷梱包 · 出荷監査", conf: "ok" },
+
+  { id: "b6", lane: "biz", st: "s6", ty: "Bước · Lịch chạy", tt: "Đối soát & tổng hợp cuối ngày", sub: "Gửi dữ liệu cho đối tác",
+    biz: "Job RECONCILE_ORDERS tổng hợp đơn từ hôm qua vào ORDER_DAILY_SUMMARY, sau đó UNMAPPED_EXPORT gửi dữ liệu đối tác." },
+  { id: "r6", lane: "rule", st: "s6", ty: "Quy tắc", tt: "Tổng hợp đơn tạo từ hôm qua", sub: "CREATED_AT ≥ TRUNC(SYSDATE) − 1", conf: "warn", impl: ["l6"],
+    rules: ["Đếm đơn và cộng TOTAL_AMOUNT theo ngày", "MERGE: có ngày thì cập nhật, chưa có thì thêm"] },
+  { id: "j6", lane: "batch", st: "s6", ty: "JOB", tt: "ORDER_DAILY / RECONCILE_ORDERS", m: 1, sub: "OrderReconcile.exe", conf: "ok" },
+  { id: "j6b", lane: "batch", st: "s6", ty: "JOB", tt: "ORDER_DAILY / UNMAPPED_EXPORT", m: 1, sub: "PartnerExport.exe · không tìm thấy", conf: "warn", gap: 1 },
+  { id: "l6", lane: "logic", st: "s6", ty: "SQL_FILE", tt: "reconcile_orders.sql", m: 1, sub: "MERGE", conf: "ok" },
+  { id: "d6", lane: "data", st: "s6", ty: "TABLE", tt: "ORDER_DAILY_SUMMARY", m: 1, sub: "注文件数日次集計 · MERGES", conf: "ok" },
+];
+const E = [
+  ["b1", "b2", "flow"], ["b2", "b3", "flow"], ["b3", "b4", "flow", "hằng ngày"], ["b4", "b5", "flow"], ["b5", "b6", "flow"],
+  ["b1", "r1", "rule"], ["b2", "r2", "rule"], ["r2", "r2a", "rule"], ["b3", "r3", "rule"], ["r3", "r3x", "fail", "trùng khoá"], ["b4", "r4", "rule"], ["b5", "r5", "rule"], ["b6", "r6", "rule"],
+  ["u1", "u1b", "call"], ["u1b", "a1", "call", "CALLS_API"], ["a1", "l2", "call"], ["a1b", "l2", "call"], ["l2", "l2a", "call", "CALLS"], ["l2a", "l2b", "call"], ["l2b", "d2", "read"], ["l2b", "e2", "read"],
+  ["l2b", "l3", "call"], ["l3", "d3", "write", "INSERTS"], ["d3", "d3b", "write"],
+  ["j4", "l4", "call", "STARTS"], ["l4", "d4", "write"], ["l4", "u4", "read"],
+  ["u5", "x5", "call"], ["j5", "l5", "call"], ["l5", "d5", "write"],
+  ["j6", "l6", "call"], ["l6", "d6", "write", "MERGES"], ["j6", "j6b", "call", "sau đó"],
+];
+const EDGE_STYLE = { flow: ["--accent", ""], call: ["--api", ""], read: ["--data", "6 4"], write: ["--data", ""], fail: ["--bad", "5 4"], rule: ["--rule", "2 3"] };
+
+/* ---------- Graph view: đường đi từ createOrder ---------- */
+const G = [
+  { id: "g1", ty: "UI_ACTION", tt: "CreateOrderComponent.submitOrder", lvl: "SYSTEM", col: 0, row: 1, step: "B1", lane: "ui", flow: "u1b", biz: ["Tạo đơn hàng"] },
+  { id: "g2", ty: "METHOD", tt: "OrderService.createOrder (TS)", lvl: "TECHNICAL", col: 1, row: 1, step: "B1", lane: "ui" },
+  { id: "g3", ty: "API_CALL_REFERENCE", tt: "POST /order-api/api/orders", lvl: "TECHNICAL", col: 2, row: 1, step: "B1", lane: "ui" },
+  { id: "g4", ty: "API_OPERATION", tt: "POST /api/orders", lvl: "SYSTEM", col: 3, row: 1, step: "B1", lane: "api", flow: "a1", biz: ["Tạo đơn hàng"], rules: 1 },
+  { id: "g5", ty: "CONTROLLER", tt: "OrderController.Create", lvl: "APPLICATION", col: 4, row: 1, step: "B1", lane: "api" },
+  { id: "g6", ty: "SERVICE", tt: "OrderService.CreateOrder", lvl: "APPLICATION", col: 5, row: 1, step: "B2", lane: "logic", flow: "l2" },
+  { id: "g7", ty: "REPOSITORY", tt: "OrderRepository.CreateOrder", lvl: "APPLICATION", col: 6, row: 1, step: "B2", lane: "logic" },
+  { id: "g8", ty: "PROCEDURE", tt: "PKG_ORDER.CREATE_ORDER", lvl: "SYSTEM", col: 7, row: 1, step: "B3", lane: "logic", flow: "l3", biz: ["Ghi đơn"], rules: 2 },
+  { id: "g9", ty: "PROCEDURE", tt: "PKG_ORDER.VALIDATE_LINES", lvl: "SYSTEM", col: 7, row: 0, step: "B2", lane: "logic", flow: "l2a", gap: 1, rules: 1 },
+  { id: "g10", ty: "FUNCTION", tt: "PKG_ORDER.CALCULATE_TOTAL", lvl: "SYSTEM", col: 8, row: 0, step: "B2", lane: "logic", flow: "l2b", biz: ["Tính tổng tiền"], rules: 1 },
+  { id: "g11", ty: "EXTERNAL_DATABASE_OBJECT", tt: "TAX_RATE@TAX_DB_LINK", lvl: "SYSTEM", col: 9, row: 0, step: "B2", lane: "ext", flow: "e2" },
+  { id: "g12", ty: "TABLE", tt: "ORDER_HEADER", lvl: "SYSTEM", col: 8, row: 1, step: "B3", lane: "data", flow: "d3", biz: ["Đơn hàng"] },
+  { id: "g13", ty: "TABLE", tt: "INVENTORY_RESERVATION", lvl: "SYSTEM", col: 8, row: 2, step: "B3", lane: "data", biz: ["Giữ hàng"] },
+  { id: "g14", ty: "TABLE", tt: "PAYMENT_TRANSACTION", lvl: "SYSTEM", col: 8, row: 3, step: "B3", lane: "data", biz: ["Thanh toán"] },
+  { id: "g15", ty: "TABLE", tt: "ORDER_STAGING_LINES", lvl: "SYSTEM", col: 9, row: 1, step: "B2", lane: "data", flow: "d2" },
+];
+const GE = [
+  ["g1", "g2", "CALLS"], ["g2", "g3", "CALLS"], ["g3", "g4", "CALLS_API"], ["g4", "g5", "HANDLED_BY"], ["g5", "g6", "CALLS"], ["g6", "g7", "CALLS"], ["g7", "g8", "CALLS"],
+  ["g8", "g9", "CALLS"], ["g8", "g10", "CALLS"], ["g10", "g11", "REMOTE_READS"], ["g10", "g15", "READS"],
+  ["g8", "g12", "INSERTS"], ["g8", "g13", "INSERTS"], ["g8", "g14", "INSERTS"],
+];
+const STEP_NAMES = { B1: "B1 · Tạo đơn", B2: "B2 · Kiểm tra & tính tiền", B3: "B3 · Ghi đơn & giữ hàng" };
+const LVL_RANK = { SYSTEM: 0, APPLICATION: 1, TECHNICAL: 2 };
+
+/* ---------- Gán nghiệp vụ ---------- */
+const SUGG = [
+  { k: "anchor", ft: "TABLE", fn: "ORDER_HEADER", tt: "Đối tượng nghiệp vụ", tn: "Đơn hàng", conf: .97, why: ["từ điển: alias ORDER_HEADER", "tên JA 注文", "tên EN Order Header"] },
+  { k: "anchor", ft: "API_OPERATION", fn: "POST /api/orders", tt: "Bước", tn: "Đặt hàng › B1 Tạo đơn", conf: .94, why: ["từ điển: alias “POST orders”", "được gọi từ CreateOrderComponent.submitOrder"] },
+  { k: "anchor", ft: "PROCEDURE", fn: "PKG_ORDER.CANCEL_ORDER", tt: "Chức năng", tn: "Huỷ đơn hàng", conf: .93, why: ["từ điển: alias CANCEL_ORDER", "comment “releases reservations”"] },
+  { k: "anchor", ft: "API_OPERATION", fn: "POST /api/orders/retry", tt: "Quy tắc", tn: "Gửi lại không tạo đơn trùng", conf: .81, why: ["comment “Idempotency: existing request key…”", "cùng handler với POST /api/orders"] },
+  { k: "rule", ft: "TRIGGER", fn: "TRG_SHIPMENT_AUDIT · WHEN OLD.STATUS <> NEW.STATUS", tt: "Quy tắc mới", tn: "Đổi trạng thái shipment phải lưu audit", conf: .88, why: ["điều kiện WHEN của trigger", "comment “Shipment status change inserts audit row”"] },
+  { k: "rule", ft: "PROCEDURE", fn: "ALLOCATE_ORDER:122 · IF v_stock > 0", tt: "Quy tắc mới", tn: "Còn hàng → phân bổ, hết hàng → backorder", conf: .74, why: ["nhánh IF/ELSE ghi 2 bảng khác nhau", "comment “Insufficient stock creates BACKORDER”"] },
+  { k: "rule", ft: "PROCEDURE", fn: "CREATE_ORDER · WHEN DUP_VAL_ON_INDEX", tt: "Quy tắc mới", tn: "Trùng khoá → ghi thanh toán FAILED", conf: .68, why: ["khối EXCEPTION có INSERT", "kết thúc bằng RAISE"] },
+  { k: "none", ft: "JOB", fn: "ORDER_DAILY / UNMAPPED_EXPORT", tt: "Chưa có gợi ý", tn: "Chọn chức năng thủ công", conf: 0, why: ["PartnerExport.exe không có trong executable-mappings.csv"] },
+];
+
+/* ======================= TIỆN ÍCH ======================= */
+const $ = s => document.querySelector(s);
+const byId = Object.fromEntries(N.map(n => [n.id, n]));
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const confColor = c => ({ ok: "--ok", warn: "--warn", bad: "--bad" }[c]);
+const confText = c => ({ ok: "Neo đã xác nhận", warn: "Gợi ý / suy luận, chờ duyệt", bad: "Lỗ hổng" }[c]);
+const sec = (h, inner, right = "") => `<div class="sec"><h5><span>${h}</span>${right}</h5>${inner}</div>`;
+const confTag = c => `<span class="chip"><span class="dot" style="background:var(${confColor(c)})"></span>${confText(c)}</span>`;
+const namesHtml = n => n ? `<div class="names"><span>vi</span><span>${esc(n.vi)}</span><span>en</span><span>${esc(n.en)}</span><span>ja</span><span>${esc(n.ja)}</span></div>` : "";
+
+/* ======================= ROUTER ======================= */
+const VIEWS = ["overview", "flow", "graph", "inbox"];
+function route() {
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview";
+  VIEWS.forEach(id => { $("#v-" + id).hidden = id !== v; });
+  document.querySelectorAll(".tabs a").forEach(a => a.dataset.v === v ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  if (v === "flow") requestAnimationFrame(drawEdges);
+  if (v === "graph") renderGraph();
+}
+window.addEventListener("hashchange", route);
+
+/* ======================= TỔNG QUAN ======================= */
+function renderOverview() {
+  $("#caps").innerHTML = CAPS.map(c => `<button type="button" class="card cap" ${c.flow ? 'data-go-flow="1"' : ""}>
+    <span class="dom">${esc(c.dom)}</span><h3>${esc(c.nm)}</h3>
+    <span class="entry">${c.entry.map(e => `<span class="chip mono">${esc(e)}</span>`).join("")}</span>
+    <span class="meter"><span class="row"><span>Độ phủ nghiệp vụ</span><b>${c.cov}%</b></span>
+      <span class="track"><i style="width:${c.cov}%;background:var(--biz)"></i></span>
+      <span class="row"><span><span class="dot" style="background:var(--ok)"></span> ${c.ok} rule · <span class="dot" style="background:var(--warn)"></span> ${c.warn} chờ · <span class="dot" style="background:var(--bad)"></span> ${c.gaps} lỗ hổng</span><span>${c.flow ? "Mở luồng →" : ""}</span></span></span>
+  </button>`).join("");
+  $("#caps").querySelectorAll("[data-go-flow]").forEach(b => b.addEventListener("click", () => { location.hash = "flow"; }));
+  $("#gaps").innerHTML = GAPS.map(g => `<div class="gap"><span class="ic" style="background:var(${g.c})">${g.i}</span><div><b>${esc(g.t)}</b><span>${esc(g.d)}</span></div>${g.go ? `<button type="button" class="btn" data-go="${g.go}">Xem</button>` : "<span></span>"}</div>`).join("");
+  $("#gaps").querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { flow.sel = b.dataset.go; flow.focus = true; location.hash = "flow"; renderBoard(); renderFlowDetail(); }));
+}
+
+/* ======================= LUỒNG ======================= */
+const flow = { view: "all", sel: "r2a", tab: "biz", focus: false };
+const visible = n => flow.view === "all" || BIZ_LANES.has(n.lane);
+
+function renderBoard() {
+  let h = `<div class="corner"></div>` + STAGES.map((s, i) => `<div class="stage-h"><div class="no">B${i + 1}</div><div class="nm">${s.nm}</div><div class="sb">${s.sb}</div></div>`).join("");
+  let band = null;
+  for (const lane of LANES) {
+    if (!visible({ lane: lane.id })) continue;
+    if (lane.band !== band) { band = lane.band; h += `<div class="band"><span>${band === "biz" ? "Nghiệp vụ" : "Graph node · hiện thực"}</span></div>`; }
+    h += `<div class="lane-h" style="--lc:var(${COLORS[lane.id]})"><span class="ln">${lane.nm}</span><span class="lt">${lane.lt}</span></div>`;
+    for (const s of STAGES) h += `<div class="cell" style="--lc:var(${COLORS[lane.id]})">${N.filter(n => n.lane === lane.id && n.st === s.id).map(nodeHtml).join("")}</div>`;
+  }
+  $("#board").innerHTML = h + `<svg class="edges" id="edges" aria-hidden="true"></svg>`;
+  $("#board").querySelectorAll(".node").forEach(el => el.addEventListener("click", () => { flow.sel = el.dataset.id; flow.focus = true; if (!byId[flow.sel].code && flow.tab === "code") flow.tab = "biz"; drawEdges(); renderFlowDetail(); }));
+  requestAnimationFrame(drawEdges);
+}
+function nodeHtml(n) {
+  const cls = ["node", n.lane === "rule" ? "shift" : "", n.fail ? "fail" : "", n.gap && !n.fail ? "gap-n" : ""].join(" ");
+  const flag = n.conf ? `<span class="flag" style="background:var(${confColor(n.conf)})" title="${confText(n.conf)}"></span>` : "";
+  return `<button type="button" class="${cls}" data-id="${n.id}" style="--lc:var(${COLORS[n.lane]})"><div class="ty">${esc(n.ty)}${flag}</div><div class="tt${n.m ? " m" : ""}">${esc(n.tt)}</div>${n.sub ? `<div class="st">${esc(n.sub)}</div>` : ""}</button>`;
+}
+function drawEdges() {
+  const board = $("#board"), svg = $("#edges");
+  if (!svg || !board.offsetParent) return;
+  const br = board.getBoundingClientRect();
+  svg.setAttribute("width", board.scrollWidth); svg.setAttribute("height", board.scrollHeight);
+  const box = id => { const el = board.querySelector(`.node[data-id="${id}"]`); if (!el) return null; const r = el.getBoundingClientRect(); return { l: r.left - br.left, t: r.top - br.top, r: r.right - br.left, b: r.bottom - br.top, h: r.height }; };
+  let out = "<defs>" + Object.entries(EDGE_STYLE).map(([k, [c]]) => `<marker id="fm-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(${c})"/></marker>`).join("") + "</defs>";
+  for (const [a, b, k, label] of E) {
+    const A = box(a), B = box(b); if (!A || !B) continue;
+    const [c, dash] = EDGE_STYLE[k];
+    let d, mx, my;
+    if (B.l < A.r && B.r > A.l) { const x = Math.max(A.l, B.l) + 10, dn = B.t > A.t, y1 = dn ? A.b : A.t, y2 = dn ? B.t : B.b; d = `M${x},${y1} L${x},${y2}`; mx = x; my = (y1 + y2) / 2; }
+    else { const x1 = A.r, y1 = A.t + A.h / 2, x2 = B.l, y2 = B.t + B.h / 2, dx = Math.max(30, (x2 - x1) / 2); d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`; mx = (x1 + x2) / 2; my = (y1 + y2) / 2; }
+    const hot = a === flow.sel || b === flow.sel;
+    out += `<g class="edge-g${hot ? " hot" : ""}"><path class="edge" d="${d}" style="stroke:var(${c})" ${dash ? `stroke-dasharray="${dash}"` : ""} marker-end="url(#fm-${k})"/>`;
+    if (label) { const w = label.length * 5.8 + 12; out += `<g class="elabel"><rect x="${mx - w / 2}" y="${my - 9}" width="${w}" height="18" rx="4"/><text x="${mx}" y="${my + 3.5}" text-anchor="middle">${esc(label)}</text></g>`; }
+    out += "</g>";
+  }
+  svg.innerHTML = out;
+  const sel = flow.sel, nb = new Set(), impl = new Set(byId[sel]?.impl || []);
+  E.forEach(([a, b]) => { if (a === sel) nb.add(b); if (b === sel) nb.add(a); });
+  N.forEach(n => { if ((n.impl || []).includes(sel)) impl.add(n.id); });
+  board.classList.toggle("focus", flow.focus);
+  board.querySelectorAll(".node").forEach(el => { const id = el.dataset.id; el.classList.toggle("sel", id === sel); el.classList.toggle("nb", nb.has(id)); el.classList.toggle("impl", impl.has(id) && id !== sel); });
+}
+function renderFlowDetail() {
+  const n = byId[flow.sel], stage = STAGES.find(s => s.id === n.st), lane = LANES.find(l => l.id === n.lane);
+  const related = [...new Set([...(n.impl || []), ...N.filter(m => (m.impl || []).includes(n.id)).map(m => m.id)])];
+  const tabs = [["biz", "Nghiệp vụ"], ["node", "Graph node"], ["code", "Code"]];
+  let body = "";
+  if (flow.tab === "biz") {
+    body += sec("Ý nghĩa", n.biz ? `<p>${esc(n.biz)}</p>` : `<p class="note">Chưa có mô tả. Thêm mô tả để lưu vào knowledge.sqlite.</p>`, n.conf ? confTag(n.conf) : "");
+    if (n.rules) body += sec("Điều kiện", `<ul class="rules">${n.rules.map((r, i) => `<li class="${n.x && i === n.rules.length - 1 ? "x" : ""}"><span>${esc(r)}</span></li>`).join("")}</ul>`);
+    if (n.conf === "bad") body += `<div class="alert">Lỗ hổng: nghiệp vụ và code không khớp. Cần BA và dev xác nhận rồi sửa một trong hai.</div>`;
+    if (related.length) body += sec(n.lane === "rule" ? "Hiện thực tại node" : "Quy tắc gắn với node này", linkBtns(related));
+    if (n.names) body += sec("Tên theo ngôn ngữ", namesHtml(n.names));
+    body += sec("Vị trí", `<dl class="kv"><dt>Luồng</dt><dd>Vòng đời đơn hàng</dd><dt>Bước</dt><dd>B${STAGES.indexOf(stage) + 1} · ${stage.nm}</dd><dt>Lane</dt><dd>${lane.nm}</dd></dl>`);
+  } else if (flow.tab === "node") {
+    if (BIZ_LANES.has(n.lane)) body += `<p class="note">Đây là phần tử nghiệp vụ, không phải graph node. Nó được neo vào:</p>` + (related.length ? linkBtns(related) : `<p class="note">Chưa neo vào node nào.</p>`);
+    else {
+      const ins = E.filter(e => e[1] === n.id), outs = E.filter(e => e[0] === n.id);
+      body += sec("Định danh", `<dl class="kv"><dt>node_type</dt><dd><code>${esc(n.ty)}</code></dd><dt>node_id</dt><dd><code>${esc(n.nid || "…")}</code></dd><dt>layer</dt><dd>${["TABLE", "PROCEDURE", "FUNCTION", "TRIGGER", "JOB", "SCREEN", "UI_ACTION", "API_OPERATION", "EXTERNAL_DATABASE_OBJECT", "SQL_FILE"].includes(n.ty) ? "Main" : "Technical"}</dd></dl>`);
+      body += sec(`Cạnh vào (${ins.length})`, ins.length ? linkBtns(ins.map(e => e[0])) : `<p class="note">Không có trong luồng này.</p>`);
+      body += sec(`Cạnh ra (${outs.length})`, outs.length ? linkBtns(outs.map(e => e[1])) : `<p class="note">Không có trong luồng này.</p>`);
+      body += `<button type="button" class="btn" id="open-graph">Mở trong Graph</button>`;
+    }
+  } else {
+    if (n.code) body += sec("File", `<div class="mono muted">examples/sample-source/${esc(n.code.file)}</div>`) + sec(n.code.lang, `<pre>${n.code.snip}</pre>`) + `<p class="note">Dòng tô vàng là chỗ neo của quy tắc.</p>`;
+    else { const withCode = related.filter(id => byId[id].code); body += `<p class="note">Không có đoạn code gắn trực tiếp.${withCode.length ? " Xem ở node hiện thực:" : ""}</p>` + (withCode.length ? linkBtns(withCode) : ""); }
+  }
+  $("#flow-detail").innerHTML = detailShell(n, COLORS[n.lane], `${n.ty} · ${lane.nm}`, tabs, flow.tab, body);
+  $("#flow-detail").querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => { flow.tab = b.dataset.tab; renderFlowDetail(); }));
+  $("#flow-detail").querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { flow.sel = b.dataset.go; flow.focus = true; drawEdges(); renderFlowDetail(); }));
+  const og = $("#open-graph"); if (og) og.addEventListener("click", () => { const g = G.find(x => x.flow === n.id); if (g) graph.sel = g.id; location.hash = "graph"; });
+}
+const detailShell = (n, color, pill, tabs, cur, body) => `<div class="d-head" style="--lc:var(${color})"><span class="pill">${esc(pill)}</span><h3>${esc(n.tt)}</h3><div class="where">${esc(n.sub || "")}</div></div>
+  <div class="d-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${cur === k}">${l}</button>`).join("")}</div><div class="d-body">${body}</div>`;
+const linkBtns = ids => `<div class="links">${ids.map(id => `<button type="button" data-go="${id}" style="--lc:var(${COLORS[byId[id].lane]})"><i></i>${esc(byId[id].tt)}</button>`).join("")}</div>`;
+document.querySelectorAll("#seg-view button").forEach(b => b.addEventListener("click", () => {
+  flow.view = b.dataset.view;
+  document.querySelectorAll("#seg-view button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if (!visible(byId[flow.sel])) flow.sel = "r2a";
+  renderBoard(); renderFlowDetail();
+}));
+
+/* ======================= GRAPH ======================= */
+const graph = { level: "APPLICATION", frames: true, sel: "g4" };
+function graphEdgesAt(vis) {
+  // cạnh tới node bị ẩn ở mức chi tiết này thì nối thẳng tới node hiện kế tiếp
+  const out = [], adj = {};
+  GE.forEach(([a, b, t]) => (adj[a] = adj[a] || []).push([b, t]));
+  for (const n of G.filter(x => vis.has(x.id))) {
+    const stack = (adj[n.id] || []).map(([b, t]) => [b, t, false]), seen = new Set();
+    while (stack.length) {
+      const [b, t, collapsed] = stack.pop();
+      if (seen.has(b)) continue; seen.add(b);
+      if (vis.has(b)) out.push([n.id, b, collapsed ? "…" : t]);
+      else (adj[b] || []).forEach(([c, t2]) => stack.push([c, t2, true]));
+    }
+  }
+  return out;
+}
+function renderGraph() {
+  const vis = new Set(G.filter(n => LVL_RANK[n.lvl] <= LVL_RANK[graph.level]).map(n => n.id));
+  if (!vis.has(graph.sel)) graph.sel = "g4";
+  const cols = [...new Set(G.filter(n => vis.has(n.id)).map(n => n.col))].sort((a, b) => a - b);
+  const W = 196, H = 74, CG = 104, RG = 34, PX = 40, PY = 54;
+  const pos = {};
+  G.filter(n => vis.has(n.id)).forEach(n => { pos[n.id] = { x: PX + cols.indexOf(n.col) * (W + CG), y: PY + n.row * (H + RG) }; });
+  const width = PX * 2 + cols.length * (W + CG), height = PY + 4 * (H + RG) + 20;
+  let html = "";
+  if (graph.frames) {
+    for (const step of ["B1", "B2", "B3"]) {
+      const ps = G.filter(n => vis.has(n.id) && n.step === step).map(n => pos[n.id]);
+      if (!ps.length) continue;
+      const x1 = Math.min(...ps.map(p => p.x)) - 14, y1 = Math.min(...ps.map(p => p.y)) - 22, x2 = Math.max(...ps.map(p => p.x)) + W + 14, y2 = Math.max(...ps.map(p => p.y)) + H + 12;
+      html += `<div class="frame" style="left:${x1}px;top:${y1}px;width:${x2 - x1}px;height:${y2 - y1}px"><span class="fl">${STEP_NAMES[step]}</span></div>`;
+    }
+  }
+  html += G.filter(n => vis.has(n.id)).map(n => `<button type="button" class="gnode${n.id === graph.sel ? " sel" : ""}${n.gap ? " gap-n" : ""}" data-g="${n.id}" style="left:${pos[n.id].x}px;top:${pos[n.id].y}px;--lc:var(${COLORS[n.lane]})">
+      <div class="ty">${esc(n.ty)}</div><div class="tt">${esc(n.tt)}</div>
+      ${graph.frames && (n.biz || n.rules) ? `<div class="bz">${(n.biz || []).map(b => `<span>${esc(b)}</span>`).join("")}${n.rules ? `<span class="r">◆ ${n.rules} rule</span>` : ""}</div>` : ""}</button>`).join("");
+  let svg = `<svg width="${width}" height="${height}"><defs><marker id="gm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>`;
+  for (const [a, b, t] of graphEdgesAt(vis)) {
+    const A = pos[a], B = pos[b];
+    const x1 = A.x + W, y1 = A.y + H / 2, x2 = B.x, y2 = B.y + H / 2;
+    let d;
+    if (x2 > x1) { const dx = (x2 - x1) / 2; d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`; }
+    else { const sx = A.x + W / 2, sy = y2 > y1 ? A.y + H : A.y, ex = B.x + W / 2, ey = y2 > y1 ? B.y : B.y + H; d = `M${sx},${sy} L${ex},${ey}`; }
+    const cls = /READS/.test(t) ? (t === "REMOTE_READS" ? "ext" : "read") : /INSERTS|UPDATES|MERGES/.test(t) ? "write" : "";
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, w = t.length * 5.6 + 10;
+    svg += `<path class="gedge ${cls}" d="${d}" marker-end="url(#gm)"/>`;
+    if (x2 > x1) svg += `<g class="glabel"><rect x="${mx - w / 2}" y="${my - 8}" width="${w}" height="16" rx="3"/><text x="${mx}" y="${my + 3.5}" text-anchor="middle">${esc(t)}</text></g>`;
+  }
+  svg += "</svg>";
+  const canvas = $("#canvas");
+  canvas.style.width = width + "px"; canvas.style.height = height + "px";
+  canvas.innerHTML = svg + html;
+  canvas.querySelectorAll(".gnode").forEach(el => el.addEventListener("click", () => { graph.sel = el.dataset.g; renderGraph(); }));
+  renderGraphDetail();
+}
+function renderGraphDetail() {
+  const g = G.find(x => x.id === graph.sel), f = g.flow ? byId[g.flow] : null;
+  const rules = f ? N.filter(m => (m.impl || []).includes(f.id)) : [];
+  let body = sec("Nghiệp vụ", f || g.biz ? `<dl class="kv"><dt>Chức năng</dt><dd>Đặt hàng</dd><dt>Luồng</dt><dd>Vòng đời đơn hàng</dd><dt>Bước</dt><dd>${STEP_NAMES[g.step]}</dd>${g.biz ? `<dt>Thuật ngữ</dt><dd>${g.biz.map(esc).join(", ")}</dd>` : ""}</dl>` : `<p class="note">Node này chưa neo vào nghiệp vụ nào. Nó chỉ nằm trên đường đi của bước ${STEP_NAMES[g.step]}.</p>`,
+    f && f.conf ? confTag(f.conf) : "");
+  if (rules.length) body += sec(`Quy tắc tại node này (${rules.length})`, `<ul class="rules">${rules.map(r => `<li class="${r.conf === "bad" ? "x" : ""}"><span><b>${esc(r.tt)}</b><br><span class="muted">${esc(r.sub)}</span></span></li>`).join("")}</ul>`);
+  if (f && f.biz && !BIZ_LANES.has(f.lane)) body += sec("Ghi chú", `<p>${esc(f.biz)}</p>`);
+  if (f && f.names) body += sec("Tên theo ngôn ngữ", namesHtml(f.names));
+  if (g.gap) body += `<div class="alert">Quy tắc được khai báo nhưng thân procedure rỗng.</div>`;
+  if (f && f.code) body += sec(f.code.lang, `<pre>${f.code.snip}</pre>`);
+  body += sec("Mức chi tiết", `<p class="note">Node có mức <code>${g.lvl}</code>. Ở mức thấp hơn nó bị ẩn và cạnh được nối tắt qua nó (nhãn “…”).</p>`);
+  if (f) body += `<button type="button" class="btn" id="open-flow">Xem trong luồng nghiệp vụ</button>`;
+  $("#graph-detail").innerHTML = `<div class="d-head" style="--lc:var(${COLORS[g.lane]})"><span class="pill">${esc(g.ty)}</span><h3 class="mono" style="font-size:14px">${esc(g.tt)}</h3><div class="where">${f ? "Neo vào: " + esc(f.tt) : "Chưa neo"}</div></div><div class="d-body">${body}</div>`;
+  const of = $("#open-flow"); if (of) of.addEventListener("click", () => { flow.sel = f.id; flow.focus = true; flow.tab = "biz"; location.hash = "flow"; renderBoard(); renderFlowDetail(); });
+}
+document.querySelectorAll("#seg-level button").forEach(b => b.addEventListener("click", () => { graph.level = b.dataset.level; document.querySelectorAll("#seg-level button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderGraph(); }));
+document.querySelectorAll("#seg-frames button").forEach(b => b.addEventListener("click", () => { graph.frames = b.dataset.frames === "on"; document.querySelectorAll("#seg-frames button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderGraph(); }));
+
+/* ======================= GÁN NGHIỆP VỤ ======================= */
+const inbox = { f: "all", done: {} };
+function renderInbox() {
+  const laneOfType = t => COLORS[TYPE_LANE[t] || "logic"];
+  $("#inbox").innerHTML = SUGG.map((s, i) => ({ s, i })).filter(({ s }) => inbox.f === "all" || s.k === inbox.f).map(({ s, i }) => {
+    const st = inbox.done[i];
+    return `<div class="card sugg${st ? " done" : ""}">
+      <div class="from" style="--lc:var(${laneOfType(s.ft)})"><span class="t">${esc(s.ft)}</span><span class="n">${esc(s.fn)}</span></div>
+      <div class="arrow">${s.conf ? `<b>${Math.round(s.conf * 100)}%</b>` : "<b>—</b>"}<span>→</span></div>
+      <div class="to" style="--lc:var(${s.k === "rule" ? "--rule" : "--biz"})"><span class="t">${esc(s.tt)}</span><span class="n">${esc(s.tn)}</span></div>
+      <div class="acts">${st ? `<span class="state" style="color:var(${st === "ok" ? "--ok" : "--muted"})">${st === "ok" ? "Đã xác nhận" : "Đã bỏ qua"}</span><button type="button" class="btn" data-undo="${i}">Hoàn tác</button>`
+        : s.k === "none" ? `<button type="button" class="btn">Chọn chức năng…</button>` : `<button type="button" class="btn pri" data-ok="${i}">Xác nhận</button><button type="button" class="btn" data-no="${i}">Bỏ qua</button>`}</div>
+      <div class="why">Lý do: ${s.why.map(w => `<span>${esc(w)}</span>`).join("")}</div></div>`;
+  }).join("");
+  $("#inbox").querySelectorAll("[data-ok]").forEach(b => b.addEventListener("click", () => { inbox.done[b.dataset.ok] = "ok"; renderInbox(); }));
+  $("#inbox").querySelectorAll("[data-no]").forEach(b => b.addEventListener("click", () => { inbox.done[b.dataset.no] = "no"; renderInbox(); }));
+  $("#inbox").querySelectorAll("[data-undo]").forEach(b => b.addEventListener("click", () => { delete inbox.done[b.dataset.undo]; renderInbox(); }));
+  $("#inbox-count").textContent = SUGG.filter((s, i) => !inbox.done[i]).length;
+}
+document.querySelectorAll("#seg-inbox button").forEach(b => b.addEventListener("click", () => { inbox.f = b.dataset.f; document.querySelectorAll("#seg-inbox button").forEach(x => x.setAttribute("aria-pressed", x === b)); renderInbox(); }));
+
+let rz; window.addEventListener("resize", () => { cancelAnimationFrame(rz); rz = requestAnimationFrame(drawEdges); });
+document.fonts && document.fonts.ready.then(drawEdges);
+renderOverview(); renderBoard(); renderFlowDetail(); renderInbox(); route();
+</script>
