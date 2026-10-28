@@ -4,6 +4,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "test:graph": "node src/flow-state.test.mjs && node src/graph-ui-contract.test.mjs",
+    "test:business": "node src/business/text.test.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

@@ -18,6 +18,7 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
+from web.backend.api.business import KNOWLEDGE_SCHEMA as BUSINESS_SCHEMA
 from web.runtime_env import project_path, required_absolute_path, required_env
 
 bp = Blueprint("graph_api", __name__, url_prefix=required_env("CODE_MAP_GRAPH_API_PREFIX"))
@@ -93,7 +94,7 @@ def connection():
         knowledge = knowledge_db()
         knowledge.parent.mkdir(parents=True, exist_ok=True)
         db.execute("ATTACH DATABASE ? AS kn", (str(knowledge),))
-        db.executescript(KNOWLEDGE_SCHEMA)
+        db.executescript(KNOWLEDGE_SCHEMA + BUSINESS_SCHEMA)
         yield db
     finally:
         db.close()

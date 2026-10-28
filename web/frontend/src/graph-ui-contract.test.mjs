@@ -22,7 +22,9 @@ const styles = read("styles.css");
 const source = [app, apiModule, constants, detailPanel, detailTabs, detailUi, flowNode, format, layout, pathUtils, styles].join("\n");
 
 assert.doesNotMatch(main, /VITE_CODE_FLOW_GRAPH|function App\(|\/api\/schemas|schema/i);
-assert.match(main, /<CodeFlowApp\s*\/?\s*>/);
+// The business documentation app is the entry point; the graph explorer opens from it (#/explore).
+assert.match(main, /<BusinessApp\s*\/?\s*>/);
+assert.match(read("business/BusinessApp.jsx"), /import\("\.\.\/CodeFlowApp\.jsx"\)/);
 assert.doesNotMatch(source, /schema/i);
 
 assert.match(constants, /export const modes\s*=\s*\["1",\s*"W",\s*"R",\s*"E"\]/);

@@ -463,6 +463,58 @@ gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 được chặn ở 5.000 node, 10.000 edge và 5.000 evidence; kiểm tra
 `data.truncated` và dùng `graph.sqlite` khi cần duyệt toàn bộ graph rất lớn.
 
+## Tài liệu nghiệp vụ (menu → tính năng → luồng)
+
+Màn hình chính của web là tài liệu nghiệp vụ gắn với graph. Graph explorer cũ
+vẫn còn, mở bằng nút **Khám phá graph** (`#/explore`).
+
+**Cây tính năng dựng tự động từ graph** sau mỗi lần extract:
+
+- mỗi `SCREEN` (route Angular) là một tính năng, gom vào menu theo đoạn đầu
+  của route (`orders/new`, `orders/:id` → menu `orders`);
+- mỗi `JOB_NETWORK` (jobnet.csv) là một tính năng trong menu "Chạy nền";
+- mỗi tính năng đề xuất một luồng cho từng `UI_ACTION` (màn hình) hoặc `JOB`
+  (jobnet). Các bước của luồng được tách từ graph theo lớp: vào luồng (action,
+  API), xử lý (code phía server, PL/SQL), dữ liệu (bảng);
+- `API_OPERATION` không tính năng nào gọi tới nằm ở "Chưa xếp vào tính năng",
+  có thể gán vào một tính năng.
+
+**Người dùng không thêm bước bằng tay.** AI viết nội dung, người dùng đọc,
+sửa và duyệt. Tên menu/tính năng, mô tả, tài liệu luồng, trạng thái duyệt và
+câu trả lời lưu trong `knowledge.sqlite` (bảng `biz_items`, `biz_flows`,
+`biz_exports`), gắn theo id của graph nên không mất khi extract lại.
+
+**Viết bằng AI** (ở trang tính năng hoặc đầu tài liệu luồng):
+
+1. **Xuất cho AI** tạo một file YAML cho tính năng: `export` (mã lần xuất,
+   `graph_hash`), `instructions`, `context` (node, cạnh, đoạn code, comment,
+   điều kiện IF/EXCEPTION lấy từ `semantic_tree`, câu trả lời đã có) và
+   `flows` (template cần điền; phần đã sửa tay hoặc đã duyệt có `locked: true`).
+2. Đưa file cho AI, yêu cầu điền theo `instructions` và trả về YAML.
+3. **Nhập kết quả** kiểm tra file thuộc đúng lần xuất của tính năng, graph đã
+   đổi chưa, mọi tham chiếu `[[tên]]` / `loại: tên` có trong graph không, quy
+   tắc nào thiếu evidence; rồi ghi nội dung mới ở trạng thái "AI viết · chưa
+   duyệt". Phần khoá không bị ghi đè kể cả khi AI sửa vào.
+
+Tham chiếu node trong tài liệu dùng tên: `Class.method` cho code, tên kỹ thuật
+cho phần còn lại (`POST /api/orders`, `ORDER_HEADER`). Trong YAML có thêm loại:
+`api: POST /api/orders`, `method: OrderController.Create`.
+
+API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
+
+| Route | Ý nghĩa |
+|---|---|
+| `GET /business/tree` | cây menu → tính năng → luồng |
+| `GET/PATCH /business/items/<id>` | chi tiết, đổi tên/mô tả/duyệt, gán entry point |
+| `GET /business/flows/<id>` | tài liệu luồng kèm node và cạnh |
+| `PATCH /business/flows/<id>/parts/<summary\|edge_cases\|step:sN>` | sửa hoặc duyệt một phần |
+| `POST /business/flows/<id>/questions/<qid>/answer` | trả lời câu hỏi |
+| `POST /business/features/<id>/ai-export` | tạo file cho AI (`?code=0&locked=0&answers=0` để bỏ bớt) |
+| `POST /business/features/<id>/ai-import/check`, `.../ai-import` | kiểm tra, nhập file AI trả về |
+| `GET /business/search?q=` | tìm trong nghiệp vụ và node |
+
+Người duyệt lấy từ header `X-Code-Map-User` nếu có.
+
 ## Cấu trúc source
 
 ```text
@@ -476,7 +528,7 @@ extractor/
   pyproject.toml, requirements.txt
 web/
   backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
-  frontend/             # React UI
+  frontend/             # React UI (src/business: tài liệu nghiệp vụ; CodeFlowApp: graph explorer)
   configs/, ecosystem.config.js (pm2), requirements.txt
 vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
 shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu
