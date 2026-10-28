@@ -122,11 +122,12 @@ export default function NavTree({ tree, selectedId, onSelect }) {
       <div><h2>Menu và tính năng</h2><p>{menus.filter((menu) => !menu.unsorted).length} menu · {features} tính năng · {flows.length} luồng</p></div>
     </div>
     <div className="bm-nav-tools">
-      <button type="button" className="bm-btn sm" onClick={() => setOpen(new Set(menus.flatMap((menu) => [menu.id, ...(menu.children || []).map((child) => child.id)])))}><ChevronsUpDown size={14} /> Mở hết</button>
-      <button type="button" className="bm-btn sm" onClick={() => setOpen(new Set())}><ChevronsDownUp size={14} /> Thu gọn</button>
-    </div>
-    <div className="bm-nav-filters" role="group" aria-label="Lọc cây">
-      {FILTERS.map(([key, label]) => <button key={key} type="button" className="bm-filter" aria-pressed={filter === key} onClick={() => setFilter(key)}><span>{label}</span><b>{counts[key]}</b></button>)}
+      <select className="bm-nav-select" aria-label="Lọc cây" value={filter} onChange={(event) => setFilter(event.target.value)}>
+        {FILTERS.map(([key, label]) => <option key={key} value={key}>{label} ({counts[key]})</option>)}
+      </select>
+      {open.size
+        ? <button type="button" className="bm-btn sm" disabled={filter !== "all"} title="Thu gọn tất cả" onClick={() => setOpen(new Set())}><ChevronsDownUp size={14} /> Thu gọn</button>
+        : <button type="button" className="bm-btn sm" disabled={filter !== "all"} title="Mở tất cả" onClick={() => setOpen(new Set(menus.flatMap((menu) => [menu.id, ...(menu.children || []).map((child) => child.id)])))}><ChevronsUpDown size={14} /> Mở hết</button>}
     </div>
     <ul className="bm-tree" role="tree" ref={listRef} onKeyDown={onKeyDown}>
       {rows.map(({ item, depth }) => {

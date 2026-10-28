@@ -94,13 +94,13 @@
 .bm-nav-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; }
 .bm-nav-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .bm-nav-head p { margin: 2px 0 0; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.bm-nav-tools { display: flex; gap: 6px; padding: 4px 16px 8px; flex: none; }
-.bm-nav-tools .bm-btn { flex: 1; justify-content: center; height: 30px; }
-.bm-nav-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px 16px 12px; border-bottom: 1px solid var(--line-soft); flex: none; }
-.bm-filter { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 12.5px; color: var(--fg-2); text-align: left; }
-.bm-filter:hover { background: var(--hover); }
-.bm-filter[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--fg); font-weight: 600; }
-.bm-filter b { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bm-nav-tools { display: flex; gap: 8px; padding: 4px 16px 12px; border-bottom: 1px solid var(--line-soft); flex: none; }
+.bm-nav-tools .bm-btn { flex: none; justify-content: center; height: 34px; min-width: 104px; }
+.bm .bm-nav-select { flex: 1; min-width: 0; height: 34px; padding: 0 30px 0 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 13px; color: var(--fg);
+  appearance: none; cursor: pointer; background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center; }
+.bm .bm-nav-select:hover { background-color: var(--hover); }
+.bm .bm-nav-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bm-nav-select option { background: var(--panel); color: var(--fg); }
 .bm-tree { list-style: none; margin: 0; overflow-y: auto; flex: 1; padding: 6px 8px 24px; display: grid; gap: 1px; align-content: start; }
 .bm-row { --d: 0; display: grid; grid-template-columns: 18px 20px minmax(0, 1fr) auto; gap: 6px; align-items: center; min-height: 34px; padding: 3px 8px 3px calc(4px + var(--d) * 16px); border-radius: 9px; cursor: pointer; position: relative; outline: none;
   background-image: repeating-linear-gradient(to right, transparent 0 12px, var(--line) 12px 13px, transparent 13px 16px); background-size: calc(var(--d) * 16px) 100%; background-position: 4px 0; background-repeat: no-repeat; }
