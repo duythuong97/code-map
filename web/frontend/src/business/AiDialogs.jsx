@@ -42,7 +42,11 @@ export function ExportDialog({ featureId, featureName, onClose, onExported, noti
     {error ? <p className="bm-error">{error}</p> : null}
     <label className="bm-field">Xem trước{pack ? ` · ${pack.filename}` : ""}
       <textarea ref={preview} className="bm-code" rows={12} readOnly value={pack?.text || "Đang tạo file…"} spellCheck={false} /></label>
-    <ol className="bm-how"><li>Tải file về.</li><li>Đưa file cho AI và yêu cầu: “Điền file này theo phần instructions, trả về YAML”.</li><li>Quay lại tính năng này, bấm “Nhập kết quả” và dán file AI trả về.</li></ol>
+    <ol className="bm-how"><li>Tải file về. Phần <code>instructions</code> ở đầu file là hướng dẫn đầy đủ cho AI: dữ liệu có gì, cần điền gì, quy tắc trích dẫn và bằng chứng, định dạng trả về.</li>
+      <li>Đính kèm file vào AI (ChatGPT, Claude, Copilot…) kèm câu lệnh dưới đây.</li><li>Quay lại tính năng này, bấm “Nhập kết quả” và dán file AI trả về.</li></ol>
+    {pack?.prompt ? <div className="bm-prompt"><p>{pack.prompt}</p>
+      <div className="bm-actions"><span className="bm-muted small">Câu lệnh gửi kèm file</span>
+        <button type="button" className="bm-btn sm" onClick={async () => notify(await copyText(pack.prompt) ? "Đã sao chép câu lệnh" : "Không sao chép được, hãy chọn và sao chép tay")}>Sao chép câu lệnh</button></div></div> : null}
   </Modal>;
 }
 

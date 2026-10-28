@@ -6,7 +6,9 @@ import { buildAutoLayout } from "../code-flow/layout.js";
 import { api } from "../code-flow/api.js";
 import { edgeColor, flowFiltersKey, flowKey } from "../code-flow/constants.js";
 import { FlowNode } from "../code-flow/FlowNode.jsx";
+import { defaultIntentKeys, placeNodes, visibleBaseEdges } from "./graph-place.js";
 import {
+  expansionIntentKey,
   materializeGroups,
   mergeExpansionIntent,
   mergeGroup,
@@ -256,13 +258,13 @@ function Question({ question, lookup, selected, onCite, onAnswer }) {
 
 // Graph nodes are the explorer's FlowNode, so the 1/W/R/E checkboxes on both sides keep working:
 // ticking one loads that expansion from /flow and adds its nodes around the flow.
-function StepFlowNode(props) {
+const StepFlowNode = React.memo(function StepFlowNode(props) {
   const tags = props.data.tags || [];
   return <>
     {tags.length ? <span className="bm-gtags">{tags.map((tag) => <b key={tag}>B{tag}</b>)}</span> : null}
     <FlowNode {...props} />
   </>;
-}
+});
 const nodeTypes = { flowNode: StepFlowNode };
 const SEMANTIC_LEVELS = [["SYSTEM", "System"], ["APPLICATION", "Application"], ["TECHNICAL", "Technical"]];
 const MAX_EXPANSION_NODES = 200;
@@ -279,7 +281,10 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
   const [groupStates, setGroupStates] = useState({});
   const [intents, setIntents] = useState({});
   const [localized, setLocalized] = useState({});
+  const [suppressed, setSuppressed] = useState(() => new Set());
   const filters = flowFiltersKey(MAX_EXPANSION_NODES);
+  const baseEdges = useMemo(() => edges.map((edge) => ({ ...edge, source_node_id: edge.source, target_node_id: edge.target })), [edges]);
+  const defaults = useMemo(() => defaultIntentKeys(baseEdges), [baseEdges]);
 
   useEffect(() => {
     const names = {};
@@ -319,6 +324,16 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
   }, [filters, notify]);
 
   const toggleFlow = useCallback((node, mode, direction, checked) => {
+    const intent = expansionIntentKey(node.node_id, mode, direction);
+    if (defaults.has(intent)) {
+      // A 1-hop the flow already shows: unticking hides those edges, ticking shows them again.
+      setSuppressed((current) => {
+        const next = new Set(current);
+        if (checked) next.delete(intent); else next.add(intent);
+        return next;
+      });
+      return;
+    }
     const key = flowKey(node.node_id, mode, direction, semantic, filters);
     if (!checked) {
       requests.current.get(key)?.abort();
@@ -329,7 +344,7 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
     }
     setIntents((current) => mergeExpansionIntent(current, node, mode, direction));
     void loadGroup(node, mode, direction, semantic);
-  }, [semantic, filters, loadGroup]);
+  }, [semantic, filters, loadGroup, defaults]);
 
   function changeSemantic(level) {
     if (level === semantic) return;
@@ -342,7 +357,7 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
 
   function clearExpansions() {
     requests.current.forEach((controller) => controller.abort());
-    setGroups({}); setGroupStates({}); setIntents({});
+    setGroups({}); setGroupStates({}); setIntents({}); setSuppressed(new Set());
   }
 
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
@@ -351,13 +366,29 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
     const expanded = materializeGroups(null, groups);
     const byId = new Map(nodes.map((node) => [node.node_id, toGraphNode(node)]));
     expanded.nodes.forEach((node) => { if (!byId.has(node.node_id)) byId.set(node.node_id, { ...node, expanded: true }); });
-    const allEdges = new Map(edges.map((edge) => [edge.edge_id, { ...edge, source_node_id: edge.source, target_node_id: edge.target }]));
+    const shown = new Map(visibleBaseEdges(baseEdges, suppressed).map((edge) => [edge.edge_id, edge]));
     expanded.edges.forEach((edge) => {
-      if (!allEdges.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) allEdges.set(edge.edge_id, edge);
+      if (!shown.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) shown.set(edge.edge_id, edge);
     });
-    return { nodes: [...byId.values()], edges: [...allEdges.values()] };
-  }, [nodes, edges, groups]);
-  const layout = useMemo(() => buildAutoLayout(graph.nodes, graph.edges, entry, localized), [graph, entry, localized]);
+    // A node stays while an edge still reaches it; the entry and edgeless flows always show.
+    const linked = new Set([entry]);
+    shown.forEach((edge) => { linked.add(edge.source_node_id); linked.add(edge.target_node_id); });
+    const keep = baseEdges.length ? [...byId.values()].filter((node) => linked.has(node.node_id)) : [...byId.values()];
+    return { nodes: keep, edges: [...shown.values()] };
+  }, [nodes, baseEdges, groups, suppressed, entry]);
+  // The flow's own nodes are laid out once; expansions never move them.
+  const basePositions = useMemo(() => new Map(buildAutoLayout(nodes.map(toGraphNode), baseEdges, entry, {}).map((node) => [node.node_id, node.position])), [nodes, baseEdges, entry]);
+  const positions = useMemo(() => {
+    const allEdges = [...baseEdges, ...Object.values(groups).flatMap((group) => group.edges || [])];
+    const order = Object.values(groups).flatMap((group) => (group.nodes || []).map((node) => node.node_id));
+    return placeNodes(basePositions, [...nodes.map((node) => node.node_id), ...order], allEdges);
+  }, [basePositions, nodes, baseEdges, groups]);
+  const layout = graph.nodes.map((node) => ({ ...node, position: positions.get(node.node_id) || { x: 0, y: 0 } }));
+  const intentsShown = useMemo(() => {
+    const merged = { ...intents };
+    defaults.forEach((key) => { if (!suppressed.has(key)) merged[key] = true; });
+    return merged;
+  }, [intents, defaults, suppressed]);
 
   const flowNodes = layout.map((node) => {
     const tags = stepNodes.map((ids, index) => (ids.includes(node.node_id) ? index + 1 : 0)).filter(Boolean);
@@ -365,7 +396,7 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
     return {
       id: node.node_id, type: "flowNode", position: node.position,
       className: [selected === node.node_id ? "bm-sel" : "", focus && !inFocus ? "bm-dim" : "", inFocus ? "bm-focus" : "", picking ? "bm-pick" : "", node.expanded ? "bm-expanded" : ""].filter(Boolean).join(" "),
-      data: { node, tags, localized, groups, loadStates: groupStates, intents, onToggleFlow: toggleFlow, semantic, filters },
+      data: { node, tags, localized, groups, loadStates: groupStates, intents: intentsShown, onToggleFlow: toggleFlow, semantic, filters },
     };
   });
   const flowEdges = graph.edges.map((edge) => {
@@ -386,40 +417,81 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
   useEffect(() => {
     if (selected) instance.current?.fitView({ padding: 0.6, duration: 300, nodes: [{ id: selected }], maxZoom: 1 });
   }, [selected]);
-  const expansions = Object.keys(intents).length;
+  const expansions = Object.keys(intents).length + suppressed.size;
   if (!nodes.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
   return <div className="bm-canvas">
     <div className="bm-canvas-tools">
       <span className="bm-seg">{SEMANTIC_LEVELS.map(([level, label]) => <button key={level} type="button" aria-pressed={semantic === level} onClick={() => changeSemantic(level)}>{label}</button>)}</span>
-      {expansions ? <button type="button" className="bm-btn sm" onClick={clearExpansions}>Bỏ {expansions} mở rộng</button> : null}
+      {expansions ? <button type="button" className="bm-btn sm" onClick={clearExpansions}>Về graph ban đầu</button> : null}
     </div>
     <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} onInit={(value) => { instance.current = value; fit(); }}
-      onNodeClick={(_, node) => onNodeClick(node.id)} nodesConnectable={false} minZoom={0.15} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
+      onNodeClick={(_, node) => onNodeClick(node.id)} nodesConnectable={false} onlyRenderVisibleElements minZoom={0.15} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
       <Background gap={20} size={1.2} />
       <Controls showInteractive={false} />
     </ReactFlow>
   </div>;
 }
 
+// Lanes are systems; each step is a card in the lane of the system it runs in, and arrows follow the
+// step order, so the picture shows the flow moving from system to system.
 function Swimlane({ steps, stepNodes, nodesById, activeStep, selected, onStep, onNode }) {
-  const lanes = swimlanes(steps.map((step, index) => ({ ...step, nodes: stepNodes[index] })), nodesById);
-  const columns = `150px repeat(${steps.length}, minmax(220px, 1fr))`;
+  const placed = steps.map((step, index) => ({ ...step, nodes: stepNodes[index] }));
+  const { lanes, placement } = swimlanes(placed, nodesById);
+  const board = useRef(null);
+  const [arrows, setArrows] = useState([]);
+
+  useEffect(() => {
+    const draw = () => {
+      const root = board.current;
+      if (!root) return;
+      const base = root.getBoundingClientRect();
+      const boxes = steps.map((step) => root.querySelector(`[data-step="${CSS.escape(step.id)}"]`)?.getBoundingClientRect());
+      const next = [];
+      for (let index = 0; index + 1 < boxes.length; index += 1) {
+        const from = boxes[index], to = boxes[index + 1];
+        if (!from || !to) continue;
+        const x1 = from.right - base.left, y1 = from.top + from.height / 2 - base.top;
+        const x2 = to.left - base.left, y2 = to.top + to.height / 2 - base.top;
+        const dx = Math.max(24, (x2 - x1) / 2);
+        next.push({ id: `${steps[index].id}-${steps[index + 1].id}`, d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`,
+          cross: placement[index] !== placement[index + 1] });
+      }
+      setArrows(next);
+    };
+    draw();
+    const observer = new ResizeObserver(draw);
+    if (board.current) observer.observe(board.current);
+    return () => observer.disconnect();
+  }, [steps, stepNodes, placement.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!steps.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có bước nào.</p></div>;
   return <div className="bm-lanes-wrap">
-    <div className="bm-lanes" style={{ gridTemplateColumns: columns }}>
-      <div className="bm-lh" />
-      {steps.map((step, index) => <button key={step.id} type="button" className={`bm-ch${activeStep === step.id ? " active" : ""}`} onClick={() => onStep(step.id)}>
-        <small>BƯỚC {index + 1}</small><b>{step.name || "Chưa đặt tên"}</b></button>)}
-      <div className="bm-lh">Ai thực hiện<small>tài liệu</small></div>
-      {steps.map((step) => <div key={step.id} className={`bm-cell${activeStep === step.id ? " active" : ""}`}>{step.actor ? <div className="bm-lc txt">{step.actor}</div> : null}</div>)}
-      <div className="bm-lh">Quy tắc<small>tài liệu</small></div>
-      {steps.map((step) => <div key={step.id} className={`bm-cell${activeStep === step.id ? " active" : ""}`}>{(step.rules || []).map((rule, index) => <div key={index} className={`bm-lc txt rule-${rule.status}`}>◆ {rule.title}</div>)}</div>)}
-      {lanes.map((lane) => <React.Fragment key={lane.key}>
-        <div className="bm-lh">{lane.label}<small>{lane.types.map(typeLabel).join(", ").toLowerCase()}</small></div>
-        {lane.cells.map((cell, index) => <div key={index} className={`bm-cell${activeStep === steps[index].id ? " active" : ""}`}>
-          {cell.map((node) => <button key={node.node_id} type="button" className={`bm-lc${selected === node.node_id ? " sel" : ""}`} onClick={() => onNode(node.node_id)}>
-            <span>{typeLabel(node.node_type)}</span>{node.name}</button>)}
-        </div>)}
+    <div className="bm-swim" ref={board} style={{ gridTemplateColumns: `160px repeat(${steps.length}, 260px)`, gridTemplateRows: `auto repeat(${lanes.length}, minmax(120px, auto))` }}>
+      <div className="bm-swim-corner" />
+      {steps.map((step, index) => <div key={step.id} className="bm-swim-col" style={{ gridColumn: index + 2, gridRow: 1 }}>Bước {index + 1}</div>)}
+      {lanes.map((lane, row) => <React.Fragment key={lane.key}>
+        <div className="bm-swim-lane" style={{ gridColumn: 1, gridRow: row + 2 }}><b>{lane.label}</b><small>{lane.types.map(typeLabel).join(", ").toLowerCase()}</small></div>
+        <div className="bm-swim-track" style={{ gridColumn: `2 / span ${steps.length}`, gridRow: row + 2 }} />
       </React.Fragment>)}
+      {placed.map((step, index) => {
+        const row = lanes.findIndex((lane) => lane.key === placement[index]) + 2;
+        const nodes = (step.nodes || []).map((id) => nodesById.get(id)).filter(Boolean);
+        return <div key={step.id} data-step={step.id} role="button" tabIndex={0}
+          className={`bm-swim-step${activeStep === step.id ? " active" : ""}`} style={{ gridColumn: index + 2, gridRow: row }}
+          onClick={() => onStep(step.id)} onKeyDown={(event) => { if (event.key === "Enter") onStep(step.id); }}>
+          <span className="bm-swim-no">B{index + 1}</span>
+          <b>{step.name || "Chưa đặt tên"}</b>
+          {step.actor ? <span className="bm-swim-actor">{step.actor}</span> : null}
+          {(step.rules || []).map((rule, position) => <span key={position} className={`bm-swim-rule rule-${rule.status || "warn"}`}>◆ {rule.title}</span>)}
+          <span className="bm-swim-nodes">{nodes.map((node) => <button key={node.node_id} type="button"
+            className={`bm-ref${selected === node.node_id ? " sel" : ""}${node.system !== placement[index] ? " other" : ""}`}
+            title={`${typeLabel(node.node_type)} · ${node.system || ""}`} onClick={(event) => { event.stopPropagation(); onNode(node.node_id); }}>{node.name}</button>)}</span>
+        </div>;
+      })}
+      <svg className="bm-swim-arrows" aria-hidden="true">
+        <defs><marker id="bm-swim-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
+        {arrows.map((arrow) => <path key={arrow.id} d={arrow.d} className={arrow.cross ? "cross" : ""} markerEnd="url(#bm-swim-head)" />)}
+      </svg>
     </div>
   </div>;
 }

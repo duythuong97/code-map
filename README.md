@@ -474,8 +474,9 @@ vẫn còn, mở bằng nút **Khám phá graph** (`#/explore`).
   của route (`orders/new`, `orders/:id` → menu `orders`);
 - mỗi `JOB_NETWORK` (jobnet.csv) là một tính năng trong menu "Chạy nền";
 - mỗi tính năng đề xuất một luồng cho từng `UI_ACTION` (màn hình) hoặc `JOB`
-  (jobnet). Các bước của luồng được tách từ graph theo lớp: vào luồng (action,
-  API), xử lý (code phía server, PL/SQL), dữ liệu (bảng);
+  (jobnet). Các bước của luồng được tách từ graph theo hệ thống mà luồng đi qua
+  (customer-web → order-api → ORDER_DB …), nên swimlane có một lane cho mỗi hệ
+  thống và mỗi bước nằm trong lane của nó;
 - `API_OPERATION` không tính năng nào gọi tới nằm ở "Chưa xếp vào tính năng",
   có thể gán vào một tính năng.
 
@@ -487,7 +488,8 @@ câu trả lời lưu trong `knowledge.sqlite` (bảng `biz_items`, `biz_flows`,
 **Viết bằng AI** (ở trang tính năng hoặc đầu tài liệu luồng):
 
 1. **Xuất cho AI** tạo một file YAML cho tính năng: `export` (mã lần xuất,
-   `graph_hash`), `instructions`, `context` (node, cạnh, đoạn code, comment,
+   `graph_hash`), `instructions` (hướng dẫn đầy đủ cho AI: dữ liệu có gì, cần
+   điền gì, quy tắc trích dẫn và bằng chứng, định dạng trả về, ví dụ), `context` (node, cạnh, đoạn code, comment,
    điều kiện IF/EXCEPTION lấy từ `semantic_tree`, câu trả lời đã có) và
    `flows` (template cần điền; phần đã sửa tay hoặc đã duyệt có `locked: true`).
 2. Đưa file cho AI, yêu cầu điền theo `instructions` và trả về YAML.
@@ -514,6 +516,12 @@ API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
 | `GET /business/search?q=` | tìm trong nghiệp vụ và node |
 
 Người duyệt lấy từ header `X-Code-Map-User` nếu có.
+
+Hiệu năng với schema lớn: backend bỏ node `COLUMN` và các cạnh cấu trúc khi
+dựng index (một lần cho mỗi lần extract), cache cây theo thời điểm sửa của
+`codemap-web.sqlite` và `knowledge.sqlite`, chỉ liệt kê 300 entry point chưa
+gán đầu tiên (phần còn lại tìm bằng ô tìm kiếm); graph chỉ render node đang
+nằm trong khung nhìn.
 
 ## Cấu trúc source
 

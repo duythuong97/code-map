@@ -63,18 +63,34 @@ export function flowParts(flow) {
 
 // Swimlanes are the systems a flow crosses (repository for code, database for DB objects),
 // in the order the flow first reaches them.
+// The system a step runs in: the one most of its nodes belong to (ties go to its first node),
+// or the system the graph split it on.
+export function stepSystem(step, nodesById = new Map()) {
+  const counts = new Map();
+  let first = "";
+  for (const id of step.nodes || []) {
+    const system = nodesById.get(id)?.system;
+    if (!system) continue;
+    first ||= system;
+    counts.set(system, (counts.get(system) || 0) + 1);
+  }
+  let best = first;
+  counts.forEach((count, system) => { if (count > (counts.get(best) || 0)) best = system; });
+  return best || step.system || "Khác";
+}
+
+// Swimlanes: one lane per system, in the order the flow first reaches it; each step sits in its system's lane.
 export function swimlanes(steps = [], nodesById = new Map()) {
+  const placement = steps.map((step) => stepSystem(step, nodesById));
   const order = [];
-  steps.forEach((step) => (step.nodes || []).forEach((id) => {
-    const system = nodesById.get(id)?.system || "Khác";
-    if (nodesById.has(id) && !order.includes(system)) order.push(system);
-  }));
-  return order.map((system) => ({
+  placement.forEach((system) => { if (!order.includes(system)) order.push(system); });
+  const lanes = order.map((system) => ({
     key: system,
     label: system,
-    types: [...new Set(steps.flatMap((step) => (step.nodes || []).map((id) => nodesById.get(id)).filter((node) => node?.system === system).map((node) => node.node_type)))],
-    cells: steps.map((step) => (step.nodes || []).map((id) => nodesById.get(id)).filter((node) => node && (node.system || "Khác") === system)),
+    types: [...new Set(steps.flatMap((step, index) => (placement[index] === system ? step.nodes || [] : []))
+      .map((id) => nodesById.get(id)?.node_type).filter(Boolean))],
   }));
+  return { lanes, placement };
 }
 
 export function typeLabel(nodeType = "") {

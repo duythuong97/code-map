@@ -9,7 +9,7 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from web.backend.api import business
-from web.backend.api.graph_routes import WEB_DATABASE_NAME, bp, connection, error, graph_output
+from web.backend.api.graph_routes import WEB_DATABASE_NAME, bp, connection, error, graph_output, knowledge_db
 
 MAX_EDIT_BYTES = 256 * 1024
 MAX_IMPORT_BYTES = 4 * 1024 * 1024
@@ -20,10 +20,28 @@ def business_error(exc: business.BusinessError):
     return error(exc.code, exc.message, exc.status)
 
 
+_TREE_CACHE: dict[str, tuple[tuple, dict]] = {}
+
+
+def _stamp(path) -> tuple[int, int]:
+    try:
+        stat = path.stat()
+        return stat.st_size, stat.st_mtime_ns
+    except OSError:
+        return 0, 0
+
+
 def _context(db):
+    """Graph index and tree, rebuilt only when the extract or the knowledge database changes."""
     web_path = graph_output() / WEB_DATABASE_NAME
     index = business.graph_index(db, web_path)
-    return index, business.build_tree(db, index), web_path
+    key = (_stamp(web_path), _stamp(knowledge_db()))
+    cached = _TREE_CACHE.get(str(web_path))
+    if cached and cached[0] == key:
+        return index, cached[1], web_path
+    tree = business.build_tree(db, index)
+    _TREE_CACHE[str(web_path)] = (key, tree)
+    return index, tree, web_path
 
 
 def _body(limit: int) -> dict:

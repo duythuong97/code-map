@@ -145,14 +145,14 @@ class BusinessApiTests(unittest.TestCase):
         unsorted = self.tree_item(tree, "menu:unsorted")
         self.assertEqual([item["node_id"] for item in unsorted["children"]], [PING])
 
-    def test_flow_skeleton_splits_steps_by_layer(self) -> None:
+    def test_flow_skeleton_has_one_step_per_system(self) -> None:
         flow = self.call("get", f"/flows/{FLOW}")
         self.assertFalse(flow["has_doc"])
         steps = flow["flow"]["steps"]
-        self.assertEqual([step["layer"] for step in steps], ["entry", "logic", "data"])
-        self.assertEqual(steps[0]["nodes"], [ACTION, CREATE_API])
-        self.assertEqual(set(steps[1]["nodes"]), {HANDLER, CREATE_PROC, VALIDATE})
-        self.assertEqual(steps[2]["nodes"], [TABLE])
+        self.assertEqual([step["system"] for step in steps], ["repo", "DB1"])
+        self.assertEqual(steps[0]["nodes"], [ACTION, CREATE_API, HANDLER])
+        self.assertEqual(steps[1]["nodes"][0], CREATE_PROC)
+        self.assertEqual(set(steps[1]["nodes"]), {CREATE_PROC, VALIDATE, TABLE})
         names = {node["node_id"]: node["name"] for node in flow["nodes"]}
         systems = {node["node_id"]: node["system"] for node in flow["nodes"]}
         self.assertEqual((systems[ACTION], systems[HANDLER], systems[CREATE_PROC], systems[TABLE]), ("repo", "repo", "DB1", "DB1"))
@@ -177,7 +177,7 @@ class BusinessApiTests(unittest.TestCase):
         self.assertEqual(api["comments"], ["Idempotency: existing request key returns prior order."])
         flow = pack["flows"][0]
         self.assertEqual(flow["id"], FLOW)
-        self.assertEqual([step["text"] for step in flow["steps"]], ["", "", ""])
+        self.assertEqual([step["text"] for step in flow["steps"]], ["", ""])
         self.assertEqual(result["stats"]["locked"], 0)
         bare = yaml.safe_load(self.export(code=0)["text"])
         self.assertNotIn("evidence", bare["context"])

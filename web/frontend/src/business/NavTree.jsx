@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Clock3, FileText, ListTree, Menu as MenuIcon, Monitor, PlugZap } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown, Clock3, FileText, Menu as MenuIcon, Monitor, PlugZap } from "lucide-react";
 import { ProgressBar } from "./ui.jsx";
 
 const FILTERS = [
@@ -51,9 +51,11 @@ export default function NavTree({ tree, selectedId, onSelect }) {
   const listRef = useRef(null);
 
   // Menus and features start open; the unassigned list starts closed.
+  const initialized = useRef(false);
   useEffect(() => {
-    setOpen((current) => {
-      if (current.size) return current;
+    if (initialized.current || !menus.length) return;
+    initialized.current = true;
+    setOpen(() => {
       const next = new Set();
       menus.forEach((menu) => {
         if (menu.unsorted) return;
@@ -118,12 +120,13 @@ export default function NavTree({ tree, selectedId, onSelect }) {
   return <nav className="bm-nav" aria-label="Menu và tính năng">
     <div className="bm-nav-head">
       <div><h2>Menu và tính năng</h2><p>{menus.filter((menu) => !menu.unsorted).length} menu · {features} tính năng · {flows.length} luồng</p></div>
-      <span className="bm-nav-tools">
-        <button type="button" className="bm-tool" title="Mở hết" aria-label="Mở hết" onClick={() => setOpen(new Set(menus.flatMap((menu) => [menu.id, ...(menu.children || []).map((child) => child.id)])))}><ListTree size={14} /></button>
-      </span>
+    </div>
+    <div className="bm-nav-tools">
+      <button type="button" className="bm-btn sm" onClick={() => setOpen(new Set(menus.flatMap((menu) => [menu.id, ...(menu.children || []).map((child) => child.id)])))}><ChevronsUpDown size={14} /> Mở hết</button>
+      <button type="button" className="bm-btn sm" onClick={() => setOpen(new Set())}><ChevronsDownUp size={14} /> Thu gọn</button>
     </div>
     <div className="bm-nav-filters" role="group" aria-label="Lọc cây">
-      {FILTERS.map(([key, label]) => <button key={key} type="button" className="bm-chip" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label} <b>{counts[key]}</b></button>)}
+      {FILTERS.map(([key, label]) => <button key={key} type="button" className="bm-filter" aria-pressed={filter === key} onClick={() => setFilter(key)}><span>{label}</span><b>{counts[key]}</b></button>)}
     </div>
     <ul className="bm-tree" role="tree" ref={listRef} onKeyDown={onKeyDown}>
       {rows.map(({ item, depth }) => {
@@ -146,6 +149,11 @@ export default function NavTree({ tree, selectedId, onSelect }) {
           </span>
         </li>;
       })}
+      {(() => {
+        const unsorted = menus.find((menu) => menu.unsorted);
+        const hidden = unsorted && open.has(unsorted.id) && filter === "all" ? (unsorted.total || 0) - unsorted.children.length : 0;
+        return hidden > 0 ? <li className="bm-empty">Còn {hidden} entry point chưa gán. Dùng ô tìm kiếm để tìm.</li> : null;
+      })()}
       {!rows.length ? <li className="bm-empty">Không có mục nào khớp bộ lọc.</li> : null}
     </ul>
   </nav>;

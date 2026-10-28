@@ -39,6 +39,7 @@ BATCH_MENU = "menu:batch"
 UNSORTED_MENU = "menu:unsorted"
 MAX_FLOW_NODES = 150
 MAX_FEATURE_NODES = 400
+MAX_UNASSIGNED = 300
 MAX_EVIDENCE_CHARS = 600
 MAX_CONDITIONS_PER_NODE = 12
 
@@ -67,16 +68,85 @@ REF_KEYS = {
     "JOB_NETWORK": "jobnet", "JOB": "job", "EXECUTABLE": "executable", "COMMAND_MODE": "command",
     "UNRESOLVED_REFERENCE": "unresolved",
 }
-STEP_LAYERS = (("entry", "Vào luồng"), ("logic", "Xử lý"), ("data", "Dữ liệu"))
 
-INSTRUCTIONS = [
-    "Chỉ điền các trường đang trống trong flows: name, summary, actor, text, rules, edge_cases, questions.",
-    "Không sửa phần có locked: true. Không sửa export và context.",
-    "Giữ nguyên id của flow và step, số bước và danh sách nodes của từng bước.",
-    "Chỉ trích dẫn node bằng [[tên]], với tên là phần sau dấu ':' của một ref trong context.nodes.",
-    "Mỗi rule có at (tên node), evidence dạng file:dòng lấy từ context, status ok|warn|bad. Không có bằng chứng thì ghi vào questions, không khẳng định.",
-    "Viết tiếng Việt. Các đoạn cách nhau bằng một dòng trống. Trả về toàn bộ file dưới dạng YAML.",
-]
+INSTRUCTIONS = """\
+Bạn là chuyên viên phân tích nghiệp vụ (BA) kiêm lập trình viên. Nhiệm vụ: viết tài liệu nghiệp vụ cho
+một tính năng của hệ thống, dựa hoàn toàn vào dữ liệu trong phần `context` của file này. Bạn không có
+quyền truy cập code hay database nào khác.
+
+# Dữ liệu bạn có
+- `context.feature`: tên, route/jobnet, điểm vào và mô tả hiện có của tính năng.
+- `context.nodes`: các node code của tính năng. `ref` có dạng `loại: tên` (vd `api: POST /api/orders`,
+  `method: OrderController.Create`, `procedure: PKG_ORDER.CREATE_ORDER`, `table: ORDER_HEADER`).
+  Có thể kèm `file` (file:dòng), `term` (thuật ngữ nghiệp vụ đã duyệt), `ja`/`en` (tên tiếng Nhật/Anh),
+  `conditions` (nhánh IF/CASE/EXCEPTION/RAISE trong code kèm dòng) và `comments` (comment trong code).
+- `context.edges`: `[nguồn, loại cạnh, đích]`. CALLS/CALLS_API/HANDLED_BY = gọi; INSERTS/UPDATES/DELETES/
+  MERGES = ghi bảng; READS/REMOTE_READS = đọc bảng (REMOTE qua DB link).
+- `context.evidence`: đoạn code thật của một số node, kèm vị trí `at` (file:dòng).
+- `context.answered`: câu hỏi đã được người dùng trả lời. Coi câu trả lời là sự thật, không hỏi lại.
+
+# Việc cần làm
+Điền vào phần `flows`. Mỗi flow là một luồng nghiệp vụ, đã được hệ thống chia sẵn thành các bước theo
+hệ thống mà luồng đi qua (màn hình → API → database …); mỗi bước đã có sẵn danh sách `nodes`.
+- `name` của flow: tên nghiệp vụ ngắn, dạng động từ + đối tượng (vd "Tạo đơn hàng"), không dùng tên kỹ thuật.
+- `summary.text`: 1–3 đoạn. Ai làm, để làm gì, kết quả nghiệp vụ là gì, luồng này không bao gồm việc gì.
+- Mỗi `steps[]`:
+  - `name`: việc xảy ra ở bước này, theo góc nhìn nghiệp vụ (vd "Kiểm tra dòng đơn và tính tiền").
+  - `actor`: người hoặc hệ thống thực hiện (vd "Nhân viên bán hàng", "Hệ thống", "Batch hằng đêm").
+  - `text`: 1–3 đoạn mô tả bước làm gì, đọc/ghi dữ liệu nào, theo thứ tự xảy ra. Trích dẫn node bằng `[[tên]]`.
+  - `rules`: các quy tắc/điều kiện nghiệp vụ thấy được trong `conditions`, `evidence` hoặc `comments`. Mỗi rule gồm
+    `title` (một câu khẳng định, vd "Đơn mới luôn ở trạng thái PENDING"), `at` (tên node chứa điều kiện),
+    `evidence` (file:dòng lấy từ context), `status` và `text` (giải thích ngắn, nêu khi không đạt thì sao).
+    `status`: `ok` = code làm đúng như câu khẳng định; `warn` = có dấu hiệu nhưng chưa chắc (vd chỉ thấy trong comment);
+    `bad` = ý đồ và code lệch nhau (vd thủ tục kiểm tra có thân rỗng).
+- `edge_cases.items`: các trường hợp đặc biệt/lỗi suy ra từ code (dữ liệu rỗng, ngoại lệ, DB link lỗi …), mỗi mục một câu.
+- `questions`: những điều code không đủ để kết luận; mỗi câu hỏi phải trả lời được bằng có/không hoặc một giá trị cụ thể.
+
+# Quy tắc bắt buộc
+1. Chỉ điền các trường đang trống. Không sửa phần có `locked: true` (người đã duyệt hoặc sửa tay); đọc chúng để hiểu ngữ cảnh.
+2. Không sửa `export`, `instructions`, `context`. Giữ nguyên `id` của flow và step, số bước và danh sách `nodes`.
+3. Trích dẫn node bằng `[[tên]]`, trong đó `tên` là phần sau dấu `:` của một `ref` trong `context.nodes`
+   (vd `[[PKG_ORDER.CREATE_ORDER]]`). Không trích dẫn node không có trong danh sách, không bịa tên bảng/hàm.
+4. Không khẳng định điều không có trong context. Chỗ nào không chắc, viết thành một câu trong `questions`.
+5. Rule nào không có `evidence` sẽ bị hệ thống đánh dấu "Cần xác nhận"; đừng bịa vị trí.
+6. Viết tiếng Việt, câu ngắn, chủ động. Giữ nguyên tên kỹ thuật (bảng, API, giá trị như 'PENDING').
+   Các đoạn cách nhau bằng một dòng trống; có thể dùng **đậm** và `code`.
+7. Trả về TOÀN BỘ file dưới dạng YAML hợp lệ (cùng cấu trúc, cùng thứ tự). Không thêm lời giải thích ngoài YAML.
+   Dùng block `|` cho các đoạn văn nhiều dòng.
+
+# Ví dụ một bước đã điền
+- id: s2
+  nodes: [...giữ nguyên...]
+  name: Kiểm tra dòng đơn và tính tiền
+  actor: Hệ thống
+  text: |
+    [[OrderService.CreateOrder]] chuyển yêu cầu xuống [[PKG_ORDER.CREATE_ORDER]]. Trước khi ghi dữ liệu,
+    procedure gọi [[PKG_ORDER.VALIDATE_LINES]] để kiểm tra dòng hàng của khách.
+  rules:
+  - title: Dòng đơn phải hợp lệ trước khi tạo đơn
+    at: PKG_ORDER.VALIDATE_LINES
+    evidence: order-db/order_flow.sql:62
+    status: bad
+    text: Thân procedure chỉ có NULL nên không dòng nào bị từ chối.
+"""
+
+CHAT_PROMPT = (
+    "Đính kèm là file YAML mô tả một tính năng trong hệ thống của tôi (node, cạnh, đoạn code). "
+    "Hãy đọc phần `instructions` ở đầu file và làm đúng theo đó: điền các trường đang trống trong `flows`, "
+    "không sửa phần `locked`, `export`, `context`, rồi trả về toàn bộ file dưới dạng YAML hợp lệ, không kèm lời giải thích."
+)
+
+
+class _BlockDumper(yaml.SafeDumper):
+    """Multi-line text (instructions, paragraphs) is written as a readable `|` block."""
+
+
+def _str_block(dumper: yaml.SafeDumper, value: str):
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_BlockDumper.add_representer(str, _str_block)
 
 KNOWLEDGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS kn.biz_items(item_id TEXT PRIMARY KEY,parent_id TEXT,name TEXT,description TEXT,
@@ -112,11 +182,14 @@ class GraphIndex:
     """Nodes and outgoing edges of codemap-web.sqlite, loaded once per extract."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
+        # Columns are left out: a large schema has hundreds of thousands of them and no flow walks through them.
+        # Only screens need their properties (the route), so other rows skip the JSON parse.
         self.nodes: dict[str, dict[str, Any]] = {}
         self.by_type: dict[str, list[str]] = {}
         for row in db.execute(
-            "SELECT node_id,node_type,technical_name,qualified_name,default_display_name,properties_json,"
-            "system_key,database_key,repository_key FROM graph_nodes"
+            "SELECT node_id,node_type,technical_name,qualified_name,default_display_name,"
+            "CASE WHEN node_type='SCREEN' THEN properties_json ELSE NULL END,system_key,database_key,repository_key "
+            "FROM graph_nodes WHERE node_type<>'COLUMN'"
         ):
             node = {
                 "node_id": row[0], "node_type": row[1], "technical_name": row[2] or "", "qualified_name": row[3] or "",
@@ -125,11 +198,14 @@ class GraphIndex:
             }
             self.nodes[row[0]] = node
             self.by_type.setdefault(row[1], []).append(row[0])
+        # Only edges a walk can follow are kept, which drops the structural bulk (table → column, project → file).
         self.out: dict[str, list[tuple[str, str, str]]] = {}
-        for edge_id, source, target, edge_type, layer in db.execute(
-            "SELECT edge_id,source_node_id,target_node_id,edge_type,graph_layer FROM graph_edges"
+        kinds = sorted(FOLLOW_EDGES | {"CONTAINS"})
+        for edge_id, source, target, edge_type in db.execute(
+            f"SELECT edge_id,source_node_id,target_node_id,edge_type FROM graph_edges "
+            f"WHERE graph_layer<>'DATA_FLOW' AND edge_type IN ({','.join('?' * len(kinds))})", kinds,
         ):
-            if layer == "DATA_FLOW" or source not in self.nodes or target not in self.nodes:
+            if source not in self.nodes or target not in self.nodes or not self.follows(source, edge_type):
                 continue
             self.out.setdefault(source, []).append((target, edge_type, edge_id))
         self._reach: dict[tuple, list[str]] = {}
@@ -324,11 +400,15 @@ def build_tree(db: sqlite3.Connection, index: GraphIndex) -> dict[str, Any]:
         if stored["feature_id"] in features:
             features[stored["feature_id"]]["children"].append(_flow_item(flow_id, stored["doc"], None, stored["feature_id"]))
 
+    unassigned = sorted(
+        (node_id for node_id in index.by_type.get("API_OPERATION", []) if node_id not in reached and f"entry:{node_id}" not in items),
+        key=lambda value: index.nodes[value]["technical_name"],
+    )
+    # A large system can have thousands; the tree lists the first ones, search finds the rest.
     orphans = [
         {"id": f"entry:{node_id}", "kind": "entry", "name": ref_name(index.nodes[node_id]), "node_id": node_id,
          "node_type": index.nodes[node_id]["node_type"]}
-        for node_id in sorted(index.by_type.get("API_OPERATION", []), key=lambda value: index.nodes[value]["technical_name"])
-        if node_id not in reached and f"entry:{node_id}" not in items
+        for node_id in unassigned[:MAX_UNASSIGNED]
     ]
 
     for feature in features.values():
@@ -343,7 +423,7 @@ def build_tree(db: sqlite3.Connection, index: GraphIndex) -> dict[str, Any]:
     # Ordered by the route key, so renaming a menu does not move it.
     ordered = sorted(menus.values(), key=lambda m: (m.get("sort_order") or 0, m["id"] == BATCH_MENU, m["id"]))
     ordered.append({"id": UNSORTED_MENU, "kind": "menu", "name": "Chưa xếp vào tính năng", "source": "graph",
-                    "unsorted": True, "children": orphans})
+                    "unsorted": True, "children": orphans, "total": len(unassigned)})
     for item in ordered:
         _summarize(item)
     return {"menus": ordered, "graph_nodes": len(index.nodes)}
@@ -442,40 +522,24 @@ def _chunks(values: list[str], size: int):
 
 # --------------------------------------------------------------------------- flows
 
-def _layers(index: GraphIndex, entry: str, node_ids: list[str]) -> dict[str, str]:
-    """entry = before the request reaches the server (or the job itself), logic = server code, data = tables."""
-    members, layer = set(node_ids), {}
-    queue = deque([(entry, False)])
-    while queue:
-        node_id, crossed = queue.popleft()
-        if node_id in layer or node_id not in members:
-            continue
-        node_type = index.nodes[node_id]["node_type"]
-        layer[node_id] = "data" if node_type in TERMINAL_TYPES else "logic" if crossed else "entry"
-        passes = crossed or node_type in {"API_OPERATION", "EXECUTABLE", "COMMAND_MODE"}
-        for target, edge_type, _ in index.out.get(node_id, ()):
-            if index.follows(node_id, edge_type):
-                queue.append((target, passes))
-    for node_id in node_ids:
-        layer.setdefault(node_id, "logic")
-    return layer
-
-
 def skeleton(index: GraphIndex, flow_id: str, entry: str | None, name: str = "") -> dict[str, Any]:
-    """A flow document with steps split from the graph and every text left for AI."""
+    """A flow document with one step per system the flow crosses, every text left for AI.
+
+    The walk from the entry is breadth-first, so systems come in the order the flow reaches them
+    (customer-web → order-api → ORDER_DB → …); each step then sits in one swimlane.
+    """
+    empty = {"id": flow_id, "name": name, "summary": {"text": "", "status": "ai"}, "facts": [], "steps": [],
+             "edge_cases": {"items": [], "status": "ai"}, "questions": []}
     if not entry or entry not in index.nodes:
-        return {"id": flow_id, "name": name, "summary": {"text": "", "status": "ai"}, "facts": [], "steps": [],
-                "edge_cases": {"items": [], "status": "ai"}, "questions": []}
-    node_ids = index.reach([entry], MAX_FLOW_NODES)
-    layers = _layers(index, entry, node_ids)
-    steps = []
-    for key, _label in STEP_LAYERS:
-        members = [node_id for node_id in node_ids if layers[node_id] == key]
-        if members:
-            steps.append({"id": f"s{len(steps) + 1}", "layer": key, "name": "", "actor": "", "text": "", "status": "ai",
-                          "nodes": members, "rules": []})
-    return {"id": flow_id, "name": name, "summary": {"text": "", "status": "ai"}, "facts": [], "steps": steps,
-            "edge_cases": {"items": [], "status": "ai"}, "questions": []}
+        return empty
+    by_system: dict[str, list[str]] = {}
+    for node_id in index.reach([entry], MAX_FLOW_NODES):
+        by_system.setdefault(index.nodes[node_id]["system"], []).append(node_id)
+    empty["steps"] = [
+        {"id": f"s{position}", "system": system, "name": "", "actor": "", "text": "", "status": "ai", "nodes": members, "rules": []}
+        for position, (system, members) in enumerate(by_system.items(), start=1)
+    ]
+    return empty
 
 
 def flow_entry(flow_id: str) -> str | None:
@@ -817,9 +881,9 @@ def export_pack(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
     }
     header = (f'# Code Map · gói viết tài liệu cho tính năng "{feature["name"]}"\n'
               "# Đưa nguyên file này cho AI. AI trả về đúng file này với các trường trống đã được điền.\n")
-    text = header + yaml.safe_dump(pack, allow_unicode=True, sort_keys=False, width=100)
+    text = header + yaml.dump(pack, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False, width=100)
     slug = re.sub(r"[^a-z0-9]+", "-", feature["route"].lower()).strip("-") or "feature"
-    return {"export_id": export_id, "filename": f"{slug}.codemap-ai.yaml", "text": text,
+    return {"export_id": export_id, "filename": f"{slug}.codemap-ai.yaml", "text": text, "prompt": CHAT_PROMPT,
             "stats": {"nodes": len(nodes), "edges": len(edges), "evidence": len(evidence), "locked": locked, "flows": len(flows)}}
 
 
@@ -1030,7 +1094,7 @@ def _import_rule(rule: dict[str, Any], resolve) -> dict[str, Any]:
 
 def search_nodes(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], query: str, limit: int = 10) -> list[dict[str, Any]]:
     """Code nodes matching the query, each with the feature and flow that reach it (if any)."""
-    if not query.strip():
+    if len(query.strip()) < 2:
         return []
     like = f"%{query.strip()}%"
     rows = db.execute(
