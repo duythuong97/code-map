@@ -1,13 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
+import { Background, Controls, MarkerType, ReactFlow } from "@xyflow/react";
 import { Check, Cpu, Download, Pencil, Upload, User, X } from "lucide-react";
 import { businessApi } from "./api.js";
 import { buildAutoLayout } from "../code-flow/layout.js";
+import { api } from "../code-flow/api.js";
+import { edgeColor, flowFiltersKey, flowKey } from "../code-flow/constants.js";
+import { FlowNode } from "../code-flow/FlowNode.jsx";
+import {
+  materializeGroups,
+  mergeExpansionIntent,
+  mergeGroup,
+  removeExpansionIntent,
+  removeGroup,
+  removeGroupLoadState,
+  setGroupLoadState,
+} from "../flow-state.js";
 import { Inline, RichText, RuleStatus, Status } from "./ui.jsx";
 import { citedNames, flowParts, nodeLookup, reviewCounts, swimlanes, typeLabel } from "./text.js";
 
-const READ_EDGES = new Set(["READS", "REMOTE_READS"]);
-const WRITE_EDGES = new Set(["INSERTS", "UPDATES", "DELETES", "MERGES", "WRITES"]);
 
 export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImport, notify }) {
   const [data, setData] = useState(null);
@@ -200,7 +210,7 @@ export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImpor
       </div>
       {mode === "graph"
         ? <FlowGraph nodes={nodes} edges={data.edges || []} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
-            picking={picking} entry={steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} />
+            picking={picking} entry={steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} notify={notify} />
         : <Swimlane steps={steps} stepNodes={stepNodes} nodesById={nodesById} activeStep={activeStep} selected={selected} onStep={setActiveStep} onNode={onNodeClick} />}
       {selected && mode === "graph" && !picking ? <NodeCard node={nodesById.get(selected)} flow={flow} onClose={() => setSelected(null)} onStep={(id) => { setActiveStep(id); docRef.current?.querySelector(`#bm-step-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }} /> : null}
     </section>
@@ -244,56 +254,147 @@ function Question({ question, lookup, selected, onCite, onAnswer }) {
   </div>;
 }
 
-function BizNode({ data }) {
-  const { node, tags, state } = data;
-  return <div className={`bm-gnode ${state}`}>
-    <Handle type="target" position={Position.Left} className="bm-handle" />
-    <Handle type="source" position={Position.Right} className="bm-handle" />
+// Graph nodes are the explorer's FlowNode, so the 1/W/R/E checkboxes on both sides keep working:
+// ticking one loads that expansion from /flow and adds its nodes around the flow.
+function StepFlowNode(props) {
+  const tags = props.data.tags || [];
+  return <>
     {tags.length ? <span className="bm-gtags">{tags.map((tag) => <b key={tag}>B{tag}</b>)}</span> : null}
-    <div className="bm-gtype">{typeLabel(node.node_type)}</div>
-    <div className="bm-gname">{node.name}</div>
-    <div className="bm-galt">{[node.names?.ja, node.names?.en || node.term].filter(Boolean).join(" · ") || "—"}</div>
-  </div>;
+    <FlowNode {...props} />
+  </>;
 }
-const nodeTypes = { biz: BizNode };
+const nodeTypes = { flowNode: StepFlowNode };
+const SEMANTIC_LEVELS = [["SYSTEM", "System"], ["APPLICATION", "Application"], ["TECHNICAL", "Technical"]];
+const MAX_EXPANSION_NODES = 200;
 
-function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick }) {
+function toGraphNode(node) {
+  return { ...node, technical_name: node.name || node.technical_name, default_display_name: node.display_name || node.name };
+}
+
+function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick, notify }) {
   const instance = useRef(null);
+  const requests = useRef(new Map());
+  const [semantic, setSemantic] = useState("APPLICATION");
+  const [groups, setGroups] = useState({});
+  const [groupStates, setGroupStates] = useState({});
+  const [intents, setIntents] = useState({});
+  const [localized, setLocalized] = useState({});
+  const filters = flowFiltersKey(MAX_EXPANSION_NODES);
+
+  useEffect(() => {
+    const names = {};
+    nodes.forEach((node) => {
+      if (node.names?.ja || node.names?.en) names[node.node_id] = { ja: { name: node.names.ja }, en: { name: node.names.en } };
+    });
+    setLocalized((current) => ({ ...names, ...current }));
+  }, [nodes]);
+
+  useEffect(() => () => requests.current.forEach((controller) => controller.abort()), []);
+
+  const loadGroup = useCallback(async (node, mode, direction, level) => {
+    const key = flowKey(node.node_id, mode, direction, level, filters);
+    requests.current.get(key)?.abort();
+    const controller = new AbortController();
+    requests.current.set(key, controller);
+    setGroupStates((current) => setGroupLoadState(current, key, { loading: true, error: "", truncated: false }));
+    try {
+      const data = await api(`/flow?node_id=${encodeURIComponent(node.node_id)}&mode=${mode}&direction=${direction}&max_nodes=${MAX_EXPANSION_NODES}&semantic_level=${level}`, { signal: controller.signal });
+      if (requests.current.get(key) !== controller) return;
+      setGroups((current) => mergeGroup(current, key, { nodes: data.nodes || [], edges: data.edges || [] }));
+      setGroupStates((current) => setGroupLoadState(current, key, { loading: false, error: "", truncated: Boolean(data.truncated) }));
+      const ids = (data.nodes || []).map((item) => item.node_id).slice(0, 300);
+      if (ids.length) {
+        const body = await api(`/localization?${ids.map((id) => `target_id=${encodeURIComponent(id)}`).join("&")}`).catch(() => null);
+        if (body?.items) setLocalized((current) => ({ ...current, ...body.items }));
+      }
+      if (data.truncated) notify?.(`Đã cắt ở ${MAX_EXPANSION_NODES} node`);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      setIntents((current) => removeExpansionIntent(current, node.node_id, mode, direction));
+      setGroupStates((current) => setGroupLoadState(current, key, { loading: false, error: error.message, truncated: false }));
+      notify?.(error.message);
+    } finally {
+      if (requests.current.get(key) === controller) requests.current.delete(key);
+    }
+  }, [filters, notify]);
+
+  const toggleFlow = useCallback((node, mode, direction, checked) => {
+    const key = flowKey(node.node_id, mode, direction, semantic, filters);
+    if (!checked) {
+      requests.current.get(key)?.abort();
+      setIntents((current) => removeExpansionIntent(current, node.node_id, mode, direction));
+      setGroupStates((current) => removeGroupLoadState(current, key));
+      setGroups((current) => removeGroup(current, key));
+      return;
+    }
+    setIntents((current) => mergeExpansionIntent(current, node, mode, direction));
+    void loadGroup(node, mode, direction, semantic);
+  }, [semantic, filters, loadGroup]);
+
+  function changeSemantic(level) {
+    if (level === semantic) return;
+    requests.current.forEach((controller) => controller.abort());
+    setSemantic(level);
+    setGroups({});
+    setGroupStates({});
+    Object.values(intents).forEach((intent) => void loadGroup(intent.node, intent.mode, intent.direction, level));
+  }
+
+  function clearExpansions() {
+    requests.current.forEach((controller) => controller.abort());
+    setGroups({}); setGroupStates({}); setIntents({});
+  }
+
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
   const focus = activeIndex >= 0 ? new Set(stepNodes[activeIndex]) : null;
-  // The explorer's layout spaces columns for its wide nodes; business nodes are narrower, so tighten it.
-  const layout = useMemo(() => buildAutoLayout(
-    nodes.map((node) => ({ ...node, default_display_name: node.name })),
-    edges.map((edge) => ({ ...edge, source_node_id: edge.source, target_node_id: edge.target })),
-    entry,
-  ).map((node) => ({ ...node, position: { x: node.position.x * 0.62, y: node.position.y * 0.5 } })), [nodes, edges, entry]);
+  const graph = useMemo(() => {
+    const expanded = materializeGroups(null, groups);
+    const byId = new Map(nodes.map((node) => [node.node_id, toGraphNode(node)]));
+    expanded.nodes.forEach((node) => { if (!byId.has(node.node_id)) byId.set(node.node_id, { ...node, expanded: true }); });
+    const allEdges = new Map(edges.map((edge) => [edge.edge_id, { ...edge, source_node_id: edge.source, target_node_id: edge.target }]));
+    expanded.edges.forEach((edge) => {
+      if (!allEdges.has(edge.edge_id) && byId.has(edge.source_node_id) && byId.has(edge.target_node_id)) allEdges.set(edge.edge_id, edge);
+    });
+    return { nodes: [...byId.values()], edges: [...allEdges.values()] };
+  }, [nodes, edges, groups]);
+  const layout = useMemo(() => buildAutoLayout(graph.nodes, graph.edges, entry, localized), [graph, entry, localized]);
+
   const flowNodes = layout.map((node) => {
     const tags = stepNodes.map((ids, index) => (ids.includes(node.node_id) ? index + 1 : 0)).filter(Boolean);
     const inFocus = focus?.has(node.node_id);
-    const state = [selected === node.node_id ? "sel" : "", focus && !inFocus ? "dim" : "", inFocus ? "focus" : "", picking ? "pick" : ""].filter(Boolean).join(" ");
-    return { id: node.node_id, type: "biz", position: node.position, data: { node, tags, state } };
-  });
-  const flowEdges = edges.map((edge) => {
-    const dim = focus && !(focus.has(edge.source) && focus.has(edge.target));
-    const kind = READ_EDGES.has(edge.edge_type) ? "read" : WRITE_EDGES.has(edge.edge_type) ? "write" : "call";
     return {
-      id: edge.edge_id, source: edge.source, target: edge.target, label: edge.edge_type, type: "smoothstep",
-      className: `bm-gedge ${kind}${dim ? " dim" : ""}`, markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      id: node.node_id, type: "flowNode", position: node.position,
+      className: [selected === node.node_id ? "bm-sel" : "", focus && !inFocus ? "bm-dim" : "", inFocus ? "bm-focus" : "", picking ? "bm-pick" : "", node.expanded ? "bm-expanded" : ""].filter(Boolean).join(" "),
+      data: { node, tags, localized, groups, loadStates: groupStates, intents, onToggleFlow: toggleFlow, semantic, filters },
+    };
+  });
+  const flowEdges = graph.edges.map((edge) => {
+    const dim = focus && !(focus.has(edge.source_node_id) && focus.has(edge.target_node_id));
+    return {
+      id: edge.edge_id, source: edge.source_node_id, target: edge.target_node_id, label: edge.edge_type, type: "smoothstep",
+      className: dim ? "bm-edge-dim" : "", animated: false,
+      style: { stroke: edgeColor(edge.edge_type), strokeWidth: 1.6 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(edge.edge_type), width: 14, height: 14 },
       labelBgPadding: [6, 3], labelBgBorderRadius: 8,
     };
   });
   const fit = useCallback(() => {
     const ids = focus ? [...focus] : null;
-    instance.current?.fitView({ padding: 0.15, duration: 300, minZoom: 0.55, maxZoom: 1, nodes: ids?.map((id) => ({ id })) });
+    instance.current?.fitView({ padding: 0.15, duration: 300, minZoom: 0.65, maxZoom: 1, nodes: ids?.map((id) => ({ id })) });
   }, [activeIndex]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const timer = setTimeout(fit, 30); return () => clearTimeout(timer); }, [fit]);
   useEffect(() => {
     if (selected) instance.current?.fitView({ padding: 0.6, duration: 300, nodes: [{ id: selected }], maxZoom: 1 });
   }, [selected]);
+  const expansions = Object.keys(intents).length;
   if (!nodes.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
   return <div className="bm-canvas">
+    <div className="bm-canvas-tools">
+      <span className="bm-seg">{SEMANTIC_LEVELS.map(([level, label]) => <button key={level} type="button" aria-pressed={semantic === level} onClick={() => changeSemantic(level)}>{label}</button>)}</span>
+      {expansions ? <button type="button" className="bm-btn sm" onClick={clearExpansions}>Bỏ {expansions} mở rộng</button> : null}
+    </div>
     <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} onInit={(value) => { instance.current = value; fit(); }}
-      onNodeClick={(_, node) => onNodeClick(node.id)} nodesDraggable={false} nodesConnectable={false} minZoom={0.2} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
+      onNodeClick={(_, node) => onNodeClick(node.id)} nodesConnectable={false} minZoom={0.15} maxZoom={1.6} proOptions={{ hideAttribution: true }}>
       <Background gap={20} size={1.2} />
       <Controls showInteractive={false} />
     </ReactFlow>
@@ -313,7 +414,7 @@ function Swimlane({ steps, stepNodes, nodesById, activeStep, selected, onStep, o
       <div className="bm-lh">Quy tắc<small>tài liệu</small></div>
       {steps.map((step) => <div key={step.id} className={`bm-cell${activeStep === step.id ? " active" : ""}`}>{(step.rules || []).map((rule, index) => <div key={index} className={`bm-lc txt rule-${rule.status}`}>◆ {rule.title}</div>)}</div>)}
       {lanes.map((lane) => <React.Fragment key={lane.key}>
-        <div className="bm-lh">{lane.label}<small>graph</small></div>
+        <div className="bm-lh">{lane.label}<small>{lane.types.map(typeLabel).join(", ").toLowerCase()}</small></div>
         {lane.cells.map((cell, index) => <div key={index} className={`bm-cell${activeStep === steps[index].id ? " active" : ""}`}>
           {cell.map((node) => <button key={node.node_id} type="button" className={`bm-lc${selected === node.node_id ? " sel" : ""}`} onClick={() => onNode(node.node_id)}>
             <span>{typeLabel(node.node_type)}</span>{node.name}</button>)}

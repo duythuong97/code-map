@@ -61,25 +61,20 @@ export function flowParts(flow) {
   return parts;
 }
 
-// Lanes of the swimlane, from the node type.
-const LANES = [
-  { key: "ui", label: "Màn hình", types: ["SCREEN", "UI_ACTION", "API_CALL_REFERENCE", "ANGULAR_COMPONENT", "ANGULAR_SERVICE"] },
-  { key: "api", label: "API", types: ["API_OPERATION", "CONTROLLER"] },
-  { key: "batch", label: "Batch", types: ["JOB_NETWORK", "JOB", "EXECUTABLE", "COMMAND_MODE"] },
-  { key: "logic", label: "Xử lý", types: [] },
-  { key: "data", label: "Dữ liệu", types: ["TABLE", "VIEW", "MATERIALIZED_VIEW", "COLUMN", "SEQUENCE"] },
-  { key: "ext", label: "Ngoài", types: ["EXTERNAL_DATABASE_OBJECT", "EXTERNAL_API_OPERATION", "EXTERNAL_SYSTEM", "UNRESOLVED_REFERENCE"] },
-];
-
-export function laneOf(nodeType = "") {
-  return (LANES.find((lane) => lane.types.includes(nodeType)) || LANES.find((lane) => lane.key === "logic")).key;
-}
-
+// Swimlanes are the systems a flow crosses (repository for code, database for DB objects),
+// in the order the flow first reaches them.
 export function swimlanes(steps = [], nodesById = new Map()) {
-  return LANES.map((lane) => ({
-    ...lane,
-    cells: steps.map((step) => (step.nodes || []).map((id) => nodesById.get(id)).filter((node) => node && laneOf(node.node_type) === lane.key)),
-  })).filter((lane) => lane.cells.some((cell) => cell.length));
+  const order = [];
+  steps.forEach((step) => (step.nodes || []).forEach((id) => {
+    const system = nodesById.get(id)?.system || "Khác";
+    if (nodesById.has(id) && !order.includes(system)) order.push(system);
+  }));
+  return order.map((system) => ({
+    key: system,
+    label: system,
+    types: [...new Set(steps.flatMap((step) => (step.nodes || []).map((id) => nodesById.get(id)).filter((node) => node?.system === system).map((node) => node.node_type)))],
+    cells: steps.map((step) => (step.nodes || []).map((id) => nodesById.get(id)).filter((node) => node && (node.system || "Khác") === system)),
+  }));
 }
 
 export function typeLabel(nodeType = "") {

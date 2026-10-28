@@ -154,6 +154,8 @@ class BusinessApiTests(unittest.TestCase):
         self.assertEqual(set(steps[1]["nodes"]), {HANDLER, CREATE_PROC, VALIDATE})
         self.assertEqual(steps[2]["nodes"], [TABLE])
         names = {node["node_id"]: node["name"] for node in flow["nodes"]}
+        systems = {node["node_id"]: node["system"] for node in flow["nodes"]}
+        self.assertEqual((systems[ACTION], systems[HANDLER], systems[CREATE_PROC], systems[TABLE]), ("repo", "repo", "DB1", "DB1"))
         self.assertEqual(names[HANDLER], "OrderController.Create")
         self.assertEqual(names[ACTION], "CreateOrderComponent.submitOrder")
         self.assertIn({"source": CREATE_PROC, "target": TABLE, "edge_type": "INSERTS"},

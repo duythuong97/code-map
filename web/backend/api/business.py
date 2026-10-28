@@ -115,11 +115,13 @@ class GraphIndex:
         self.nodes: dict[str, dict[str, Any]] = {}
         self.by_type: dict[str, list[str]] = {}
         for row in db.execute(
-            "SELECT node_id,node_type,technical_name,qualified_name,default_display_name,properties_json FROM graph_nodes"
+            "SELECT node_id,node_type,technical_name,qualified_name,default_display_name,properties_json,"
+            "system_key,database_key,repository_key FROM graph_nodes"
         ):
             node = {
                 "node_id": row[0], "node_type": row[1], "technical_name": row[2] or "", "qualified_name": row[3] or "",
                 "display_name": row[4] or row[2] or row[0], "properties": _json(row[5], {}),
+                "system": system_of(row[1], row[6], row[7], row[8], row[0]),
             }
             self.nodes[row[0]] = node
             self.by_type.setdefault(row[1], []).append(row[0])
@@ -190,6 +192,26 @@ def graph_index(db: sqlite3.Connection, web_path: Path) -> GraphIndex:
 def graph_hash(web_path: Path) -> str:
     stat = web_path.stat()
     return hashlib.sha1(f"{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()[:12]
+
+
+DATABASE_TYPES = frozenset({"TABLE", "VIEW", "MATERIALIZED_VIEW", "COLUMN", "SEQUENCE", "SYNONYM", "PROCEDURE", "FUNCTION",
+                            "TRIGGER", "PLSQL_PACKAGE", "DATABASE", "DATABASE_SCHEMA", "INLINE_SQL", "SQL_FILE"})
+JOB_TYPES = frozenset({"JOB_NETWORK", "JOB"})
+
+
+def system_of(node_type: str, system_key: str | None, database_key: str | None, repository_key: str | None, node_id: str) -> str:
+    """The system a node runs in, for swimlanes: the database for DB objects, the repository for code."""
+    if node_type in JOB_TYPES:
+        return "Jobnet"
+    if node_type in {"EXTERNAL_DATABASE_OBJECT", "DATABASE_LINK"}:
+        return database_key or "Hệ thống ngoài"
+    if node_type in {"EXTERNAL_API_OPERATION", "EXTERNAL_SYSTEM"}:
+        return system_key or "Hệ thống ngoài"
+    if node_type == "UNRESOLVED_REFERENCE":
+        return "Chưa xác định"
+    if node_type in DATABASE_TYPES and database_key:
+        return database_key
+    return repository_key or system_key or database_key or "Khác"
 
 
 def ref_name(node: dict[str, Any]) -> str:
@@ -383,7 +405,8 @@ def node_facts(db: sqlite3.Connection, index: GraphIndex, node_ids: list[str]) -
         node_id: {
             "node_id": node_id, "node_type": index.nodes[node_id]["node_type"], "name": ref_name(index.nodes[node_id]),
             "ref": ref_of(index.nodes[node_id]), "technical_name": index.nodes[node_id]["technical_name"],
-            "display_name": index.nodes[node_id]["display_name"], "file": "", "line": None, "names": {}, "term": "",
+            "display_name": index.nodes[node_id]["display_name"], "system": index.nodes[node_id]["system"],
+            "file": "", "line": None, "names": {}, "term": "",
         }
         for node_id in node_ids if node_id in index.nodes
     }
