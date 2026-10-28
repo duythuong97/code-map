@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Background, Controls, MarkerType, ReactFlow } from "@xyflow/react";
-import { Check, Cpu, Download, Pencil, Upload, User, X } from "lucide-react";
+import { Check, Cpu, Download, PanelLeftClose, PanelLeftOpen, Pencil, Upload, User, X } from "lucide-react";
 import { businessApi } from "./api.js";
 import { buildAutoLayout } from "../code-flow/layout.js";
 import { api } from "../code-flow/api.js";
@@ -30,6 +30,8 @@ export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImpor
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState(null);
   const [picking, setPicking] = useState(false);
+  const [docOpen, setDocOpen] = useState(() => { try { return localStorage.getItem("bm.doc.open") !== "0"; } catch { return true; } });
+  const toggleDoc = (open) => { setDocOpen(open); try { localStorage.setItem("bm.doc.open", open ? "1" : "0"); } catch { /* ignore */ } };
   const docRef = useRef(null);
 
   useEffect(() => {
@@ -117,9 +119,10 @@ export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImpor
     {status !== "approved" ? <button type="button" className="bm-tool" onClick={(event) => { event.stopPropagation(); patch(part, { status: "approved" }, "Đã duyệt"); }}><Check size={13} /> Duyệt</button> : null}
   </span>;
 
-  return <div className="bm-flow">
-    <article className="bm-doc" ref={docRef}>
+  return <div className={`bm-flow${docOpen ? "" : " doc-closed"}`}>
+    <article className="bm-doc" ref={docRef} hidden={!docOpen}>
       <nav className="bm-toc" aria-label="Mục lục">
+        <button type="button" className="bm-toc-close" title="Thu gọn tài liệu" aria-label="Thu gọn tài liệu" onClick={() => toggleDoc(false)}><PanelLeftClose size={15} /></button>
         <button type="button" onClick={() => scrollTo("bm-sec-summary")}>Tổng quan</button>
         {steps.map((step, index) => <button key={step.id} type="button" aria-current={activeStep === step.id}
           onClick={() => { setActiveStep(step.id); scrollTo(`bm-step-${step.id}`); }}>{index + 1}. {step.name || "Chưa đặt tên"}</button>)}
@@ -207,11 +210,12 @@ export default function FlowView({ flowId, onTree, onOpenItem, onExport, onImpor
 
     <section className="bm-stage">
       <div className="bm-stage-bar">
+        {!docOpen ? <button type="button" className="bm-btn sm" onClick={() => toggleDoc(true)}><PanelLeftOpen size={14} /> Tài liệu</button> : null}
         <span className="bm-seg"><button type="button" aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>Graph</button><button type="button" aria-pressed={mode === "lane"} onClick={() => setMode("lane")}>Swimlane</button></span>
         <span className="bm-muted small">{nodes.length} node · {(data.edges || []).length} cạnh{activeStep ? ` · đang xem bước ${steps.findIndex((step) => step.id === activeStep) + 1}` : ""}{picking ? " · nhấn node để thêm hoặc bỏ khỏi bước" : ""}</span>
       </div>
       {mode === "graph"
-        ? <FlowGraph nodes={nodes} edges={data.edges || []} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
+        ? <FlowGraph nodes={nodes} edges={data.edges || []} levels={data.levels} steps={steps} stepNodes={stepNodes} activeStep={editingStep?.id || activeStep} selected={selected}
             picking={picking} entry={steps[0]?.nodes?.[0]} onNodeClick={onNodeClick} notify={notify} />
         : <Swimlane steps={steps} stepNodes={stepNodes} nodesById={nodesById} activeStep={activeStep} selected={selected} onStep={setActiveStep} onNode={onNodeClick} />}
       {selected && mode === "graph" && !picking ? <NodeCard node={nodesById.get(selected)} flow={flow} onClose={() => setSelected(null)} onStep={(id) => { setActiveStep(id); docRef.current?.querySelector(`#bm-step-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }} /> : null}
@@ -273,10 +277,18 @@ function toGraphNode(node) {
   return { ...node, technical_name: node.name || node.technical_name, default_display_name: node.display_name || node.name };
 }
 
-function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick, notify }) {
+function FlowGraph({ nodes: flowNodesAll, edges: flowEdgesAll, levels, steps, stepNodes, activeStep, selected, picking, entry, onNodeClick, notify }) {
   const instance = useRef(null);
   const requests = useRef(new Map());
-  const [semantic, setSemantic] = useState("APPLICATION");
+  const [semantic, setSemantic] = useState("TECHNICAL");
+  // System/Application project the flow itself too, not only the expansions.
+  const level = semantic !== "TECHNICAL" ? levels?.[semantic] : null;
+  const nodes = useMemo(() => {
+    if (!level) return flowNodesAll;
+    const keep = new Set(level.nodes);
+    return flowNodesAll.filter((node) => keep.has(node.node_id));
+  }, [flowNodesAll, level]);
+  const edges = level ? level.edges : flowEdgesAll;
   const [groups, setGroups] = useState({});
   const [groupStates, setGroupStates] = useState({});
   const [intents, setIntents] = useState({});
@@ -352,6 +364,7 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
     setSemantic(level);
     setGroups({});
     setGroupStates({});
+    setSuppressed(new Set());
     Object.values(intents).forEach((intent) => void loadGroup(intent.node, intent.mode, intent.direction, level));
   }
 
@@ -402,7 +415,7 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
   const flowEdges = graph.edges.map((edge) => {
     const dim = focus && !(focus.has(edge.source_node_id) && focus.has(edge.target_node_id));
     return {
-      id: edge.edge_id, source: edge.source_node_id, target: edge.target_node_id, label: edge.edge_type, type: "smoothstep",
+      id: edge.edge_id, source: edge.source_node_id, target: edge.target_node_id, label: edge.edge_type, type: "default",
       className: dim ? "bm-edge-dim" : "", animated: false,
       style: { stroke: edgeColor(edge.edge_type), strokeWidth: 1.6 },
       markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(edge.edge_type), width: 14, height: 14 },
@@ -413,12 +426,16 @@ function FlowGraph({ nodes, edges, steps, stepNodes, activeStep, selected, picki
     const ids = focus ? [...focus] : null;
     instance.current?.fitView({ padding: 0.15, duration: 300, minZoom: 0.65, maxZoom: 1, nodes: ids?.map((id) => ({ id })) });
   }, [activeIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const timer = setTimeout(fit, 60);
+    return () => clearTimeout(timer);
+  }, [semantic]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const timer = setTimeout(fit, 30); return () => clearTimeout(timer); }, [fit]);
   useEffect(() => {
     if (selected) instance.current?.fitView({ padding: 0.6, duration: 300, nodes: [{ id: selected }], maxZoom: 1 });
   }, [selected]);
   const expansions = Object.keys(intents).length + suppressed.size;
-  if (!nodes.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
+  if (!flowNodesAll.length) return <div className="bm-canvas bm-canvas-empty"><p className="bm-muted">Luồng này chưa có node nào trong graph.</p></div>;
   return <div className="bm-canvas">
     <div className="bm-canvas-tools">
       <span className="bm-seg">{SEMANTIC_LEVELS.map(([level, label]) => <button key={level} type="button" aria-pressed={semantic === level} onClick={() => changeSemantic(level)}>{label}</button>)}</span>

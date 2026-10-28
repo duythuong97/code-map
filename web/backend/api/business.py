@@ -562,7 +562,30 @@ def load_flow(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], f
         "has_doc": bool(row), "feature_id": item["feature_id"], "feature_name": feature["name"] if feature else "",
         "path": _path(tree, flow_id), "nodes": list(node_facts(db, index, node_ids).values()),
         "edges": index.edges_within(node_ids),
+        "levels": semantic_levels(db, node_ids, item["entry_node_id"]),
     }
+
+
+def semantic_levels(db: sqlite3.Connection, node_ids: list[str], entry: str | None) -> dict[str, dict[str, Any]]:
+    """The flow graph projected like the explorer's System/Application levels (Technical is the flow itself):
+    only MAIN nodes stay, Application drops structural edges and System keeps data-flow edges only."""
+    members = set(node_ids)
+    roles: dict[str, str] = {}
+    rows: list[tuple] = []
+    for start in range(0, len(node_ids), 500):
+        chunk = node_ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        roles.update(db.execute(f"SELECT node_id,graph_role FROM graph_nodes WHERE node_id IN ({marks})", chunk).fetchall())
+        rows += [row for row in db.execute(
+            f"SELECT edge_id,source_node_id,target_node_id,edge_type,graph_layer FROM graph_edges WHERE source_node_id IN ({marks}) ORDER BY edge_id",
+            chunk) if row[2] in members]
+    main = {node_id for node_id in node_ids if roles.get(node_id) == "MAIN"} | ({entry} & members if entry else set())
+    visible = {"SYSTEM": lambda layer: layer == "DATA_FLOW", "APPLICATION": lambda layer: layer != "STRUCTURAL"}
+    return {level: {
+        "nodes": [node_id for node_id in node_ids if node_id in main],
+        "edges": [{"edge_id": e, "source": s, "target": t, "edge_type": k} for e, s, t, k, layer in rows
+                  if s in main and t in main and s != t and test(layer)],
+    } for level, test in visible.items()}
 
 
 def _path(tree: dict[str, Any], item_id: str) -> list[dict[str, str]]:

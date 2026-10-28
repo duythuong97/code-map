@@ -161,6 +161,10 @@ class BusinessApiTests(unittest.TestCase):
         self.assertIn({"source": CREATE_PROC, "target": TABLE, "edge_type": "INSERTS"},
                       [{key: edge[key] for key in ("source", "target", "edge_type")} for edge in flow["edges"]])
         self.assertEqual(flow["path"][0]["name"], "Orders")
+        application = flow["levels"]["APPLICATION"]
+        self.assertIn(CREATE_PROC, application["nodes"])
+        self.assertIn((CREATE_PROC, TABLE), [(edge["source"], edge["target"]) for edge in application["edges"]])
+        self.assertEqual(flow["levels"]["SYSTEM"]["edges"], [])
 
     def test_export_pack_carries_graph_context_and_an_empty_template(self) -> None:
         result = self.export()
