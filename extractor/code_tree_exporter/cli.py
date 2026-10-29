@@ -59,6 +59,21 @@ def main(argv: list[str] | None = None) -> int:
     diff_parser.add_argument(
         "--fail-on-unplanned", action="store_true", help="Exit 1 when a change is outside the plan."
     )
+    oracle_parser = commands.add_parser(
+        "verify-oracle",
+        description="Precision/recall of PL/SQL dependencies against a CSV export of Oracle ALL_DEPENDENCIES.",
+    )
+    oracle_parser.add_argument("--graph", required=True)
+    oracle_parser.add_argument("--dependencies", required=True, help="CSV with OWNER,NAME,TYPE,REFERENCED_OWNER,REFERENCED_NAME,REFERENCED_TYPE")
+    oracle_parser.add_argument("--owner", action="append", help="Only these schemas (repeatable).")
+    oracle_parser.add_argument("--format", choices=["text", "json"], default="text")
+    sample_parser = commands.add_parser("sample-edges", description="A stratified sample of edges to review by hand.")
+    sample_parser.add_argument("--graph", required=True)
+    sample_parser.add_argument("--n", type=int, default=50)
+    sample_parser.add_argument("--seed", type=int, default=1)
+    sample_parser.add_argument("--out", required=True, help="CSV to fill in (verdict: correct / wrong / unsure).")
+    score_sample_parser = commands.add_parser("score-sample", description="Precision per edge type from a reviewed sample.")
+    score_sample_parser.add_argument("sample", help="The CSV written by sample-edges, with verdicts filled in.")
     stale_parser = commands.add_parser(
         "stale",
         description="Compare an extract with the working tree: changed/new files, new commits, affected nodes.",
@@ -145,6 +160,30 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(text)
             return 1 if args.fail_on_unplanned and plan and plan["unplanned"] else 0
+        if args.command == "verify-oracle":
+            from .sqlite_graph import resolve_database_path
+            from .verify import format_oracle_report, verify_oracle
+
+            report = verify_oracle(
+                resolve_database_path(Path(args.graph)),
+                Path(args.dependencies),
+                owners={owner.upper() for owner in args.owner} if args.owner else None,
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2) if args.format == "json" else format_oracle_report(report))
+            return 0
+        if args.command == "sample-edges":
+            from .sqlite_graph import resolve_database_path
+            from .verify import sample_edges, write_sample
+
+            rows = sample_edges(resolve_database_path(Path(args.graph)), args.n, args.seed)
+            write_sample(rows, Path(args.out))
+            print(json.dumps({"out": args.out, "edges": len(rows)}))
+            return 0
+        if args.command == "score-sample":
+            from .verify import score_sample
+
+            print(json.dumps(score_sample(Path(args.sample)), ensure_ascii=False, indent=2))
+            return 0
         if args.command == "stale":
             from .sqlite_graph import resolve_database_path
             from .stale import stale_report, summary_line

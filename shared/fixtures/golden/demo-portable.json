@@ -135,6 +135,7 @@
   "database:DB2 -CONTAINS-> database-schema:DB2:MASTER",
   "external-system:TAX_SYSTEM -CONTAINS-> external-api:TAX_SYSTEM:POST:/tax/calculate",
   "function:DB1:PKG_ORDER:CALCULATE_TOTAL:NUMBER -READS_FROM(SELECT)-> external-db-object:DB1:TAX_SCHEMA.TAX_RATE",
+  "function:DB1:PKG_ORDER:CALCULATE_TOTAL:NUMBER -READS_FROM(SELECT)-> table:DB1:ORDER_STAGING_LINES",
   "function:DB1:PKG_ORDER:CALCULATE_TOTAL:NUMBER -USES(DB_LINK)-> database-link:DB1:TAX_DB_LINK",
   "loader-control:order-ops:order-ops/load_orders.ctl -LOADS_INTO(APPEND)-> table:DB1:ORDER_HEADER",
   "loader-control:order-ops:order-ops/load_orders.ctl -MAPS_TO(FIELD_MAP)-> column:DB1:ORDER_HEADER:CREATED_AT",

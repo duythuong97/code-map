@@ -173,6 +173,23 @@ từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test 
 `CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
 (`.github/workflows/ci.yml`) chạy test extractor, web, extension và frontend.
 
+## Đo chất lượng của KB
+
+| Cách | Lệnh | Đo được |
+|---|---|---|
+| Đối chiếu với Oracle | `code-tree-exporter verify-oracle --graph <out> --dependencies all_dependencies.csv [--owner APP]` | Precision/recall của phụ thuộc PL/SQL so với `ALL_DEPENDENCIES` (mức package), object chưa được scan |
+| Corpus có đáp án | [`tools/corpus-gen`](tools/corpus-gen/README.md) | Recall theo từng pattern; điểm mù có được cảnh báo không; phân tích ảnh hưởng (graph không LLM, hoặc `impact.yaml` của agent) |
+| Lấy mẫu cạnh | `code-tree-exporter sample-edges --graph <out> --n 50 --out sample.csv`, điền `verdict`, rồi `score-sample sample.csv` | Precision theo loại cạnh, kèm khoảng tin cậy 95% |
+| Nhật ký MCP | `python -m web.backend.kb usage` hoặc `GET /business/kb-status` | Agent hỏi gì, câu nào không có kết quả |
+
+Export `ALL_DEPENDENCIES` (chỉ cần quyền đọc dictionary):
+
+```sql
+SELECT OWNER, NAME, TYPE, REFERENCED_OWNER, REFERENCED_NAME, REFERENCED_TYPE, REFERENCED_LINK_NAME
+  FROM ALL_DEPENDENCIES
+ WHERE OWNER IN ('APP') AND TYPE IN ('PACKAGE BODY','PROCEDURE','FUNCTION','TRIGGER','VIEW');
+```
+
 ## Graph diff: một thay đổi làm gì với hệ thống
 
 ```text

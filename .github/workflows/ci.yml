@@ -38,6 +38,17 @@ jobs:
       - name: Demo extract (all sources)
         run: python scripts/run_demo_pipeline.py
 
+      - name: Corpus quality report (all sources, informational)
+        env:
+          PYTHONPATH: extractor
+        run: |
+          python tools/corpus-gen generate --out "$RUNNER_TEMP/corpus" --size m
+          python -m code_tree_exporter extract --config "$RUNNER_TEMP/corpus/config.json"
+          python tools/corpus-gen score-extract --corpus "$RUNNER_TEMP/corpus" | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m code_tree_exporter verify-oracle --graph "$RUNNER_TEMP/corpus/out" \
+            --dependencies "$RUNNER_TEMP/corpus/truth/all_dependencies.csv" | tee -a "$GITHUB_STEP_SUMMARY"
+          python tools/corpus-gen baseline --corpus "$RUNNER_TEMP/corpus" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: VS Code extension tests
         working-directory: vscode-extension
         env:

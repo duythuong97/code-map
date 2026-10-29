@@ -198,7 +198,9 @@ public sealed class OracleSqlParse
             .Select(node => SourceText.Upper(NormalizeName(SourceOf(node))))
             .ToHashSet(StringComparer.Ordinal);
         var references = new List<ParsedSqlReference>();
-        var seen = new HashSet<(string, string)>();
+        // One reference per table and relation *per statement*: a package whose second
+        // procedure updates a table the first one inserted into keeps both dependencies.
+        var seen = new HashSet<(string, string, int)>();
         foreach (var node in _nodes)
         {
             if (node is not P.Tableview_nameContext table) continue;
@@ -222,7 +224,12 @@ public sealed class OracleSqlParse
                     break;
                 }
             }
-            if (seen.Add((SourceText.Upper(name), relation)))
+            var statement = Start(table);
+            for (var owner = table.Parent as ParserRuleContext; owner is not null; owner = owner.Parent as ParserRuleContext)
+            {
+                if (owner is P.Data_manipulation_language_statementsContext) { statement = Start(owner); break; }
+            }
+            if (seen.Add((SourceText.Upper(name), relation, statement)))
                 references.Add(new ParsedSqlReference(name, operation, relation, Start(table), dbLink));
         }
         return references

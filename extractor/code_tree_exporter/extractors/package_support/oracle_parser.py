@@ -320,7 +320,9 @@ class OraclePlsqlParser:
             if isinstance(node, parser.Query_nameContext)
         }
         references: list[ParsedSqlReference] = []
-        seen: set[tuple[str, str]] = set()
+        # One reference per table and relation *per statement*: a package whose second
+        # procedure updates a table the first one inserted into keeps both dependencies.
+        seen: set[tuple[str, str, int]] = set()
         for node in self._walk():
             if not isinstance(node, parser.Tableview_nameContext):
                 continue
@@ -353,7 +355,14 @@ class OraclePlsqlParser:
                         operation, relation = "MERGE", OP_TO_EDGE["MERGE"]
                     break
                 ancestor = ancestor.parentCtx
-            key = (name.upper(), relation)
+            statement = node.start.start
+            owner = node.parentCtx
+            while owner is not None:
+                if isinstance(owner, parser.Data_manipulation_language_statementsContext):
+                    statement = owner.start.start
+                    break
+                owner = owner.parentCtx
+            key = (name.upper(), relation, statement)
             if key not in seen:
                 seen.add(key)
                 references.append(ParsedSqlReference(name, operation, relation, node.start.start, db_link))
