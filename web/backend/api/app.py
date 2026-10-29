@@ -26,6 +26,7 @@ from flask import Flask, g, jsonify, request, send_from_directory  # noqa: E402
 
 from web.backend.api import graph_routes  # noqa: E402
 from web.backend.api import business_routes  # noqa: E402,F401  (registers /business routes on the graph blueprint)
+from web.backend.api import knowledge_routes  # noqa: E402,F401  (rules, decisions, questions, review queue)
 from web.backend.codemap_mcp import http_transport  # noqa: E402
 from web.backend.config import absolute_path, load_app_config  # noqa: E402
 from web.backend.logging_config import configure_backend_logging  # noqa: E402

@@ -1,0 +1,7 @@
+system,team,owner,contact,notes
+customer-web,Team Web,Nguyễn Văn A,#team-web,Angular customer portal
+order-api,Team Order,Trần Thị B,#team-order,
+order-fulfillment,Team Batch,Lê Văn C,#team-batch,Nightly jobs
+order-db,Team DB,Phạm Thị D,#team-db,PL/SQL packages
+order-ops,Team DB,Phạm Thị D,#team-db,
+DB1,Team DB,Phạm Thị D,#team-db,Owns schema changes

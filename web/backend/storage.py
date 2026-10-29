@@ -46,8 +46,30 @@ CREATE TABLE IF NOT EXISTS kn.mcp_calls(call_id INTEGER PRIMARY KEY,called_at TE
 CREATE INDEX IF NOT EXISTS kn.mcp_calls_tool ON mcp_calls(tool, called_at);
 """
 
-# Further schemas (the knowledge layer) register here so every opener creates them.
-EXTRA_SCHEMAS: list[str] = [MCP_LOG_SCHEMA]
+# Business rules, decisions and questions people own (web/backend/knowledge.py).
+KNOWLEDGE_LAYER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kn.biz_rules(rule_id TEXT PRIMARY KEY,domain TEXT NOT NULL,title TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',status TEXT NOT NULL CHECK(status IN('draft','approved','needs_review','retired')),
+  source TEXT NOT NULL CHECK(source IN('code','sme','doc','ai')),evidence TEXT NOT NULL DEFAULT '',
+  node_ids TEXT NOT NULL DEFAULT '[]',requirement_refs TEXT NOT NULL DEFAULT '[]',test_refs TEXT NOT NULL DEFAULT '[]',
+  fingerprint TEXT NOT NULL DEFAULT '',review_reason TEXT NOT NULL DEFAULT '',proposed_by TEXT NOT NULL DEFAULT '',
+  approved_by TEXT NOT NULL DEFAULT '',approved_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS kn.biz_decisions(decision_id TEXT PRIMARY KEY,title TEXT NOT NULL,context TEXT NOT NULL DEFAULT '',
+  options_json TEXT NOT NULL DEFAULT '[]',decision TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK(status IN('proposed','accepted','rejected','superseded')),node_ids TEXT NOT NULL DEFAULT '[]',
+  rule_ids TEXT NOT NULL DEFAULT '[]',superseded_by TEXT NOT NULL DEFAULT '',proposed_by TEXT NOT NULL DEFAULT '',
+  decided_by TEXT NOT NULL DEFAULT '',decided_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS kn.biz_questions(question_id TEXT PRIMARY KEY,text TEXT NOT NULL,context TEXT NOT NULL DEFAULT '',
+  options_json TEXT NOT NULL DEFAULT '[]',answer TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK(status IN('open','answered','dropped')),node_ids TEXT NOT NULL DEFAULT '[]',
+  rule_ids TEXT NOT NULL DEFAULT '[]',flow_id TEXT NOT NULL DEFAULT '',asked_by TEXT NOT NULL DEFAULT '',
+  answered_by TEXT NOT NULL DEFAULT '',answered_at TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS kn.knowledge_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+"""
+
+EXTRA_SCHEMAS: list[str] = [MCP_LOG_SCHEMA, KNOWLEDGE_LAYER_SCHEMA]
 
 
 @contextmanager

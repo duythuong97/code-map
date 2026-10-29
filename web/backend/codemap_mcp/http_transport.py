@@ -18,10 +18,9 @@ from urllib.parse import urlparse
 from flask import Flask, Response, request
 
 from .server import CallContext, McpServer, PROTOCOL_VERSIONS
-from .workspace import Workspace
+from .workspace import workspace_for
 
 MAX_BODY_BYTES = 1024 * 1024
-_WORKSPACES: dict[tuple[str, str], Workspace] = {}
 
 
 def register(app: Flask, paths: Callable[[], tuple[Path, Path]]) -> None:
@@ -37,10 +36,7 @@ def register(app: Flask, paths: Callable[[], tuple[Path, Path]]) -> None:
         if request.content_length is None or request.content_length > MAX_BODY_BYTES:
             return _json({"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Bounded JSON body required"}}, 413)
         output, knowledge = paths()
-        key = (str(output), str(knowledge))
-        workspace = _WORKSPACES.get(key)
-        if workspace is None:
-            workspace = _WORKSPACES[key] = Workspace(output=Path(output), knowledge=Path(knowledge))
+        workspace = workspace_for(Path(output), Path(knowledge))
         context = CallContext(
             user=(request.headers.get("X-Code-Map-User") or "").strip()[:100],
             allow_write=_write_allowed(),

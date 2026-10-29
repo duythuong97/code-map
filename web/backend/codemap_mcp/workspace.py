@@ -92,3 +92,15 @@ def _stamp(path: Path) -> tuple[int, int]:
         return stat.st_size, stat.st_mtime_ns
     except OSError:
         return 0, 0
+
+
+_WORKSPACES: dict[tuple[str, str], Workspace] = {}
+
+
+def workspace_for(output: Path, knowledge: Path | None) -> Workspace:
+    """One Workspace per (output, knowledge) so the stale report cache is shared across requests."""
+    key = (str(output), str(knowledge))
+    workspace = _WORKSPACES.get(key)
+    if workspace is None:
+        workspace = _WORKSPACES[key] = Workspace(output=Path(output), knowledge=Path(knowledge) if knowledge else None)
+    return workspace

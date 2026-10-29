@@ -586,6 +586,28 @@ Tham chiếu node trong tài liệu dùng tên: `Class.method` cho code, tên k�
 cho phần còn lại (`POST /api/orders`, `ORDER_HEADER`). Trong YAML có thêm loại:
 `api: POST /api/orders`, `method: OrderController.Create`.
 
+**Quy tắc, quyết định và câu hỏi** (kiến thức chỉ con người nói được, lưu trong
+`knowledge.sqlite`, gắn theo id của graph):
+
+- `RULE-<DOMAIN>-001`: quy tắc nghiệp vụ kèm evidence (file:dòng), các node hiện
+  thực nó, requirement và test liên quan. Trạng thái `draft` → `approved` →
+  (`needs_review`) → `retired`. AI chỉ tạo được `draft`.
+- `DEC-0001`: quyết định kiểu ADR (bối cảnh, các phương án, quyết định, lý do).
+- `Q-0001`: câu hỏi cho người, có phương án; trả lời xong thì AI dùng câu trả lời
+  như sự thật và không hỏi lại.
+- **Tự đưa về review khi code đổi:** mỗi lần extract ghi fingerprint hành vi của
+  từng node (semantic tree + cạnh đi ra, bỏ số dòng: sửa format, comment hay chèn
+  code phía trên không làm đổi). Quy tắc đã duyệt và phần tài liệu luồng đã duyệt
+  lưu fingerprint lúc duyệt; extract sau mà node đổi hành vi hoặc bị xoá thì quy
+  tắc chuyển `needs_review` kèm lý do, phần tài liệu vào hàng chờ duyệt. MCP
+  server ghi rõ "NEEDS REVIEW" và đưa vào mục Not certain. Chạy kiểm tra ngay sau
+  extract: `python -m web.backend.kb revalidate --graph-output <out>` (exit `1`
+  khi có quy tắc bị đưa về review).
+- `inputData/owners.csv` (`system,team,owner,contact,notes`) cho biết ai nắm
+  system nào; `codemap_impact` ghi owner cạnh từng system.
+  `inputData/ops-facts.csv` (`target,kind,value,note`: lịch batch, khối lượng
+  dữ liệu, SLA, lock) hiện trong câu trả lời về node đó.
+
 API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
 
 | Route | Ý nghĩa |
@@ -599,8 +621,14 @@ API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
 | `POST /business/features/<id>/ai-import/check`, `.../ai-import` | kiểm tra, nhập file AI trả về |
 | `GET /business/search?q=` | tìm trong nghiệp vụ và node |
 | `GET /business/nodes/<node_id>` | thông tin node và các luồng có chứa node |
+| `GET/POST /business/rules`, `GET/PATCH /business/rules/<id>` | quy tắc (`?status=&node=&domain=`); duyệt bằng `{"status":"approved"}` |
+| `GET/POST /business/decisions`, `GET/PATCH /business/decisions/<id>` | quyết định |
+| `GET/POST /business/questions`, `POST /business/questions/<id>/answer` | câu hỏi cho người |
+| `GET /business/review-queue` | mọi thứ chờ người duyệt (bản nháp AI, quy tắc cần review, câu hỏi mở, phần tài liệu có code đã đổi) |
+| `GET /business/kb-status` | độ tươi của graph, chất lượng extract, số mục chờ duyệt, thống kê gọi MCP và câu hỏi không có kết quả |
+| `GET /business/owners`, `GET /business/ops-facts` | owner của system, dữ liệu vận hành |
 
-Người duyệt lấy từ header `X-Code-Map-User` nếu có.
+Người duyệt lấy từ header `X-Code-Map-User` nếu có; duyệt quy tắc/quyết định và trả lời câu hỏi bắt buộc có header này.
 
 Hiệu năng với schema lớn: backend bỏ node `COLUMN` và các cạnh cấu trúc khi
 dựng index (một lần cho mỗi lần extract), cache cây theo thời điểm sửa của

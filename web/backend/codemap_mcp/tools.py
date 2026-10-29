@@ -13,7 +13,10 @@ from typing import Any, Callable
 
 from code_tree_exporter.rag_export import compact
 
+from web.backend import knowledge
+
 from .business_view import business_lines
+from .knowledge_view import uncertain_lines
 from .retriever import EDGE_PRIORITY, GraphContext, Retriever
 from .workspace import Workspace
 
@@ -134,14 +137,26 @@ def _uncertain(workspace: Workspace, context: GraphContext) -> list[str]:
     return lines
 
 
-def _business(workspace: Workspace, context: GraphContext) -> list[str]:
+@dataclass
+class Knowledge:
+    """What people recorded about the nodes of an answer."""
+
+    lines: list[str]
+    uncertain: list[str]
+    owners: dict[str, dict[str, str]]
+
+
+def _knowledge(workspace: Workspace, context: GraphContext) -> Knowledge:
     labels = {node.stable_id: context.labels[node.id] for node in context.nodes}
+    stable_ids = [node.stable_id for node in context.nodes]
     with workspace.web() as db:
-        lines = business_lines(db, [node.stable_id for node in context.nodes], labels)
-    return ["", *lines] if lines else []
+        lines = business_lines(db, stable_ids, labels)
+        uncertain = uncertain_lines(db, stable_ids)
+        owners = knowledge.owners(db) if db is not None else {}
+    return Knowledge(["", *lines] if lines else [], uncertain, owners)
 
 
-def _systems(retriever: Retriever, context: GraphContext) -> list[str]:
+def _systems(retriever: Retriever, context: GraphContext, owners: dict[str, dict[str, str]] | None = None) -> list[str]:
     """Impact grouped by the system each node runs in (database for data objects, repository for code)."""
     ids = [node.id for node in context.nodes]
     if not ids:
@@ -171,10 +186,18 @@ def _systems(retriever: Retriever, context: GraphContext) -> list[str]:
             groups.setdefault(where.get(node.id, "?"), {}).setdefault(kind, []).append(f"{context.labels[node.id]} {node.name}")
     lines = ["", "## Impact by system (review with each system's owner)"]
     for system in sorted(groups):
-        lines.append(f"- {system}")
+        owner = (owners or {}).get(system)
+        lines.append(
+            f"- {system}"
+            + (f" (owner: {owner['team']}{', ' + owner['owner'] if owner.get('owner') else ''}"
+               f"{', ' + owner['contact'] if owner.get('contact') else ''})" if owner
+               else " (owner not in owners.csv)" if owners else "")
+        )
         for kind in ("entry points", "code", "data written", "data read/used", "external"):
             if groups[system].get(kind):
                 lines.append(f"  - {kind}: {', '.join(groups[system][kind][:25])}")
+    if not owners:
+        lines.append("- (who owns each system is unknown: add inputData/owners.csv)")
     return lines
 
 
@@ -184,7 +207,8 @@ def search(workspace: Workspace, arguments: dict[str, Any]) -> str:
     question = _text(arguments, "question")
     with workspace.retriever() as retriever:
         context = retriever.retrieve(question, mode="ask", max_context_chars=_detail(arguments))
-    return _answer(workspace, [context.text, *_business(workspace, context)], _uncertain(workspace, context))
+    known = _knowledge(workspace, context)
+    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain)
 
 
 def impact(workspace: Workspace, arguments: dict[str, Any]) -> str:
@@ -223,14 +247,11 @@ def impact(workspace: Workspace, arguments: dict[str, Any]) -> str:
         by_id = {node.id: node for node in nodes}
         seed_nodes = [by_id[node_id] for node_id in seed_ids if node_id in by_id]
         context = retriever.render(seed_nodes, nodes, edges, retriever.concepts_for_nodes(seed_ids), budget)
-        systems = _systems(retriever, context)
-    if not seed_ids:
-        return _answer(workspace, ["No graph node matches the target or files."], _uncertain(workspace, context))
-    return _answer(
-        workspace,
-        [context.text, *systems, *_business(workspace, context)],
-        _uncertain(workspace, context),
-    )
+        if not seed_ids:
+            return _answer(workspace, ["No graph node matches the target or files."], _uncertain(workspace, context))
+        known = _knowledge(workspace, context)
+        systems = _systems(retriever, context, known.owners)
+    return _answer(workspace, [context.text, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain)
 
 
 STRUCTURAL_EDGES = frozenset({"CONTAINS", "BELONGS_TO", "PROJECT_REFERENCE", "USES"})
@@ -261,8 +282,9 @@ def trace_flow(workspace: Workspace, arguments: dict[str, Any]) -> str:
     entry = _text(arguments, "entry")
     with workspace.retriever() as retriever:
         context = retriever.retrieve(entry, mode="flow", max_nodes=60, max_context_chars=_detail(arguments))
-        systems = _systems(retriever, context)
-    return _answer(workspace, [context.text, *systems, *_business(workspace, context)], _uncertain(workspace, context))
+        known = _knowledge(workspace, context)
+        systems = _systems(retriever, context, known.owners)
+    return _answer(workspace, [context.text, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain)
 
 
 def file_context(workspace: Workspace, arguments: dict[str, Any]) -> str:
@@ -277,24 +299,27 @@ def file_context(workspace: Workspace, arguments: dict[str, Any]) -> str:
         context = retriever.retrieve("", mode="file", file=path, lines=lines, max_context_chars=_detail(arguments))
     if not context.seeds:
         return _answer(workspace, [f"The graph declares nothing in {path}."], _uncertain(workspace, context))
-    return _answer(workspace, [context.text, *_business(workspace, context)], _uncertain(workspace, context))
+    known = _knowledge(workspace, context)
+    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain)
 
 
 def current_behavior(workspace: Workspace, arguments: dict[str, Any]) -> str:
     topic = _text(arguments, "topic")
     with workspace.retriever() as retriever:
         context = retriever.retrieve(topic, mode="ask", max_nodes=50, max_context_chars=_detail(arguments))
-    business = _business(workspace, context)
+    known = _knowledge(workspace, context)
+    business = known.lines
     guide = [
         "",
         "## How to use this",
-        "- Approved documentation and answered questions are what people confirmed; AI drafts are not.",
+        "- Approved rules/documentation, accepted decisions and answered questions are what people confirmed; "
+        "drafts, proposals and NEEDS REVIEW items are not.",
         "- Where the code ([E…]/[F…]) and the documentation ([D…]) disagree, report the difference as a question; "
         "do not decide which one is right.",
     ]
     if not business:
         guide.append("- No reviewed business documentation covers these nodes yet: everything here comes from code.")
-    return _answer(workspace, [context.text, *business, *guide], _uncertain(workspace, context))
+    return _answer(workspace, [context.text, *business, *guide], _uncertain(workspace, context) + known.uncertain)
 
 
 def check_terms(workspace: Workspace, arguments: dict[str, Any]) -> str:

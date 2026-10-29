@@ -1,0 +1,6 @@
+target,kind,value,note
+ORDER_HEADER,volume,~200M rows,Partitioned by month
+ORDER_LINE,volume,~1.2B rows,
+INVENTORY_RESERVATION,locking,Row lock during allocation batch,Avoid long UI transactions
+ORDER_DAILY,schedule,02:00-04:00 JST,Must finish before 05:00 shipping cut-off
+PAYMENT_TRANSACTION,sla,Written within 2 s of order submit,Payment gateway timeout is 10 s

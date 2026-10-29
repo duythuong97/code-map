@@ -791,8 +791,17 @@ def update_part(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any],
         if body["status"] != "approved":
             raise BusinessError("invalid_business", "status can only be set to approved")
         target["status"], target["reviewed_by"] = "approved", who
+        # Behaviour fingerprint of the nodes it describes: a later extract that changes them puts the part
+        # back in the review queue (web/backend/knowledge.py).
+        from web.backend.knowledge import fingerprint_of
+
+        nodes = target.get("nodes") if part.startswith("step:") else [
+            node for step in doc.get("steps", []) for node in step.get("nodes", [])
+        ]
+        target["fingerprint"] = fingerprint_of(db, nodes or [])
     else:
         target["status"], target["reviewed_by"] = "edited", who
+        target.pop("fingerprint", None)
     _save_flow(db, flow_id, item["feature_id"], doc)
     db.commit()
     return doc

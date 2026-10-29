@@ -29,6 +29,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .decoding import read_text_auto
+from .fingerprints import node_fingerprints
 
 from .serving_tables import add_business_edge, add_business_node, finish_serving_tables, write_serving_tables
 
@@ -155,6 +156,7 @@ def write_rag_database(
             _index_terms(rag)
             _add_concepts(rag, business)
             _concept_links_for_web(rag, web)
+            _knowledge_inputs(graph, web, business)
             engine = _graph_metadata(graph)
             metadata = {
                 "schema_version": RAG_SCHEMA_VERSION,
@@ -478,6 +480,40 @@ def _concept_links_for_web(rag: sqlite3.Connection, web: sqlite3.Connection) -> 
         "INSERT OR IGNORE INTO graph_business_semantic_links VALUES(?,?,?)",
         rag.execute("SELECT n.stable_id, l.semantic_id, l.reason FROM concept_links l JOIN nodes n ON n.id=l.node_id"),
     )
+
+
+def _knowledge_inputs(graph: sqlite3.Connection, web: sqlite3.Connection, business: _BusinessData) -> None:
+    """Node fingerprints (to send approved rules back to review when code changes), system owners
+    (``owners.csv``) and operational facts (``ops-facts.csv``: batch windows, volumes, SLAs)."""
+    web.executescript(
+        """
+        CREATE TABLE graph_fingerprints(node_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL);
+        CREATE TABLE graph_owners(system TEXT PRIMARY KEY, team TEXT NOT NULL, owner TEXT NOT NULL,
+          contact TEXT NOT NULL, notes TEXT NOT NULL);
+        CREATE TABLE graph_ops_facts(fact_id INTEGER PRIMARY KEY, target TEXT NOT NULL, node_id TEXT, kind TEXT NOT NULL,
+          value TEXT NOT NULL, note TEXT NOT NULL);
+        CREATE INDEX graph_ops_facts_node ON graph_ops_facts(node_id);
+        """
+    )
+    web.executemany("INSERT INTO graph_fingerprints VALUES(?,?)", sorted(node_fingerprints(graph).items()))
+    owners = {}
+    for row in business.rows("owners.csv"):
+        system = row.get("system", "")
+        if system:
+            owners[system] = (system, row.get("team", ""), row.get("owner", ""), row.get("contact", ""), row.get("notes", ""))
+    web.executemany("INSERT INTO graph_owners VALUES(?,?,?,?,?)", sorted(owners.values()))
+    by_stable = {node_id for (node_id,) in web.execute("SELECT node_id FROM graph_nodes")}
+    by_name: dict[str, list[str]] = {}
+    for node_id, name in web.execute("SELECT node_id, technical_name FROM graph_nodes WHERE node_type <> 'COLUMN'"):
+        by_name.setdefault(compact(name), []).append(node_id)
+    facts = []
+    for row in business.rows("ops-facts.csv"):
+        target = row.get("target", "")
+        if not target or not row.get("kind"):
+            continue
+        matches = [target] if target in by_stable else by_name.get(compact(target), [])
+        facts.append((target, matches[0] if len(matches) == 1 else None, row["kind"], row.get("value", ""), row.get("note", "")))
+    web.executemany("INSERT INTO graph_ops_facts(target,node_id,kind,value,note) VALUES(?,?,?,?,?)", facts)
 
 
 def _json(value: str | None) -> dict:
