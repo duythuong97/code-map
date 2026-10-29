@@ -173,6 +173,42 @@ từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test 
 `CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
 (`.github/workflows/ci.yml`) chạy test extractor, web, extension và frontend.
 
+## Graph diff: một thay đổi làm gì với hệ thống
+
+```text
+code-tree-exporter extract --config <cfg> --at origin/main --output out-base
+code-tree-exporter extract --config <cfg> --output out-head
+code-tree-exporter diff --base out-base --head out-head \
+    --plan docs/changes/ORD-123/impact.yaml --knowledge-db data/knowledge.sqlite [--format json] [--fail-on-unplanned]
+```
+
+So hai graph theo stable id và chỉ giữ thứ người review cần:
+- cạnh đọc/ghi/gọi/gọi API/job được thêm hoặc bỏ (kèm file:dòng);
+- node **đổi hành vi** (fingerprint khác: điều kiện, lời gọi hay tác động dữ liệu
+  đổi; chỉ dời dòng hoặc sửa comment thì không tính);
+- node thêm/xoá, cột thêm/xoá, issue mới của extractor.
+
+Có `--plan` (khối `impact.yaml` mà prompt `impact` sinh ra và người đã duyệt) thì
+mỗi thay đổi được đánh dấu trong hay ngoài kế hoạch, kèm danh sách mục trong kế
+hoạch mà thay đổi không chạm tới. Có `--knowledge-db` thì liệt kê quy tắc và tài
+liệu luồng bị ảnh hưởng; owner của từng system lấy từ `owners.csv`.
+
+```yaml
+change: ORD-123
+expected:
+  - {kind: node, name: PKG_ORDER.CANCEL_ORDER, action: modify}
+  - {kind: table, name: ORDER_LINE, action: write}
+  - {kind: file, name: order-db/order_flow.sql, action: modify}
+  - {kind: api, name: "POST /api/orders", action: test}   # chỉ cần test, không bắt buộc phải đổi
+uncertain:
+  - Batch ALLOCATE có đọc ORDER_LINE qua SQL động không?
+```
+
+Workflow mẫu cho repo nguồn (`aidd/templates/.github/workflows/codemap-pr.yml`)
+extract base và head của pull request, tìm `docs/changes/*/impact.yaml` trong PR,
+chạy diff và cập nhật một comment trên PR (giữ đúng một comment, nhận diện bằng
+`<!-- codemap-diff -->`).
+
 ## MCP server cho AI agent (Copilot, Claude Code, Cursor…)
 
 Kênh chính để AI agent dùng Code Map là MCP. Server đọc thư mục output của

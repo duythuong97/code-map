@@ -45,6 +45,20 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser.add_argument(
         "--list-source-types", action="store_true", help=argparse.SUPPRESS
     )
+    diff_parser = commands.add_parser(
+        "diff",
+        description="What a change did to the system: compare two extracts (base and head), optionally "
+        "against the approved impact.yaml, and name the rules, documents and owners it touches.",
+    )
+    diff_parser.add_argument("--base", required=True, help="Base extract output folder or graph.sqlite.")
+    diff_parser.add_argument("--head", required=True, help="Head extract output folder or graph.sqlite.")
+    diff_parser.add_argument("--plan", help="impact.yaml (or .json) of the change.")
+    diff_parser.add_argument("--knowledge-db", help="knowledge.sqlite: business rules and flow documents to check.")
+    diff_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    diff_parser.add_argument("--out", help="Write the report here instead of stdout.")
+    diff_parser.add_argument(
+        "--fail-on-unplanned", action="store_true", help="Exit 1 when a change is outside the plan."
+    )
     stale_parser = commands.add_parser(
         "stale",
         description="Compare an extract with the working tree: changed/new files, new commits, affected nodes.",
@@ -110,6 +124,27 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps({"output": str(output), "counts": counts}, ensure_ascii=False))
             return 0
+        if args.command == "diff":
+            from .diff import affected_knowledge, compare_with_plan, graph_diff, load_plan, to_markdown
+            from .sqlite_graph import resolve_database_path
+
+            head_graph = resolve_database_path(Path(args.head))
+            result = graph_diff(resolve_database_path(Path(args.base)), head_graph)
+            plan = compare_with_plan(result, load_plan(Path(args.plan))) if args.plan else None
+            knowledge = affected_knowledge(
+                result,
+                Path(args.knowledge_db) if args.knowledge_db else None,
+                head_graph.with_name("codemap-web.sqlite"),
+            )
+            if args.format == "json":
+                text = json.dumps({"diff": result, "plan": plan, "knowledge": knowledge}, ensure_ascii=False, indent=2)
+            else:
+                text = to_markdown(result, plan, knowledge)
+            if args.out:
+                Path(args.out).write_text(text, encoding="utf-8")
+            else:
+                print(text)
+            return 1 if args.fail_on_unplanned and plan and plan["unplanned"] else 0
         if args.command == "stale":
             from .sqlite_graph import resolve_database_path
             from .stale import stale_report, summary_line
