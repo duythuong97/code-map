@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the demo sources; the web app and the VS Code extension read the output folder directly."""
+"""Extract the demo sources; the web app and the MCP server read the output folder directly."""
 from __future__ import annotations
 
 import argparse

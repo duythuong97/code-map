@@ -49,14 +49,6 @@ jobs:
             --dependencies "$RUNNER_TEMP/corpus/truth/all_dependencies.csv" | tee -a "$GITHUB_STEP_SUMMARY"
           python tools/corpus-gen baseline --corpus "$RUNNER_TEMP/corpus" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: VS Code extension tests
-        working-directory: vscode-extension
-        env:
-          PYTHON: python
-        run: |
-          npm ci
-          npm test
-
       - name: Frontend build and tests
         working-directory: web/frontend
         run: |

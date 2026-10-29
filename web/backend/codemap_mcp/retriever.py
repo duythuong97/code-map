@@ -1,11 +1,8 @@
-"""Graph RAG retrieval over ``codemap-rag.sqlite`` (Python port of ``vscode-extension/src/core/retriever.ts``).
+"""Graph RAG retrieval over ``codemap-rag.sqlite``.
 
 Find seed nodes for a question (business dictionary + name index), walk the
 graph a few hops and render the facts as numbered lines ([C1] concepts, [N1]
 nodes, [E1] relations, [F1] flows, [I1] issues) that an answer must cite.
-
-The two implementations must give the same text for the same database;
-``vscode-extension/test/retriever.test.ts`` compares them.
 """
 from __future__ import annotations
 
@@ -300,7 +297,7 @@ class Retriever:
         direction: str,
         keep: Callable[[GraphEdge], bool] | None = None,
     ) -> tuple[dict[int, None], list[GraphEdge]]:
-        """Bounded walk; ``keep`` (Python only, not in the TS twin) drops edges before they are counted."""
+        """Bounded walk; ``keep`` drops edges before they are counted."""
         node_ids: dict[int, None] = dict.fromkeys(seeds)
         edges: dict[int, GraphEdge] = {}
         frontier = list(seeds)

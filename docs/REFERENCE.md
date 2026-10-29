@@ -2,24 +2,22 @@
 
 Cách cài và chạy nhanh nằm ở [README](../README.md). Tài liệu này mô tả chi tiết config, output, hiệu năng và các lệnh.
 
-Repository gồm ba phần (code-tree đã gộp vào đây):
+Repository gồm hai phần (code-tree đã gộp vào đây):
 
 - **`extractor/`**: package `code_tree_exporter`. Scan source Angular, .NET
   API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi ra `graph.sqlite` cùng
   `codemap-rag.sqlite`.
-- **`web/`**: backend Flask và UI React. Đọc thẳng output của extract và hiển
-  thị flow, lineage, evidence.
-- **`vscode-extension/`**: `@codemap` trong VS Code Chat (Graph RAG) và map
-  luồng nghiệp vụ vẽ ngay trong VS Code.
+- **`web/`**: backend Flask (REST cho UI và MCP server cho AI agent) và UI React.
+  Đọc thẳng output của extract và hiển thị flow, lineage, evidence.
 
-Thư mục dùng chung: `shared/` (fixtures và hợp đồng dữ liệu giữa các phần),
+Thư mục dùng chung: `shared/` (fixture cho test của extractor và web),
 `examples/` (source demo, input-data, catalog, `demo-config.json`) và
 `scripts/`.
 
 ```text
 source ──extract──▶ output/<run>/ ─┬─ graph.sqlite         (graph đầy đủ của engine)
                                    ├─ codemap-web.sqlite   ──▶ web (đọc trực tiếp)
-                                   └─ codemap-rag.sqlite   ──▶ VS Code @codemap
+                                   └─ codemap-rag.sqlite   ──▶ MCP server (AI agent)
 ```
 
 Không còn bước import. Web mở thẳng thư mục output, ghi chú và gán thuật ngữ do
@@ -263,14 +261,7 @@ có thêm `codemap_get_flow_doc`, `codemap_propose_flow_doc`, `codemap_propose_r
 hàng chờ duyệt (`#/review`), không bao giờ ở trạng thái đã duyệt. Mọi lần gọi tool được ghi vào bảng `mcp_calls` của
 `knowledge.sqlite`, kể cả câu hỏi không ra kết quả, để biết KB đang thiếu gì.
 
-Retriever của server là bản Python của `vscode-extension/src/core/retriever.ts`;
-`vscode-extension/test/retriever.test.ts` kiểm tra hai bản cho ra cùng text.
-
-## Graph RAG trong VS Code (extension)
-
-Từ khi Copilot dùng được MCP, extension chỉ còn cần cho map panel; phần chat
-`@codemap` được giữ để tương thích nhưng không phát triển thêm.
-
+## Dữ liệu cho Graph RAG (`codemap-rag.sqlite`)
 
 Mỗi lần extract đều ghi thêm `codemap-rag.sqlite` cạnh `graph.sqlite`. File này
 gồm graph đã lược gọn và dữ liệu nghiệp vụ trong `inputData`: từ điển nghiệp vụ,
@@ -281,15 +272,8 @@ tên bảng/cột ja/en, jobnet. Kèm theo là chỉ mục từ khoá. Muốn t�
 PYTHONPATH=extractor python -m code_tree_exporter rag-export --graph output/demo --input-data examples/input-data
 ```
 
-Extension `vscode-extension/` đọc file này và trả lời bằng model chat của VS Code:
-`@codemap hủy đơn hàng ghi vào bảng nào?`, `/impact`, `/flow`, `/explain`,
-`/gaps`. Ngoài ra có tool `#codemap` cho Agent mode. Cách build và cài xem
-[vscode-extension/README.md](../vscode-extension/README.md).
-
-Đo trên nopCommerce (17.585 node, 83.485 cạnh):
-- Xuất file: 14 giây, file 47MB (graph gốc 223MB).
-- Mỗi câu hỏi: 13–72 ms.
-- RAM của extension: 47–107MB.
+MCP server đọc file này. Đo trên nopCommerce (17.585 node, 83.485 cạnh): xuất
+file mất 14 giây, file 47MB (graph gốc 223MB).
 
 ## V3 bootstrap
 
@@ -706,10 +690,9 @@ web/
   backend/knowledge.py  # quy tắc, quyết định, câu hỏi, kiểm tra lại khi code đổi (python -m web.backend.kb)
   frontend/             # React UI (src/business: tài liệu nghiệp vụ và trang node; src/code-flow: node graph, panel chi tiết)
   configs/, ecosystem.config.js (pm2), requirements.txt
-vscode-extension/       # map panel; @codemap/tools cũ (MCP thay thế) (npm test, npm run package)
 tools/corpus-gen/       # corpus có đáp án + chấm điểm extract và phân tích ảnh hưởng
 docs/REFERENCE.md       # tài liệu này
-shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu
+shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors, graph mẫu, golden snapshot
 examples/
   sample-source/        # source demo
   input-data/           # CSV nghiệp vụ (từ điển, jobnet, tên JA/EN của bảng, ...)

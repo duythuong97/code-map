@@ -1,9 +1,9 @@
 """Write ``codemap-rag.sqlite``: the graph plus business data, shaped for Graph RAG.
 
-The VS Code extension (``vscode-extension/``) answers questions by looking up
+The MCP server (``web/backend/codemap_mcp``) answers questions by looking up
 seed nodes in ``terms``/``concept_terms``, walking ``edges`` a few hops and
-handing the facts (with file:line evidence) to the chat model. Everything it
-needs is precomputed here so the extension only runs indexed lookups.
+handing the facts (with file:line evidence) to the agent. Everything it needs
+is precomputed here so a question only runs indexed lookups.
 
 Business data comes from the ``inputData`` folder when present:
 
@@ -12,9 +12,7 @@ Business data comes from the ``inputData`` folder when present:
 * ``localized-metadata.csv``  extra localized names
 * ``jobnet.csv`` / ``executable-mappings.csv``  batch job networks
 
-``tokens`` must stay identical to ``tokens`` in
-``vscode-extension/src/core/text.ts``; ``shared/fixtures/rag-token-vectors.json``
-pins both to the same vectors.
+``shared/fixtures/rag-token-vectors.json`` pins what ``tokens`` returns.
 """
 from __future__ import annotations
 

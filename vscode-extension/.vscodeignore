@@ -1,6 +1,0 @@
-**
-!dist/extension.js
-!dist/sql-wasm.wasm
-!dist/map.js
-!package.json
-!README.md
