@@ -31,14 +31,24 @@ def _revalidated(db) -> None:
     knowledge.revalidate(db, knowledge.graph_stamp(db))
 
 
+def _named(db, items):
+    """Add {node id: technical name} so the UI shows ORDER_HEADER instead of table:DB1:ORDER_HEADER."""
+    single = isinstance(items, dict)
+    rows = [items] if single else items
+    names = knowledge.node_names(db, [node for row in rows for node in row.get("node_ids") or []])
+    for row in rows:
+        row["node_names"] = {node: names.get(node, node).split(" ", 1)[-1] for node in row.get("node_ids") or []}
+    return rows[0] if single else rows
+
+
 @bp.get("/business/rules")
 def rules_list():
     with connection() as db:
         _revalidated(db)
-        return jsonify(knowledge.list_rules(
+        return jsonify(_named(db, knowledge.list_rules(
             db, status=request.args.get("status") or None, node_id=request.args.get("node") or None,
             domain=request.args.get("domain") or None,
-        ))
+        )))
 
 
 @bp.post("/business/rules")
@@ -65,9 +75,9 @@ def rules_update(rule_id):
 @bp.get("/business/decisions")
 def decisions_list():
     with connection() as db:
-        return jsonify(knowledge.list_decisions(
+        return jsonify(_named(db, knowledge.list_decisions(
             db, status=request.args.get("status") or None, node_id=request.args.get("node") or None,
-        ))
+        )))
 
 
 @bp.post("/business/decisions")
@@ -93,9 +103,9 @@ def decisions_update(decision_id):
 @bp.get("/business/questions")
 def questions_list():
     with connection() as db:
-        return jsonify(knowledge.list_questions(
+        return jsonify(_named(db, knowledge.list_questions(
             db, status=request.args.get("status") or None, node_id=request.args.get("node") or None,
-        ))
+        )))
 
 
 @bp.post("/business/questions")
@@ -119,6 +129,8 @@ def questions_answer(question_id):
 def review_queue():
     with connection() as db:
         queue = knowledge.review_queue(db)
+        for key in ("rules_draft", "rules_needs_review", "decisions_proposed", "questions_open"):
+            _named(db, queue[key])
         return jsonify({**queue, "counts": knowledge.queue_counts(queue)})
 
 

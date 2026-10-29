@@ -15,6 +15,7 @@ from typing import Any
 
 from web.backend.storage import GraphNotReady
 
+from . import write_tools  # noqa: F401  (registers the get/propose tools in TOOLS)
 from .prompts import PROMPTS, render_prompt
 from .tools import TOOLS, Tool, ToolError
 from .workspace import Workspace

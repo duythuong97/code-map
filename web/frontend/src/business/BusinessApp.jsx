@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Monitor, Moon, PanelLeft, Sun } from "lucide-react";
+import { Activity, Inbox, Monitor, Moon, PanelLeft, Scale, Sun, UserRound } from "lucide-react";
 import "./business.css";
-import { businessApi } from "./api.js";
+import { businessApi, currentUser, setCurrentUser } from "./api.js";
 import NavTree from "./NavTree.jsx";
 import SearchBox from "./SearchBox.jsx";
 import FeaturePage from "./FeaturePage.jsx";
 import FlowView from "./FlowView.jsx";
 import NodePage from "./NodePage.jsx";
 import { ExportDialog, ImportDialog } from "./AiDialogs.jsx";
+import { KbStatusPage, KnowledgePage, ReviewPage } from "./KnowledgePages.jsx";
 import { parseRoute, routeHash } from "./text.js";
 
 
@@ -35,6 +36,16 @@ function ThemeToggle() {
   </span>;
 }
 
+// The name recorded on approvals and answers (sent as X-Code-Map-User).
+function UserName() {
+  const [name, setName] = useState(currentUser);
+  return <label className="bm-user" title="Tên của bạn: ghi lại người duyệt, người trả lời">
+    <UserRound size={14} aria-hidden="true" />
+    <input value={name} placeholder="Tên của bạn" aria-label="Tên của bạn" maxLength={100}
+      onChange={(event) => { setName(event.target.value); setCurrentUser(event.target.value.trim()); }} />
+  </label>;
+}
+
 function findItem(tree, id) {
   const stack = [...(tree?.menus || [])];
   while (stack.length) {
@@ -54,6 +65,7 @@ export default function BusinessApp() {
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [waiting, setWaiting] = useState(null);
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(window.location.hash));
@@ -64,6 +76,12 @@ export default function BusinessApp() {
   useEffect(() => {
     businessApi.tree().then(setTree).catch((reason) => setError(reason.message));
   }, []);
+
+  // How much waits for a person; refreshed when the page changes (approving elsewhere lowers it).
+  useEffect(() => {
+    businessApi.reviewQueue().then((queue) => setWaiting(Object.values(queue.counts || {}).reduce((sum, value) => sum + value, 0)))
+      .catch(() => setWaiting(null));
+  }, [route.view, refresh]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -105,7 +123,13 @@ export default function BusinessApp() {
         <a className="bm-logo" href="#/"><span className="bm-logo-mark" aria-hidden="true" />Code Map</a>
       </span>
       <SearchBox onPick={pickSearch} />
-      <span className="bm-top-r"><ThemeToggle /></span>
+      <span className="bm-top-r">
+        <a className={`bm-toplink${route.view === "review" ? " on" : ""}`} href="#/review"><Inbox size={14} /> Chờ duyệt{waiting ? <b>{waiting}</b> : null}</a>
+        <a className={`bm-toplink${route.view === "knowledge" ? " on" : ""}`} href="#/knowledge"><Scale size={14} /> Quy tắc</a>
+        <a className={`bm-toplink${route.view === "kb" ? " on" : ""}`} href="#/kb"><Activity size={14} /> KB</a>
+        <UserName />
+        <ThemeToggle />
+      </span>
     </header>
     <div className={`bm-body${collapsed ? " collapsed" : ""}${drawer ? " drawer" : ""}`}>
       {tree ? <NavTree tree={tree} selectedId={selectedId} onSelect={openItem} /> : <nav className="bm-nav"><p className="bm-muted bm-pad">{error || "Đang tải cây tính năng…"}</p></nav>}
@@ -113,6 +137,12 @@ export default function BusinessApp() {
       <main className="bm-main">
         {error ? <div className="bm-page"><p className="bm-error">{error}</p></div>
           : !tree ? null
+            : route.view === "review"
+              ? <div className="bm-page-wrap"><ReviewPage key={refresh} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} notify={setToast} /></div>
+            : route.view === "knowledge"
+              ? <div className="bm-page-wrap"><KnowledgePage onOpenNode={(id) => go("node", id)} notify={setToast} /></div>
+            : route.view === "kb"
+              ? <div className="bm-page-wrap"><KbStatusPage onReview={() => go("review")} /></div>
             : route.view === "flow" && selectedId
               ? <FlowView key={`${selectedId}:${refresh}`} flowId={selectedId} onTree={onTree} onOpenItem={openItem} onOpenNode={(id) => go("node", id)} onExport={exportDialog} onImport={importDialog} notify={setToast} />
               : route.view === "node" && selectedId

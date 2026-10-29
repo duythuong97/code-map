@@ -99,7 +99,7 @@ export function typeLabel(nodeType = "") {
 
 // Hash routes: #/feature/<id>, #/flow/<id>, #/node/<node_id>. The old #/explore lands on the home page.
 export function parseRoute(hash = "") {
-  const match = String(hash).replace(/^#/, "").match(/^\/(feature|flow|node)(?:\/(.*))?$/);
+  const match = String(hash).replace(/^#/, "").match(/^\/(feature|flow|node|review|knowledge|kb)(?:\/(.*))?$/);
   if (!match) return { view: "home", id: null };
   if (!match[2]) return { view: match[1], id: null };
   try {
@@ -109,6 +109,9 @@ export function parseRoute(hash = "") {
   }
 }
 
+const PAGES = new Set(["review", "knowledge", "kb"]);
+
 export function routeHash(view, id) {
-  return id ? `#/${view}/${encodeURIComponent(id)}` : "#/";
+  if (id) return `#/${view}/${encodeURIComponent(id)}`;
+  return PAGES.has(view) ? `#/${view}` : "#/";
 }

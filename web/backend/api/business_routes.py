@@ -6,6 +6,8 @@ cookies; the reviewer name comes from the optional ``X-Code-Map-User`` header.
 """
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 from flask import jsonify, request
 
 from web.backend.api import business
@@ -62,7 +64,8 @@ def _body(limit: int) -> dict:
 
 
 def _who() -> str:
-    return (request.headers.get("X-Code-Map-User") or "").strip()[:100]
+    """The reviewer's name; percent-encoded by the UI because HTTP headers cannot carry "Nguyễn"."""
+    return unquote(request.headers.get("X-Code-Map-User") or "").strip()[:100]
 
 
 def _flag(name: str) -> bool:

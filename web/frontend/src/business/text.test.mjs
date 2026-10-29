@@ -55,6 +55,11 @@ assert.deepEqual(parseRoute("#/explore"), { view: "home", id: null });
 assert.deepEqual(parseRoute("#/flow/100%"), { view: "flow", id: "100%" });
 assert.deepEqual(parseRoute("#/node/procedure%3ADB1%3APKG.P"), { view: "node", id: "procedure:DB1:PKG.P" });
 assert.deepEqual(parseRoute(""), { view: "home", id: null });
+assert.deepEqual(parseRoute("#/review"), { view: "review", id: null });
+assert.deepEqual(parseRoute("#/knowledge"), { view: "knowledge", id: null });
+assert.deepEqual(parseRoute("#/kb"), { view: "kb", id: null });
+assert.equal(routeHash("review"), "#/review");
+assert.equal(routeHash("feature", null), "#/");
 assert.equal(routeHash("feature", "feature:screen:web:orders/new"), "#/feature/feature%3Ascreen%3Aweb%3Aorders%2Fnew");
 
 // Expansion placement keeps existing nodes and puts new ones beside their neighbour without overlap.

@@ -1189,50 +1189,13 @@ def apply_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
     items = {item["id"]: item for item in feature["children"]}
     applied_parts = 0
     applied_flows = []
-    locked = {"edited", "approved"}
     _begin(db)
     for flow in pack["flows"]:
         if not isinstance(flow, dict) or not isinstance(flow.get("id"), str) or flow["id"] not in items:
             continue
         item = items[flow["id"]]
         doc = _stored_or_skeleton(db, index, item)
-        changed = 0
-        summary_now = doc.setdefault("summary", {"text": "", "status": "ai"})
-        if _str(flow.get("name"), 200) and summary_now.get("status") not in locked:
-            doc["name"] = _str(flow.get("name"), 200)
-        summary = flow.get("summary") if isinstance(flow.get("summary"), dict) else {}
-        if _str(summary.get("text"), 50_000) and not summary.get("locked") and summary_now.get("status") not in locked:
-            doc["summary"] = {"text": _str(summary.get("text"), 50_000), "status": "ai"}
-            changed += 1
-        incoming = {step["id"]: step for step in (flow.get("steps") if isinstance(flow.get("steps"), list) else [])
-                    if isinstance(step, dict) and isinstance(step.get("id"), str)}
-        for step in doc.get("steps", []):
-            new = incoming.get(step["id"])
-            if not new or new.get("locked") or step.get("status") in locked:
-                continue
-            rules = [rule for rule in new.get("rules") or [] if isinstance(rule, dict)] if isinstance(new.get("rules"), list) else []
-            if not (_str(new.get("name"), 200) or _str(new.get("text"), 50_000) or rules):
-                continue
-            # The step's nodes come from the graph (or a person); the AI only writes about them.
-            step.update({
-                "name": _str(new.get("name"), 200) or step.get("name", ""),
-                "actor": _str(new.get("actor"), 200) or step.get("actor", ""),
-                "text": _str(new.get("text"), 50_000),
-                "status": "ai",
-                "rules": [_import_rule(rule, resolve) for rule in rules[:50]],
-            })
-            changed += 1
-        edge = flow.get("edge_cases") if isinstance(flow.get("edge_cases"), dict) else {}
-        edge_items = _strs(edge.get("items"), 4000, 100)
-        if edge_items and not edge.get("locked") and doc.get("edge_cases", {}).get("status") not in locked:
-            doc["edge_cases"] = {"items": edge_items, "status": "ai"}
-            changed += 1
-        existing = {q.get("text") for q in doc.get("questions", [])}
-        for question in _strs(flow.get("questions"), 2000, 50):
-            if question not in existing:
-                existing.add(question)
-                doc.setdefault("questions", []).append({"id": f"q{len(doc['questions']) + 1}", "text": question, "answer": ""})
-                changed += 1
+        changed = _merge_flow(doc, flow, resolve)
         if changed:
             doc["export_id"] = _str((pack.get("export") if isinstance(pack.get("export"), dict) else {}).get("id"), 100)
             doc["imported_at"] = _now()
@@ -1241,6 +1204,92 @@ def apply_import(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any]
             applied_flows.append(item["id"])
     db.commit()
     return {**result, "applied": {"flows": applied_flows, "parts": applied_parts}}
+
+
+def _merge_flow(doc: dict[str, Any], flow: dict[str, Any], resolve) -> int:
+    """Write what AI produced for one flow into its document; parts a person edited or approved stay as they are.
+    Returns the number of parts written."""
+    locked = {"edited", "approved"}
+    changed = 0
+    summary_now = doc.setdefault("summary", {"text": "", "status": "ai"})
+    if _str(flow.get("name"), 200) and summary_now.get("status") not in locked:
+        doc["name"] = _str(flow.get("name"), 200)
+    summary = flow.get("summary") if isinstance(flow.get("summary"), dict) else {}
+    if _str(summary.get("text"), 50_000) and not summary.get("locked") and summary_now.get("status") not in locked:
+        doc["summary"] = {"text": _str(summary.get("text"), 50_000), "status": "ai"}
+        changed += 1
+    incoming = {step["id"]: step for step in (flow.get("steps") if isinstance(flow.get("steps"), list) else [])
+                if isinstance(step, dict) and isinstance(step.get("id"), str)}
+    for step in doc.get("steps", []):
+        new = incoming.get(step["id"])
+        if not new or new.get("locked") or step.get("status") in locked:
+            continue
+        rules = [rule for rule in new.get("rules") or [] if isinstance(rule, dict)] if isinstance(new.get("rules"), list) else []
+        if not (_str(new.get("name"), 200) or _str(new.get("text"), 50_000) or rules):
+            continue
+        # The step's nodes come from the graph (or a person); the AI only writes about them.
+        step.update({
+            "name": _str(new.get("name"), 200) or step.get("name", ""),
+            "actor": _str(new.get("actor"), 200) or step.get("actor", ""),
+            "text": _str(new.get("text"), 50_000),
+            "status": "ai",
+            "rules": [_import_rule(rule, resolve) for rule in rules[:50]],
+        })
+        changed += 1
+    edge = flow.get("edge_cases") if isinstance(flow.get("edge_cases"), dict) else {}
+    edge_items = _strs(edge.get("items"), 4000, 100)
+    if edge_items and not edge.get("locked") and doc.get("edge_cases", {}).get("status") not in locked:
+        doc["edge_cases"] = {"items": edge_items, "status": "ai"}
+        changed += 1
+    existing = {q.get("text") for q in doc.get("questions", [])}
+    for question in _strs(flow.get("questions"), 2000, 50):
+        if question not in existing:
+            existing.add(question)
+            doc.setdefault("questions", []).append({"id": f"q{len(doc['questions']) + 1}", "text": question, "answer": ""})
+            changed += 1
+    return changed
+
+
+def flow_document(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], flow_id: str) -> dict[str, Any]:
+    """A flow as an agent fills it: the stored document (or the graph's skeleton) with step ids, node refs,
+    and which parts are locked because a person edited or approved them."""
+    item = find_item(tree, flow_id)
+    if not item or item["kind"] != "flow":
+        raise BusinessError("not_found", "Flow not found", 404)
+    doc = _stored_or_skeleton(db, index, item)
+    node_ids = list(dict.fromkeys(node for step in doc.get("steps", []) for node in step.get("nodes", [])))
+    labels = feature_labels(index, node_ids)
+    exported, _ = _export_flow(index, doc, item, True, labels)
+    return {"flow": exported, "feature_id": item["feature_id"], "has_doc": item["has_doc"]}
+
+
+def propose_flow(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], flow_id: str, flow: Any,
+                 who: str) -> dict[str, Any]:
+    """An agent's draft for one flow (same shape as an exported flow), stored as "AI viết · chưa duyệt"."""
+    item = find_item(tree, flow_id)
+    if not item or item["kind"] != "flow":
+        raise BusinessError("not_found", "Flow not found", 404)
+    if not isinstance(flow, dict):
+        raise BusinessError("invalid_business", "document must be an object with summary, steps, edge_cases, questions")
+    _begin(db)
+    doc = _stored_or_skeleton(db, index, item)
+    node_ids = list(dict.fromkeys(node for step in doc.get("steps", []) for node in step.get("nodes", [])))
+    if item.get("entry_node_id"):
+        node_ids = list(dict.fromkeys([*node_ids, *index.reach([item["entry_node_id"]], MAX_FLOW_NODES)]))
+    resolve = _resolver(index, node_ids)
+    locked = [step.get("id") for step in doc.get("steps", []) if step.get("status") in {"edited", "approved"}]
+    changed = _merge_flow(doc, {**flow, "id": flow_id}, resolve)
+    texts = [str((flow.get("summary") or {}).get("text") or "") if isinstance(flow.get("summary"), dict) else ""]
+    texts += [str(step.get("text") or "") for step in flow.get("steps") or [] if isinstance(step, dict)]
+    unresolved = sorted({name for text in texts for name in re.findall(r"\[\[(.+?)\]\]", text) if resolve(name) is None})
+    no_evidence = sorted({str(rule.get("title") or "") for step in flow.get("steps") or [] if isinstance(step, dict)
+                          for rule in step.get("rules") or [] if isinstance(rule, dict) and not rule.get("evidence")})
+    if changed:
+        doc["proposed_by"], doc["proposed_at"] = who, _now()
+        _save_flow(db, flow_id, item["feature_id"], doc)
+    db.commit()
+    return {"flow_id": flow_id, "parts_written": changed, "locked_steps_kept": locked,
+            "unresolved_citations": unresolved, "rules_without_evidence": no_evidence}
 
 
 def _import_rule(rule: dict[str, Any], resolve) -> dict[str, Any]:

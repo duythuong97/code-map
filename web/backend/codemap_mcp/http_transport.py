@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from flask import Flask, Response, request
 
@@ -38,7 +38,7 @@ def register(app: Flask, paths: Callable[[], tuple[Path, Path]]) -> None:
         output, knowledge = paths()
         workspace = workspace_for(Path(output), Path(knowledge))
         context = CallContext(
-            user=(request.headers.get("X-Code-Map-User") or "").strip()[:100],
+            user=unquote(request.headers.get("X-Code-Map-User") or "").strip()[:100],
             allow_write=_write_allowed(),
         )
         reply = McpServer(workspace).handle_text(request.get_data(as_text=True), context)

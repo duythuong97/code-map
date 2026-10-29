@@ -1,5 +1,9 @@
 # Code Map
 
+**Dùng cho AIDD:** xem [docs/AIDD.md](docs/AIDD.md): cài bộ AIDD vào repo nguồn
+(`python aidd/init.py`), MCP server cho agent, quy trình hai làn, hàng chờ duyệt,
+graph diff cho pull request và cách đo chất lượng KB.
+
 Repository gồm ba phần (code-tree đã gộp vào đây):
 
 - **`extractor/`**: package `code_tree_exporter`. Scan source Angular, .NET
@@ -260,7 +264,10 @@ trích dẫn bằng `[N…]`/`[E…]`/`[D…]` và kết thúc bằng mục **No
 (issue của extractor, file đã sửa sau extract, giới hạn của phân tích tĩnh).
 Server cũng có MCP prompt cho từng bước (`as-is`, `decision-table`, `impact`,
 `review-requirement`, `document-flow`, `review-change`), hiện thành lệnh `/`
-trong Copilot. Mọi lần gọi tool được ghi vào bảng `mcp_calls` của
+trong Copilot. Khi được phép ghi (stdio `--allow-write`, HTTP có token) server
+có thêm `codemap_get_flow_doc`, `codemap_propose_flow_doc`, `codemap_propose_rule`,
+`codemap_propose_question`, `codemap_propose_decision`: mọi thứ agent ghi đều vào
+hàng chờ duyệt (`#/review`), không bao giờ ở trạng thái đã duyệt. Mọi lần gọi tool được ghi vào bảng `mcp_calls` của
 `knowledge.sqlite`, kể cả câu hỏi không ra kết quả, để biết KB đang thiếu gì.
 
 Retriever của server là bản Python của `vscode-extension/src/core/retriever.ts`;
@@ -702,9 +709,14 @@ extractor/
   pyproject.toml, requirements.txt
 web/
   backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
+  backend/codemap_mcp/  # MCP server (stdio: python -m web.backend.codemap_mcp; HTTP: <prefix>/mcp)
+  backend/knowledge.py  # quy tắc, quyết định, câu hỏi, kiểm tra lại khi code đổi (python -m web.backend.kb)
   frontend/             # React UI (src/business: tài liệu nghiệp vụ và trang node; src/code-flow: node graph, panel chi tiết)
   configs/, ecosystem.config.js (pm2), requirements.txt
-vscode-extension/       # @codemap, tools cho Agent mode (npm test, npm run package)
+vscode-extension/       # map panel; @codemap/tools cũ (MCP thay thế) (npm test, npm run package)
+aidd/                   # init.py + templates: AGENTS.md, prompt files, custom agents, docs/changes, PR workflow
+tools/corpus-gen/       # corpus có đáp án + chấm điểm extract và phân tích ảnh hưởng
+docs/AIDD.md            # quy trình AIDD với Code Map
 shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors Python ↔ TypeScript, graph mẫu
 examples/
   sample-source/        # source demo

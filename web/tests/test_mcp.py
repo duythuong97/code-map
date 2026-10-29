@@ -175,6 +175,70 @@ class McpTests(McpFixture):
         self.assertIn("ORDER_HEADER", replies[1]["result"]["content"][0]["text"])
 
 
+class McpProposalTests(McpFixture):
+    """Agents propose; nothing they write is approved."""
+
+    def writer(self) -> CallContext:
+        return CallContext(user="copilot:an", allow_write=True)
+
+    def write(self, tool: str, arguments: dict) -> dict:
+        reply = self.server.handle(rpc("tools/call", {"name": tool, "arguments": arguments}), self.writer())
+        return reply["result"]
+
+    def test_write_tools_are_hidden_without_permission(self) -> None:
+        hidden = [tool["name"] for tool in self.server.handle(rpc("tools/list"))["result"]["tools"]]
+        self.assertNotIn("codemap_propose_rule", hidden)
+        self.assertIn("codemap_get_flow_doc", hidden)
+        shown = [tool["name"] for tool in self.server.handle(rpc("tools/list"), self.writer())["result"]["tools"]]
+        self.assertIn("codemap_propose_rule", shown)
+        refused = self.server.handle(rpc("tools/call", {"name": "codemap_propose_rule", "arguments": {}}))
+        self.assertEqual(refused["error"]["code"], -32602)
+
+    def test_proposed_rule_question_and_decision_are_drafts(self) -> None:
+        result = self.write("codemap_propose_rule", {"title": "Đơn đã hủy không cập nhật lại", "evidence": "a/Orders.cs:42",
+                                                     "nodes": ["CancelOrder", "ORDER_HEADER"], "domain": "ORD"})
+        self.assertFalse(result["isError"], result)
+        self.assertIn("RULE-ORD-001 (draft)", result["content"][0]["text"])
+        missing = self.write("codemap_propose_rule", {"title": "x", "nodes": ["ORDER_HEADER"]})
+        self.assertTrue(missing["isError"])
+        unknown = self.write("codemap_propose_rule", {"title": "x", "evidence": "a:1", "nodes": ["NOPE_TABLE"]})
+        self.assertTrue(unknown["isError"])
+        self.assertIn("NOPE_TABLE", unknown["content"][0]["text"])
+        question = self.write("codemap_propose_question", {"text": "Hủy có hoàn tiền?", "nodes": ["CancelOrder"],
+                                                           "options": [{"title": "Có"}, {"title": "Không"}]})
+        self.assertIn("Q-0001 (open)", question["content"][0]["text"])
+        decision = self.write("codemap_propose_decision", {"title": "Cách hủy", "context": "c", "options": ["A", "B"]})
+        self.assertIn("DEC-0001 (proposed)", decision["content"][0]["text"])
+        with closing(sqlite3.connect(self.knowledge)) as db:
+            self.assertEqual(db.execute("SELECT status, source, proposed_by FROM biz_rules").fetchall(),
+                             [("draft", "ai", "copilot:an")])
+        # The proposal is visible to other agents as a draft, never as a confirmed rule.
+        text = self.text("codemap_current_behavior", {"topic": "CancelOrder"})
+        self.assertIn("RULE-ORD-001 (draft, NOT approved)", text)
+        self.assertIn("Draft rules not approved by anyone yet: RULE-ORD-001", text)
+
+    def test_flow_document_round_trip(self) -> None:
+        got = self.server.handle(rpc("tools/call", {"name": "codemap_get_flow_doc", "arguments": {"flow": "Allocate orders"}}))
+        text = got["result"]["content"][0]["text"]
+        self.assertIn("flow:job:DAILY:ALLOCATE", text)
+        import re
+        import yaml
+
+        document = yaml.safe_load(re.search(r"```yaml\n(.*?)```", text, re.S).group(1))["flow"]
+        document["summary"]["text"] = "Batch đêm phân bổ đơn."
+        document["steps"][0].update({"name": "Phân bổ", "text": "Gọi [[allocate]] rồi [[NoSuchThing]].",
+                                     "rules": [{"title": "Chỉ phân bổ đơn mở", "status": "ok"}]})
+        result = self.write("codemap_propose_flow_doc", {"flow_id": "flow:job:DAILY:ALLOCATE", "document": document})
+        message = result["content"][0]["text"]
+        self.assertIn("Wrote 2 part(s)", message)
+        self.assertIn("NoSuchThing", message)
+        self.assertIn("Chỉ phân bổ đơn mở", message)
+        with closing(sqlite3.connect(self.knowledge)) as db:
+            stored = json.loads(db.execute("SELECT doc_json FROM biz_flows").fetchone()[0])
+        self.assertEqual(stored["summary"]["status"], "ai")
+        self.assertEqual(stored["proposed_by"], "copilot:an")
+
+
 class McpHttpTests(McpFixture):
     """The same server over HTTP on the web app."""
 

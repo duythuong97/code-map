@@ -1,0 +1,17 @@
+{
+  "name": "__SYSTEM_NAME__",
+  "root": "..",
+  "output": "../../.codemap-output/__REPO_NAME__",
+  "inputData": "./input-data",
+  "sources": [
+    {
+      "name": "__REPO_NAME__",
+      "type": "__SOURCE_TYPE__",
+      "system": "__SYSTEM_NAME__",
+      "repository": "__REPO_NAME__",
+      "folders": ["."],
+      "database": "DB1",
+      "schema": "APP"
+    }
+  ]
+}
