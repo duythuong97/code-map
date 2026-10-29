@@ -1,9 +1,0 @@
-# Ảnh hưởng đã duyệt của thay đổi; PR check của Code Map so ảnh hưởng thực tế với file này.
-# kind: node | table | api | file ; name: tên kỹ thuật như trong graph ; action: modify | write | read | call | test
-change: <TICKET>
-expected:
-  - {kind: node, name: PKG_EXAMPLE.PROCEDURE_NAME, action: modify}
-  - {kind: table, name: EXAMPLE_TABLE, action: write}
-  - {kind: api, name: "POST /api/example", action: test}
-uncertain:
-  - <điều chưa chắc, ví dụ SQL động trong batch X>

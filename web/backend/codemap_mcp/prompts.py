@@ -1,8 +1,7 @@
 """MCP prompts: the AIDD workflow steps as slash commands (``/mcp.codemap.as-is`` in Copilot).
 
 Each prompt tells the agent which tools to call, what to produce and what it
-must leave to people. The same texts ship as ``.github/prompts/*.prompt.md``
-via ``code-tree-exporter aidd init`` for teams that prefer prompt files.
+must leave to people.
 """
 from __future__ import annotations
 

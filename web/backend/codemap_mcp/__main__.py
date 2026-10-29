@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Offer the propose_* tools (they only add drafts to the review queue).",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Print what the server sees (codemap_status) and exit: checks the setup before adding it to an agent.",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
     if not args.graph_output:
@@ -47,6 +52,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     server = McpServer(workspace)
     context = CallContext(user=args.user, allow_write=args.allow_write)
+    if args.self_test:
+        reply = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "codemap_status", "arguments": {"detail": "brief"}}}, context)
+        result = reply.get("result", {})
+        tools = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, context)["result"]["tools"]
+        sys.stdout.write(result.get("content", [{}])[0].get("text", str(reply)) + "\n\n")
+        sys.stdout.write(f"{len(tools)} tools: {', '.join(tool['name'] for tool in tools)}\n")
+        sys.stdout.write(f"knowledge db: {workspace.knowledge or 'not used'}\n")
+        return 1 if result.get("isError") else 0
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
     for raw in stdin:
