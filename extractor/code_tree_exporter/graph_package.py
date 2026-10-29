@@ -69,6 +69,8 @@ class GraphPackage:
     source_records: list[SourceRecord] = field(default_factory=list)
     source_descriptors: dict[str, dict[str, str]] = field(default_factory=dict)
     conflicts: list[tuple[str, str]] = field(default_factory=list)
+    # Extra graph.sqlite metadata rows (e.g. source_revisions, source_scopes).
+    extra_metadata: dict[str, object] = field(default_factory=dict)
     _identifiers_compacted: bool = False
 
     def deduplicate(self) -> None:
@@ -595,6 +597,7 @@ class GraphPackage:
             },
             "generatedAt": generated_at,
             "outputMode": output_mode,
+            "revisions": self.extra_metadata.get("source_revisions", {}),
             "packages": packages,
             "files": {
                 "database": "graph.sqlite",
@@ -1057,6 +1060,10 @@ def _write_sqlite_database(
                 (
                     "source_descriptors",
                     json.dumps(graph.source_descriptors, ensure_ascii=False),
+                ),
+                *(
+                    (key, json.dumps(value, ensure_ascii=False, sort_keys=True))
+                    for key, value in sorted(graph.extra_metadata.items())
                 ),
             ],
         )

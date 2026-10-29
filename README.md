@@ -32,7 +32,7 @@ cho Angular và để build UI.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-npm install --prefix extractor/code_tree_exporter/extractors/angular-extractor typescript
+npm ci --prefix extractor/code_tree_exporter/extractors/angular-extractor   # TypeScript 5.9 (7.x has no JS API)
 cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT, CODE_MAP_SOURCE_ROOT, CODE_MAP_GRAPH_OUTPUT
 .venv/bin/python scripts/run_demo_pipeline.py
 ```
@@ -142,6 +142,36 @@ input/output, materialized flow, resolution candidates và quality metrics mà
 không đổi stable/numeric ID của graph V2. Config chạy mẫu là
 [`examples/demo-config.json`](examples/demo-config.json); bốn CSV bootstrap nằm trong
 [`examples/catalog`](examples/catalog).
+
+## Phiên bản, độ tươi và extract lại nhanh
+
+Mỗi lần extract ghi commit của từng source (`git rev-parse HEAD`, branch, có
+sửa chưa commit hay không) vào `manifest.json` (`revisions`), metadata
+`source_revisions` của `graph.sqlite` và bảng `meta` của `codemap-rag.sqlite`.
+Bảng `sources` đã có sẵn sha256 của từng file.
+
+- **Graph còn đúng với code không:**
+  `code-tree-exporter stale --graph output/demo` liệt kê file đã sửa, đã xoá,
+  file mới, số commit mới của từng source và các node khai báo trong file đã
+  sửa. Exit code `0` khi graph còn khớp với working tree, `1` khi đã cũ.
+  MCP server dùng kết quả này để mở đầu mọi câu trả lời bằng một dòng tình
+  trạng KB.
+- **Extract lại nhanh (incremental):** source nào có code, config, input data,
+  phiên bản extractor và runtime (TypeScript, .NET SDK) không đổi thì dùng lại
+  package của lần trước thay vì parse lại. Cache nằm ở `<output>.cache/` (đổi
+  bằng `cacheDir`), giữ 3 bản gần nhất cho mỗi source. Tắt bằng
+  `"incremental": false` hoặc `CODE_TREE_INCREMENTAL=0`.
+- **Extract một commit cũ:** `extract --config <cfg> --at <rev> --output <thư mục>`
+  checkout bằng `git worktree` vào thư mục tạm (working tree không bị đụng tới).
+  Có thể chỉ định theo từng source `--at order-api=v1.2 --at order-db=abc123`,
+  hoặc theo ngày `--at-date 2026-01-31` (commit cuối trước ngày đó của mỗi repo).
+  Dùng cho graph diff của PR (base và head) và cho backtest.
+
+`shared/fixtures/golden/` chứa snapshot graph của `examples/sample-source`
+(`extractor/tests/test_golden_demo.py`). Đổi parser làm đổi graph thì test báo
+từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test với
+`CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
+(`.github/workflows/ci.yml`) chạy test extractor, web, extension và frontend.
 
 ## Graph RAG trong VS Code
 
@@ -289,7 +319,7 @@ tự replacement nên không âm thầm làm hỏng tiếng Nhật. `encoding` v
    ```powershell
    py -3.11 -m venv .venv
    .venv\Scripts\python -m pip install -r requirements.txt
-   npm install --prefix extractor\code_tree_exporter\extractors\angular-extractor typescript
+   npm ci --prefix extractor\code_tree_exporter\extractors\angular-extractor
    ```
 4. **UTF-8 cho Python** (khuyến nghị): biến môi trường hệ thống
    `PYTHONUTF8=1`. Engine đã tự đặt cho các tiến trình con, biến này giúp cả

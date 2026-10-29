@@ -155,12 +155,16 @@ def write_rag_database(
             _index_terms(rag)
             _add_concepts(rag, business)
             _concept_links_for_web(rag, web)
+            engine = _graph_metadata(graph)
             metadata = {
                 "schema_version": RAG_SCHEMA_VERSION,
                 "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-                "source_name": _graph_metadata(graph).get("source_name", ""),
-                "source_root": str(source_root or ""),
+                "graph_generated_at": engine.get("generated_at", ""),
+                "source_name": engine.get("source_name", ""),
+                "source_root": str(source_root or engine.get("source_root") or ""),
                 "input_data": str(input_root or ""),
+                # {source: {commit, branch, dirty, ...}} as JSON: how old the graph is.
+                "source_revisions": json.dumps(engine.get("source_revisions") or {}, ensure_ascii=False, sort_keys=True),
             }
             rag.executemany("INSERT INTO meta VALUES(?,?)", [(k, str(v)) for k, v in metadata.items()])
             web.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")

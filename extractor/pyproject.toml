@@ -26,6 +26,7 @@ code_tree_exporter = [
   "extractors/angular-extractor/main.mjs",
   "extractors/angular-extractor/main.py",
   "extractors/angular-extractor/package.json",
+  "extractors/angular-extractor/package-lock.json",
   "extractors/dotnet-api-extractor/main.py",
   "extractors/dotnet-api-extractor/*.cs",
   "extractors/dotnet-api-extractor/*.csproj",

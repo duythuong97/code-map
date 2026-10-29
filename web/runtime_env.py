@@ -13,9 +13,11 @@ EXTRACTOR_ROOT = PROJECT_ROOT / "extractor"
 if str(EXTRACTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(EXTRACTOR_ROOT))
 
-if not ENV_FILE.is_file():
-    raise RuntimeError(f"Missing dotenv file: {ENV_FILE}")
-load_dotenv(ENV_FILE, override=True)
+# Settings come from .env when there is one; variables already exported in the
+# process (CI, tests, pm2) work without it. A missing setting still fails in
+# required_env with its name.
+if ENV_FILE.is_file():
+    load_dotenv(ENV_FILE, override=True)
 
 
 def required_env(name: str) -> str:

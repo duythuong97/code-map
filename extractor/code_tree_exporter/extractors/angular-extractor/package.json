@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Angular CSV graph extractor using the TypeScript Compiler API.",
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
   "peerDependencies": {
-    "typescript": ">=5.0.0"
+    "typescript": ">=5.0.0 <7"
   },
   "bin": {
     "code-map-angular-extractor": "./main.mjs"

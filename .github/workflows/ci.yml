@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Install
+        run: |
+          python -m pip install -r requirements.txt
+          npm ci --prefix extractor/code_tree_exporter/extractors/angular-extractor
+          sed -e "s|/absolute/path/to/code-map|$GITHUB_WORKSPACE|g" .env.example > .env
+
+      - name: Extractor tests (incl. golden snapshots)
+        run: python -m unittest discover -s extractor/tests -t extractor
+
+      - name: Web backend tests
+        run: python -m unittest discover -s web/tests -t .
+
+      - name: Demo extract (all sources)
+        run: python scripts/run_demo_pipeline.py
+
+      - name: VS Code extension tests
+        working-directory: vscode-extension
+        env:
+          PYTHON: python
+        run: |
+          npm ci
+          npm test
+
+      - name: Frontend build and tests
+        working-directory: web/frontend
+        run: |
+          npm ci
+          npm run test:graph
+          npm run test:business
+          npm run build
+
+      # demo-full.json needs .NET, which a contributor may not have; CI records it once.
+      - name: Record the .NET golden snapshot when it is missing
+        if: hashFiles('shared/fixtures/golden/demo-full.json') == ''
+        env:
+          CODE_MAP_UPDATE_GOLDEN: "1"
+        run: python -m unittest extractor.tests.test_golden_demo.GoldenDemoTests.test_all_sources
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('shared/fixtures/golden/demo-full.json') != ''
+        with:
+          name: golden-snapshots
+          path: shared/fixtures/golden/

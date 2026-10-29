@@ -32,11 +32,20 @@ function argValue(name) {
 
 function loadTypeScript() {
   if (!process.env.TYPESCRIPT_PATH) throw new Error('Missing required environment variable: TYPESCRIPT_PATH');
+  let ts;
   try {
-    return require(process.env.TYPESCRIPT_PATH);
+    ts = require(process.env.TYPESCRIPT_PATH);
   } catch {
-    throw new Error(`Cannot load TypeScript from TYPESCRIPT_PATH: ${process.env.TYPESCRIPT_PATH}`);
+    ts = null;
   }
+  // TypeScript 7 (native compiler) ships no JavaScript compiler API.
+  if (!ts || typeof ts.createProgram !== 'function') {
+    throw new Error(
+      `Cannot load the TypeScript compiler API from TYPESCRIPT_PATH: ${process.env.TYPESCRIPT_PATH}. ` +
+      'TypeScript 5.x or 6.x is required (7.x has no JavaScript API); run npm ci in the angular-extractor folder.',
+    );
+  }
+  return ts;
 }
 
 function loadConfig(configPath) {

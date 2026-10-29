@@ -18,6 +18,7 @@ from .contract.graph_contract import normalize_repository_path
 from .decoding import SourceDecodingError, decode_source, encoding_for
 from .env_loader import expand_env_json, load_dotenv
 from .extractors import ExtractorSpec, extractor_spec
+from . import incremental
 from .extractors.dotnet_runner import ensure_worker_built
 from .graph_package import (
     GraphPackage,
@@ -27,6 +28,7 @@ from .graph_package import (
 )
 from .linker import run_linker
 from .rag_export import write_rag_database
+from .revisions import source_revisions, source_scopes
 from .v3.catalog import prepare_catalog
 from .v3.hierarchy import enrich_hierarchy
 from .v3.publisher import publish_v3
@@ -39,6 +41,7 @@ class _ExtractionJob:
     extractor_config: dict
     package_output: Path
     valid_paths: list[str]
+    file_hashes: list[tuple[str, str]]
 
 
 _BLOCKED_DIRECTORIES = frozenset(
@@ -62,10 +65,26 @@ _BLOCKED_DIRECTORIES = frozenset(
 )
 
 
-def run_pipeline(config_path: Path) -> Path:
+def run_pipeline(
+    config_path: Path,
+    *,
+    root_override: Path | None = None,
+    output_override: Path | None = None,
+    display_root: Path | None = None,
+) -> Path:
+    """Extract every configured source into ``output``.
+
+    ``root_override``/``output_override`` replace the config's ``root`` and
+    ``output`` (``extract --at`` runs on a git worktree of an older commit);
+    ``display_root`` is the root recorded for stale checks in that case.
+    """
     config_path = config_path.expanduser().resolve()
     load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
     config = _load_config(config_path)
+    if root_override is not None:
+        config["root"] = str(root_override.resolve())
+    if output_override is not None:
+        config["output"] = str(output_override.expanduser().resolve())
     if config.get("lowPriority", True) is not False:
         lower_process_priority()
     root = _absolute_directory(config, "root")
@@ -98,6 +117,13 @@ def run_pipeline(config_path: Path) -> Path:
             "Missing runtime for configured sources: " + "; ".join(missing_runtimes)
         )
     graph = GraphPackage()
+    graph.extra_metadata.update(
+        {
+            "source_root": str((display_root or root).resolve()),
+            "source_revisions": source_revisions(root, validated_sources),
+            "source_scopes": source_scopes(validated_sources),
+        }
+    )
     for source in validated_sources:
         graph.register_source(
             str(source["name"]),
@@ -181,6 +207,10 @@ def run_pipeline(config_path: Path) -> Path:
                     extractor_config=extractor_config,
                     package_output=package_output,
                     valid_paths=valid_paths,
+                    file_hashes=[
+                        (record.relative_path, record.raw_sha256)
+                        for record in source_records
+                    ],
                 )
             )
 
@@ -188,8 +218,42 @@ def run_pipeline(config_path: Path) -> Path:
         # run concurrently; the .NET worker DLLs are shared build outputs, so
         # they must be pre-built once, sequentially, before any source of
         # that type runs in parallel.
-        _prewarm_dotnet_workers(jobs)
-        results = _run_extractors_parallel(jobs, limits["maxParallelExtractors"])
+        cache = (
+            incremental.cache_root(config, output)
+            if incremental.enabled(config)
+            else None
+        )
+        keys = _incremental_keys(jobs) if cache else {}
+        results: dict[str, tuple[bool, list[dict[str, object]]]] = {}
+        for job in jobs:
+            cached = (
+                incremental.restore(
+                    cache, job.source_name, keys[job.source_name], job.package_output
+                )
+                if cache
+                else None
+            )
+            if cached is not None:
+                results[job.source_name] = (True, cached)
+        pending = [job for job in jobs if job.source_name not in results]
+        _prewarm_dotnet_workers(pending)
+        fresh = _run_extractors_parallel(pending, limits["maxParallelExtractors"])
+        results.update(fresh)
+        if cache:
+            for job in pending:
+                extracted, issues = fresh[job.source_name]
+                if extracted:
+                    incremental.store(
+                        cache,
+                        job.source_name,
+                        keys[job.source_name],
+                        job.package_output,
+                        issues,
+                    )
+        graph.extra_metadata["incremental"] = {
+            "reused": sorted(set(results) - set(fresh)),
+            "extracted": sorted(fresh),
+        }
         failures = [
             _failure_summary(job.source_name, issues)
             for job in jobs
@@ -276,6 +340,36 @@ def run_pipeline(config_path: Path) -> Path:
             )
         replace_directory(final_staging, output)
     return output
+
+
+def configured_sources(config_path: Path) -> tuple[Path, list[dict]]:
+    """The config's root and validated sources (for ``extract --at``)."""
+    config_path = config_path.expanduser().resolve()
+    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
+    config = _load_config(config_path)
+    root = _absolute_directory(config, "root")
+    sources = config.get("sources")
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("sources must be a non-empty array")
+    return root, [_validate_source(source, index) for index, source in enumerate(sources)]
+
+
+def _incremental_keys(jobs: list[_ExtractionJob]) -> dict[str, str]:
+    dotnet_types = set(_DOTNET_WORKER_PROJECTS) | _SQL_SOURCE_TYPES
+    runtime = ""
+    if any(job.spec.config_type in dotnet_types for job in jobs):
+        runtime = incremental.dotnet_runtime(
+            os.environ.get("CODE_TREE_DOTNET") or shutil.which("dotnet")
+        )
+    return {
+        job.source_name: incremental.job_key(
+            config_type=job.spec.config_type,
+            extractor_config=job.extractor_config,
+            file_hashes=job.file_hashes,
+            runtime=runtime if job.spec.config_type in dotnet_types else "",
+        )
+        for job in jobs
+    }
 
 
 def _validate_graph_index(config: dict) -> None:
@@ -1167,6 +1261,17 @@ def _typescript_path(root: Path, folders: list | None = None) -> str:
         ]
     )
     for candidate in candidates:
-        if (candidate / "package.json").is_file():
+        if (candidate / "package.json").is_file() and _typescript_major(candidate) < 7:
             return str(candidate)
     return "typescript"
+
+
+def _typescript_major(package: Path) -> int:
+    """TypeScript 7 is the native (Go) compiler and has no JavaScript compiler
+    API (``ts.createProgram``), so a source repository that moved to it must
+    fall through to the extractor's own pinned TypeScript."""
+    try:
+        version = json.loads((package / "package.json").read_text(encoding="utf-8")).get("version", "")
+        return int(str(version).split(".", 1)[0])
+    except (OSError, ValueError):
+        return 0
