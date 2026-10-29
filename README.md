@@ -173,7 +173,51 @@ từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test 
 `CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
 (`.github/workflows/ci.yml`) chạy test extractor, web, extension và frontend.
 
-## Graph RAG trong VS Code
+## MCP server cho AI agent (Copilot, Claude Code, Cursor…)
+
+Kênh chính để AI agent dùng Code Map là MCP. Server đọc thư mục output của
+extract (`codemap-rag.sqlite`, `codemap-web.sqlite`, `graph.sqlite`) và
+`knowledge.sqlite` (tài liệu nghiệp vụ đã duyệt). Có hai cách chạy, dùng chung
+một code (`web/backend/codemap_mcp/`):
+
+- **stdio** (máy cá nhân):
+  `python -m web.backend.codemap_mcp --graph-output output/demo [--knowledge-db data/knowledge.sqlite]`
+- **HTTP** (server chung của team): web backend phục vụ luôn `POST <url_prefix>/mcp`,
+  ví dụ `http://host:8000/code-map/mcp`. Tên người gọi lấy từ header
+  `X-Code-Map-User`. Tool ghi (đề xuất vào hàng chờ duyệt) chỉ hiện khi gửi
+  `X-Code-Map-Token` bằng `CODE_MAP_KNOWLEDGE_TOKEN`. Request từ trình duyệt
+  có `Origin` lạ bị từ chối (thêm vào `CODE_MAP_MCP_ALLOWED_ORIGINS` nếu cần).
+
+Cấu hình cho VS Code nằm ở [`.vscode/mcp.json`](.vscode/mcp.json).
+
+Mỗi tool ứng với một bước của quy trình AIDD:
+
+| Tool | Dùng khi |
+|---|---|
+| `codemap_search` | Hỏi tự do (vi/ja/en hoặc tên kỹ thuật) trước khi đọc code |
+| `codemap_current_behavior` | Hiện trạng một chủ đề nghiệp vụ: code, quy tắc, tài liệu luồng, câu đã trả lời, kèm trạng thái duyệt |
+| `codemap_impact` | Trước khi sửa bảng/API/procedure/job, hoặc truyền `files` đang sửa; nhóm theo system |
+| `codemap_trace_flow` | Đi theo một màn hình/API/job qua mọi system tới dữ liệu |
+| `codemap_file_context` | Một file khai báo gì, chạm tới gì |
+| `codemap_check_terms` | Kiểm tra requirement: thuật ngữ, tên kỹ thuật không tồn tại, từ mơ hồ |
+| `codemap_status` | Graph extract từ commit nào, file nào đã cũ, chất lượng extract |
+
+Mọi câu trả lời mở đầu bằng một dòng tình trạng KB (commit, đã cũ hay chưa),
+trích dẫn bằng `[N…]`/`[E…]`/`[D…]` và kết thúc bằng mục **Not certain**
+(issue của extractor, file đã sửa sau extract, giới hạn của phân tích tĩnh).
+Server cũng có MCP prompt cho từng bước (`as-is`, `decision-table`, `impact`,
+`review-requirement`, `document-flow`, `review-change`), hiện thành lệnh `/`
+trong Copilot. Mọi lần gọi tool được ghi vào bảng `mcp_calls` của
+`knowledge.sqlite`, kể cả câu hỏi không ra kết quả, để biết KB đang thiếu gì.
+
+Retriever của server là bản Python của `vscode-extension/src/core/retriever.ts`;
+`vscode-extension/test/retriever.test.ts` kiểm tra hai bản cho ra cùng text.
+
+## Graph RAG trong VS Code (extension)
+
+Từ khi Copilot dùng được MCP, extension chỉ còn cần cho map panel; phần chat
+`@codemap` được giữ để tương thích nhưng không phát triển thêm.
+
 
 Mỗi lần extract đều ghi thêm `codemap-rag.sqlite` cạnh `graph.sqlite`. File này
 gồm graph đã lược gọn và dữ liệu nghiệp vụ trong `inputData`: từ điển nghiệp vụ,

@@ -45,7 +45,7 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE nodes(
   id INTEGER PRIMARY KEY, stable_id TEXT NOT NULL UNIQUE, type TEXT NOT NULL, name TEXT NOT NULL,
   qualified_name TEXT NOT NULL, system TEXT, repository TEXT, file TEXT, line INTEGER,
-  names TEXT NOT NULL DEFAULT '', doc TEXT NOT NULL DEFAULT '');
+  names TEXT NOT NULL DEFAULT '', doc TEXT NOT NULL DEFAULT '', database TEXT);
 CREATE TABLE edges(
   id INTEGER PRIMARY KEY, src INTEGER NOT NULL, dst INTEGER NOT NULL, type TEXT NOT NULL,
   layer TEXT NOT NULL, operation TEXT NOT NULL, file TEXT, line INTEGER, snippet TEXT);
@@ -200,7 +200,7 @@ def _copy_nodes(graph: sqlite3.Connection, rag: sqlite3.Connection) -> dict[int,
     ids: dict[int, int] = {}
     rows = []
     for row in graph.execute(
-        "SELECT node_id, stable_id, node_type, technical_name, qualified_name, system_key, repository_key, properties_json FROM nodes"
+        "SELECT node_id, stable_id, node_type, technical_name, qualified_name, system_key, repository_key, properties_json, database_key FROM nodes"
     ):
         node_id = row["node_id"]
         ids[node_id] = len(ids) + 1
@@ -211,9 +211,9 @@ def _copy_nodes(graph: sqlite3.Connection, rag: sqlite3.Connection) -> dict[int,
         doc = " ".join(text for text in docs.get(node_id, []) if text)[:MAX_DOC_CHARS]
         rows.append((
             ids[node_id], row["stable_id"], row["node_type"], row["technical_name"] or "", row["qualified_name"] or "",
-            row["system_key"], row["repository_key"], path, line, "", doc,
+            row["system_key"], row["repository_key"], path, line, "", doc, row["database_key"],
         ))
-    rag.executemany("INSERT INTO nodes VALUES(?,?,?,?,?,?,?,?,?,?,?)", rows)
+    rag.executemany("INSERT INTO nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     return ids
 
 

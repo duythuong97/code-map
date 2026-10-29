@@ -117,3 +117,40 @@ for (const engine of ["node:sqlite", "sql.js"] as const) {
     });
   });
 }
+
+// The MCP server (web/backend/codemap_mcp/retriever.py) is a Python port of this retriever;
+// both must give agents the same facts for the same database.
+describe("Python retriever parity", () => {
+  const python = process.env.PYTHON ?? "python3";
+  const cases: [string, string, string | null][] = [
+    ["hủy đơn hàng ghi vào bảng nào?", "ask", null],
+    ["ORDER_HEADER", "impact", null],
+    ["DELETE /api/orders/{id}", "flow", null],
+    ["", "file", "a/Orders.cs"],
+    ["", "gaps", null],
+    ["注文", "ask", null],
+  ];
+  let file: string;
+  before(() => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), "codemap-parity-"));
+    file = execFileSync(python, ["-m", "web.backend.codemap_mcp.parity", "--fixture", folder], { cwd: repo, encoding: "utf8" }).trim();
+  });
+  it("renders the same text as web/backend/codemap_mcp/retriever.py", async () => {
+    const expected = JSON.parse(
+      execFileSync(python, ["-m", "web.backend.codemap_mcp.parity", "--db", file, "--cases", JSON.stringify(cases)], {
+        cwd: repo,
+        encoding: "utf8",
+      }),
+    ) as string[];
+    const db = await openGraphDb(file);
+    try {
+      const retriever = new Retriever(db);
+      cases.forEach(([question, mode, target], index) => {
+        const actual = retriever.retrieve(question, { mode: mode as "ask", file: target ?? undefined }).text;
+        assert.equal(actual, expected[index], `case ${index}: ${mode} ${question || target}`);
+      });
+    } finally {
+      db.close();
+    }
+  });
+});

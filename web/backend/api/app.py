@@ -26,6 +26,7 @@ from flask import Flask, g, jsonify, request, send_from_directory  # noqa: E402
 
 from web.backend.api import graph_routes  # noqa: E402
 from web.backend.api import business_routes  # noqa: E402,F401  (registers /business routes on the graph blueprint)
+from web.backend.codemap_mcp import http_transport  # noqa: E402
 from web.backend.config import absolute_path, load_app_config  # noqa: E402
 from web.backend.logging_config import configure_backend_logging  # noqa: E402
 from web.runtime_env import project_path, required_env  # noqa: E402
@@ -46,6 +47,8 @@ app.config["MAX_CONTENT_LENGTH"] = int(required_env("CODE_MAP_MAX_CONTENT_LENGTH
 app.config["CODE_MAP_GRAPH_OUTPUT"] = GRAPH_OUTPUT
 app.config["CODE_MAP_KNOWLEDGE_DB"] = KNOWLEDGE_DB
 app.register_blueprint(graph_routes.bp)
+# MCP for AI agents (Copilot, Claude Code, ...): POST <url_prefix>/mcp. Paths are read per request.
+http_transport.register(app, lambda: (GRAPH_OUTPUT, KNOWLEDGE_DB))
 
 # Short /api/... paths kept for older clients; they serve the /api/graph views.
 GRAPH_ALIAS_GET = {

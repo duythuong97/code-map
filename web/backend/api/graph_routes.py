@@ -18,13 +18,17 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
-from web.backend.api.business import KNOWLEDGE_SCHEMA as BUSINESS_SCHEMA
+from web.backend.storage import (  # noqa: F401  (re-exported for business_routes and older imports)
+    GRAPH_KNOWLEDGE_SCHEMA,
+    WEB_DATABASE_NAME,
+    WEB_SCHEMA_VERSION,
+    GraphNotReady,
+    _has_table,
+    open_web,
+)
 from web.runtime_env import project_path, required_absolute_path, required_env
 
 bp = Blueprint("graph_api", __name__, url_prefix=required_env("CODE_MAP_GRAPH_API_PREFIX"))
-WEB_DATABASE_NAME = "codemap-web.sqlite"
-# meta.schema_version written by code_tree_exporter/rag_export.py (RAG_SCHEMA_VERSION).
-WEB_SCHEMA_VERSION = "2"
 SOURCE_ROOT = required_absolute_path("CODE_MAP_SOURCE_ROOT")
 SAFE_SOURCE_ROOTS = (SOURCE_ROOT,)
 KNOWLEDGE_STATUSES = {"draft","pending","approved","rejected"}
@@ -35,34 +39,7 @@ WRITE_TERMINALS = {"INSERTS","UPDATES","DELETES","MERGES","WRITES"}
 READ_TERMINALS = {"READS","REMOTE_READS"}
 FLOW_INTERMEDIATE = {"CALLS_API","STARTS","CALLS","HANDLED_BY","RESOLVES_TO","TRIGGERS"}
 
-KNOWLEDGE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS kn.graph_knowledge(knowledge_id INTEGER PRIMARY KEY,target_id TEXT NOT NULL,body TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN('draft','pending','approved','rejected')),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE INDEX IF NOT EXISTS kn.graph_knowledge_target ON graph_knowledge(target_id);
-CREATE TABLE IF NOT EXISTS kn.semantic_mappings(target_id TEXT PRIMARY KEY,semantic_id TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN('approved','rejected')),source_kind TEXT NOT NULL DEFAULT 'USER',
-  author_name TEXT NOT NULL DEFAULT '',confidence REAL NOT NULL DEFAULT 1.0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TEMP VIEW graph_knowledge AS SELECT * FROM kn.graph_knowledge;
--- A person's mapping wins over the dictionary's alias links for the same node.
-CREATE TEMP VIEW graph_business_semantic_mappings AS
-  SELECT target_id,semantic_id,status,source_kind,author_name,confidence,created_at,updated_at FROM kn.semantic_mappings
-  UNION ALL
-  SELECT l.target_id,l.semantic_id,'approved','DICTIONARY_ALIAS','',0.9,'',''
-  FROM main.graph_business_semantic_links l
-  WHERE NOT EXISTS (SELECT 1 FROM kn.semantic_mappings m WHERE m.target_id=l.target_id);
-"""
-
-
-class GraphNotReady(Exception):
-    def __init__(self, path: Path, message: str = "") -> None:
-        super().__init__(message or f"{path} not found")
-        self.message = message
-
-
-def _has_table(db: sqlite3.Connection, name: str) -> bool:
-    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+KNOWLEDGE_SCHEMA = GRAPH_KNOWLEDGE_SCHEMA
 
 
 def graph_output() -> Path:
@@ -82,22 +59,8 @@ def knowledge_db() -> Path:
 @contextmanager
 def connection():
     """codemap-web.sqlite (read-only, per request so a new extract can replace it) + knowledge db."""
-    path = graph_output() / WEB_DATABASE_NAME
-    if not path.is_file():
-        raise GraphNotReady(path)
-    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    try:
-        version = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() if _has_table(db, "meta") else None
-        if not version or version[0] != WEB_SCHEMA_VERSION:
-            raise GraphNotReady(path, f"{path} was written by an older extract; run the extract (or rag-export) again")
-        knowledge = knowledge_db()
-        knowledge.parent.mkdir(parents=True, exist_ok=True)
-        db.execute("ATTACH DATABASE ? AS kn", (str(knowledge),))
-        db.executescript(KNOWLEDGE_SCHEMA + BUSINESS_SCHEMA)
+    with open_web(graph_output(), knowledge_db()) as db:
         yield db
-    finally:
-        db.close()
 
 
 @bp.app_errorhandler(GraphNotReady)
