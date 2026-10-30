@@ -1,11 +1,7 @@
 """Regressions for defects found in the extractor audit (ids that must stay stable across monthly re-extracts,
 references that must keep resolving, inputs that must not abort an extract)."""
 import json
-import sys
 import unittest
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from code_tree_exporter.comments import extract_comments
 from code_tree_exporter.decoding import _detect_encoding

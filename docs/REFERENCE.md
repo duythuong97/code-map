@@ -17,7 +17,7 @@ Ngoài ra: `examples/` (source demo, input-data, catalog, `demo-config.json`),
 của demo; Git bỏ qua).
 
 ```text
-source ──extract──▶ <output>/ ─┬─ graph.sqlite     (graph đầy đủ của engine: diff, stale, Markdown, semantic_tree)
+source ──extract──▶ <output>/ ─┬─ graph.sqlite     (graph đầy đủ của engine: diff, stale, semantic_tree)
                                └─ codemap.sqlite   (bảng graph_* + chỉ mục search_*) ──▶ web và MCP server
 ```
 
@@ -49,8 +49,7 @@ npm ci --prefix web/frontend && npm run build --prefix web/frontend
 ```
 
 Web đọc `output` của config trong `CODE_MAP_CONFIG` (mặc định là demo). Muốn
-xem config khác thì chạy `codemap serve --config <config>`, hoặc bản dev
-`python web/backend/api/app.py --graph-output <thư mục output>`.
+xem config khác thì chạy `codemap serve --config <config>`.
 
 `codemap.sqlite` dùng tên edge của lớp phục vụ, đổi từ tên của engine đúng một chỗ
 ([contract/vocabulary.py](../extractor/code_tree_exporter/contract/vocabulary.py)):
@@ -135,12 +134,6 @@ Phần tốn RAM nhất còn lại là Roslyn worker (khoảng 1,6GB cho 1.500 f
 nó giữ compilation và semantic model của cả solution. Với solution rất lớn, tách
 thành nhiều source theo nhóm project trong config để mỗi worker nhỏ hơn.
 
-Project chạy theo hai bước độc lập. Bước extract đọc source, tạo node/edge và
-ghi vào `graph.sqlite`; bước export Markdown đọc lại database này để tạo
-`knowledge/*.md`, `file-trees/*.md`, `codebase-memory/summaries/*.md` và
-`SYSTEM_TREE.md`. Vì vậy có thể thay đổi projection hoặc export lại Markdown mà
-không phải parse/link source lần nữa.
-
 `graph.sqlite` là nguồn truth; `graph-index.json` (mặc định bản slim) và
 `codebase-memory/*.jsonl` phục vụ tool/CLI. Comment, encoding và evidence vẫn
 được lưu trong SQLite để truy ngược về source.
@@ -184,15 +177,15 @@ Bảng `sources` đã có sẵn sha256 của từng file.
 (`extractor/tests/test_golden_demo.py`). Đổi parser làm đổi graph thì test báo
 từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test với
 `CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
-(`.github/workflows/ci.yml`) chạy test extractor, web, extension và frontend.
+(`.github/workflows/ci.yml`) chạy test extractor, `codemap`, MCP, web và frontend.
 
 ## Đo chất lượng của KB
 
 | Cách | Lệnh | Đo được |
 |---|---|---|
-| Đối chiếu với Oracle | `code-tree-exporter verify-oracle --graph <out> --dependencies all_dependencies.csv [--owner APP]` | Precision/recall của phụ thuộc PL/SQL so với `ALL_DEPENDENCIES` (mức package), object chưa được scan |
+| Đối chiếu với Oracle | `python -m code_tree_exporter verify-oracle --graph <out> --dependencies all_dependencies.csv [--owner APP]` | Precision/recall của phụ thuộc PL/SQL so với `ALL_DEPENDENCIES` (mức package), object chưa được scan |
 | Corpus có đáp án | [`tools/corpus-gen`](../tools/corpus-gen/README.md) | Recall theo từng pattern; điểm mù có được cảnh báo không; phân tích ảnh hưởng (graph không LLM, hoặc `impact.yaml` của agent) |
-| Lấy mẫu cạnh | `code-tree-exporter sample-edges --graph <out> --n 50 --out sample.csv`, điền `verdict`, rồi `score-sample sample.csv` | Precision theo loại cạnh, kèm khoảng tin cậy 95% |
+| Lấy mẫu cạnh | `python -m code_tree_exporter sample-edges --graph <out> --n 50 --out sample.csv`, điền `verdict`, rồi `score-sample sample.csv` | Precision theo loại cạnh, kèm khoảng tin cậy 95% |
 | Nhật ký MCP | `codemap kb usage` hoặc `GET /business/kb-status` | Agent hỏi gì, câu nào không có kết quả |
 
 Export `ALL_DEPENDENCIES` (chỉ cần quyền đọc dictionary):
@@ -206,9 +199,9 @@ SELECT OWNER, NAME, TYPE, REFERENCED_OWNER, REFERENCED_NAME, REFERENCED_TYPE, RE
 ## Graph diff: một thay đổi làm gì với hệ thống
 
 ```text
-code-tree-exporter extract --config <cfg> --at origin/main --output out-base
-code-tree-exporter extract --config <cfg> --output out-head
-code-tree-exporter diff --base out-base --head out-head \
+codemap extract --config <cfg> --at origin/main --output out-base
+codemap extract --config <cfg> --output out-head
+python -m code_tree_exporter diff --base out-base --head out-head \
     --plan docs/changes/ORD-123/impact.yaml --knowledge-db var/knowledge.sqlite [--format json] [--fail-on-unplanned]
 ```
 
@@ -282,12 +275,12 @@ Mỗi lần extract đều ghi `codemap.sqlite` cạnh `graph.sqlite`. File này
   tên edge, thêm id số nhỏ, từ khoá, dòng khai báo, flow của engine).
 
 Web và MCP đọc cùng một file nên không thể thấy hai graph khác nhau. Muốn tắt
-thì đặt `"servingExport": false` (tên cũ `ragExport` vẫn nhận). Nếu đã có output
+thì đặt `"servingExport": false`. Nếu đã có output
 thì tạo lại bằng `python -m code_tree_exporter serving-export --graph <out> --input-data <input-data>`.
 Output của bản extract cũ (`codemap-web.sqlite`, `codemap-rag.sqlite`) bị từ
 chối kèm hướng dẫn extract lại.
 
-## V3 bootstrap
+## Catalog bảng và cột
 
 Khởi tạo catalog bằng bốn file:
 
@@ -373,10 +366,7 @@ Với `oracle-plsql`, `semanticDetail: "summary"` là mặc định: chỉ giữ
 expression và call arguments bị lược bỏ khỏi semantic tree. Dùng
 `semanticDetail: "full"` khi cần projection theo từng statement.
 
-`combinedProjection`, `knowledgeChunking` và `maxTreeLines` được lưu vào
-metadata SQLite làm mặc định cho bước export Markdown. `maxTreeLines` chỉ giới
-hạn projection Markdown; `maxFileBytes` ghi
-`FILE_TOO_LARGE` và bỏ riêng file đó. `extractorTimeoutSeconds` (mặc định 3600) giới hạn
+`maxFileBytes` ghi `FILE_TOO_LARGE` và bỏ riêng file đó. `extractorTimeoutSeconds` (mặc định 3600) giới hạn
 toàn bộ worker; `projectTimeoutSeconds` (mặc định 900) giới hạn từng lần Roslyn
 mở solution/project. Config bị từ chối nếu `extractorTimeoutSeconds` nhỏ hơn
 `projectTimeoutSeconds`, vì khi đó worker bị kill trước khi kịp load xong một
@@ -515,10 +505,10 @@ tự replacement nên không âm thầm làm hỏng tiếng Nhật. `encoding` v
 
 - macOS: `python3 -m pip install -r requirements.txt`
 - Windows: `py -m pip install -r requirements.txt`
-- Cài CLI `code-tree-exporter` từ source: `python3 -m pip install ./extractor`
-  (hoặc `py -m pip install ./extractor`). Nếu không cài, chạy
-  `python -m code_tree_exporter` từ thư mục `extractor/` hoặc đặt
-  `PYTHONPATH=extractor`.
+- `requirements.txt` cài cả repo ở chế độ editable (`-e .`): lệnh `codemap`, và
+  `python -m code_tree_exporter …` cho các lệnh riêng của engine (`diff`,
+  `verify-oracle`, `sample-edges`, `catalog inspect`, `serving-export`), chạy
+  được từ bất kỳ thư mục nào.
 
 Node.js + TypeScript và .NET SDK 9 là runtime ngoài Python; chỉ cần cài khi
 config dùng Angular hoặc .NET. Extractor `.NET` dùng `MSBuildWorkspace`, nên
@@ -536,13 +526,7 @@ TypeScript semantic runtime không load được, Angular chỉ dùng fallback k
 ### Demo
 
 Repository có sẵn `examples/sample-source/`, `examples/input-data/` và catalog
-mẫu. Chỉ chạy engine (không import vào UI):
-
-```text
-cd extractor
-python3 -m code_tree_exporter validate --config "$PWD/../examples/demo-config.json"
-python3 -m code_tree_exporter extract --config "$PWD/../examples/demo-config.json"
-```
+mẫu; `codemap validate` / `codemap extract` không truyền `--config` là chạy demo.
 
 `validate` kiểm tra cả runtime ngoài (`dotnet` cho source `.NET`, `node` cho
 Angular) và trả exit code `1` khi thiếu runtime bắt buộc. `extract` cũng dừng
@@ -564,50 +548,19 @@ khoảng 21s xuống khoảng 6.5s, output không đổi.
 Cache tự bị bỏ qua khi grammar, phiên bản ANTLR runtime hoặc Python thay đổi.
 Mỗi file cache khoảng 20–30 MB; có thể xóa bất cứ lúc nào.
 
-### 1. Extract graph vào SQLite
+### Extract graph vào SQLite
 
 ```text
-code-tree-exporter validate --config <absolute-config-path>
-code-tree-exporter extract --config <absolute-config-path>
+codemap validate --config <config>
+codemap extract --config <config>      # validate rồi extract; --skip-validate, --at <rev>, --output <dir>
 ```
 
-`code-tree-exporter --config <absolute-config-path>` vẫn được giữ để tương thích V2.
-Kiểm tra một CSV lạ bằng `code-tree-exporter catalog inspect <csv-path>` trước
-khi viết profile.
+Kiểm tra một CSV lạ bằng `python -m code_tree_exporter catalog inspect <csv-path>`
+trước khi viết profile.
 
-Chạy trực tiếp từ source:
-
-- macOS: `python3 -m code_tree_exporter --config /path/extractor-config.json`
-- Windows: `py -m code_tree_exporter --config C:\\path\\extractor-config.json`
-
-`python -m cli` vẫn được giữ làm lệnh tương thích.
-
-Bước này tạo `graph.sqlite` và các index/memory dạng machine-readable, không tạo
-file Markdown.
-
-### 2. Export Markdown từ SQLite
-
-Ghi Markdown cạnh database:
-
-```text
-code-tree-export-markdown --database <dist/graph.sqlite>
-```
-
-Hoặc ghi sang thư mục riêng:
-
-```text
-code-tree-export-markdown --database <dist> --output <markdown-dist>
-```
-
-`--database` nhận cả file `graph.sqlite` lẫn thư mục chứa file đó. Có thể override
-config đã lưu bằng `--max-tree-lines`, `--combined-projection` hoặc
-`--no-combined-projection`.
-
-Chạy trực tiếp từ source:
-
-```text
-python3 -m code_tree_exporter.markdown_export --database <dist>
-```
+Bước này tạo `graph.sqlite`, `codemap.sqlite` (web và MCP đọc file này) và các
+index/memory dạng machine-readable. Code-map không xuất Markdown: tài liệu đọc
+được nằm trên web (tài liệu nghiệp vụ) và qua MCP.
 
 ## Query knowledge
 
@@ -616,24 +569,23 @@ Sau khi generate output, query layer đọc manifest và query trực tiếp
 cần locator của codebase memory:
 
 ```text
-code-tree-query --output <dist> find-node --qualified-name <name>
-code-tree-query --output <dist> find-edges --source <node-id>
-code-tree-query --output <dist> impact-api --method GET --path /orders/42
-code-tree-query --output <dist> impact-table --database DB --schema APP --table ORDERS
-code-tree-query --output <dist> trace-ui-to-db --query "GET /orders/{id}"
-code-tree-query --output <dist> explain-node --node-id <node-id>
-code-tree-query --output <dist> open-source --evidence-id <evidence-id>
-code-tree-query --output <dist> list-issues --source order-api
-code-tree-query --output <dist> search-memory --text orders
-code-tree-query --output <dist> catalog-status
-code-tree-query --output <dist> health
-code-tree-query --output <dist> unresolved
-code-tree-query --output <dist> input-output --node-id <node-id>
-code-tree-query --output <dist> trace-flow --node-id <node-id>
+python -m code_tree_exporter.query --output <dist> find-node --qualified-name <name>
+python -m code_tree_exporter.query --output <dist> find-edges --source <node-id>
+python -m code_tree_exporter.query --output <dist> impact-api --method GET --path /orders/42
+python -m code_tree_exporter.query --output <dist> impact-table --database DB --schema APP --table ORDERS
+python -m code_tree_exporter.query --output <dist> trace-ui-to-db --query "GET /orders/{id}"
+python -m code_tree_exporter.query --output <dist> explain-node --node-id <node-id>
+python -m code_tree_exporter.query --output <dist> open-source --evidence-id <evidence-id>
+python -m code_tree_exporter.query --output <dist> list-issues --source order-api
+python -m code_tree_exporter.query --output <dist> search-memory --text orders
+python -m code_tree_exporter.query --output <dist> catalog-status
+python -m code_tree_exporter.query --output <dist> health
+python -m code_tree_exporter.query --output <dist> unresolved
+python -m code_tree_exporter.query --output <dist> input-output --node-id <node-id>
+python -m code_tree_exporter.query --output <dist> trace-flow --node-id <node-id>
 ```
 
-Chạy trực tiếp từ source bằng
-`python -m code_tree_exporter.query --output <dist> ...`. Response là JSON ngắn
+Response là JSON ngắn
 gồm answer, graph IDs, evidence, source location, confidence và issues. Trace
 được chặn ở 5.000 node, 10.000 edge và 5.000 evidence; kiểm tra
 `data.truncated` và dùng `graph.sqlite` khi cần duyệt toàn bộ graph rất lớn.
@@ -746,12 +698,13 @@ extractor/
   code_tree_exporter/   # engine: package, contract, extractor runtimes
     contract/           # graph_contract (id, node/edge type), vocabulary (nhóm edge, đổi tên engine → phục vụ)
     extractors/         # một plugin cho mỗi loại source (package CSV, csv-contract.md)
-    linker.py           # RESOLVERS: các bước nối giữa các source, chạy theo thứ tự
+    linker.py           # RESOLVERS: các bước nối giữa các source (gateway, api, ...), chạy theo thứ tự
+    messages.py         # topic Kafka/queue khai báo trong input-data/message-flows.csv
     vcs.py              # git / svn / none
     serving.py          # codemap.sqlite = serving_tables.py (graph_*) + search_index.py (search_*)
   tests/                # python -m unittest discover -s extractor/tests -t extractor
 codemap/                # lớp đọc dùng chung, không Flask (python -m unittest discover -s codemap/tests -t .)
-  settings.py storage.py knowledge.py business.py retriever.py workspace.py kb.py cli.py
+  settings.py storage.py flows.py knowledge.py business.py retriever.py workspace.py kb.py cli.py
 codemap/mcp/            # MCP server: tools, prompts, stdio (python -m unittest discover -s codemap/mcp/tests -t .)
 web/
   backend/api/          # Flask: route, mcp_http.py (MCP qua HTTP) (python -m unittest discover -s web/tests -t .)
@@ -766,38 +719,24 @@ examples/
   catalog/              # catalog demo cho engine
   demo-config.json
 var/                    # (Git bỏ qua) output, knowledge.sqlite và log của demo
-requirements.txt        # gộp extractor + web cho một virtualenv
+pyproject.toml          # cài cả repo (editable): lệnh codemap, package codemap / web / code_tree_exporter
+requirements.txt        # gộp extractor + web cho một virtualenv, kết thúc bằng -e .
 ```
 
 ## Output sau bước extract
 
 ```text
-dist/
+<output>/
 ├── manifest.json
 ├── graph-index.json
 ├── graph.sqlite
+├── codemap.sqlite
 ├── quality-report.json
 ├── QUALITY_REPORT.md
 ├── codebase-memory/
 │   ├── entities/*.jsonl
 │   ├── relationships/*.jsonl
 │   └── manifest.json
-```
-
-## Output sau bước export Markdown
-
-Nếu không truyền `--output`, các file sau được thêm vào `dist/`:
-
-```text
-dist/
-├── markdown-manifest.json
-├── codebase-memory/
-│   └── summaries/*.md
-├── knowledge/
-│   ├── manifest.json
-│   └── APIs*.md, Flows*.md, Databases*.md, Jobs*.md, CrossSystem*.md
-├── file-trees/
-└── SYSTEM_TREE.md (khi combinedProjection=true)
 ```
 
 Trong SQLite, `node_id`/`edge_id` là số nguyên 63-bit deterministic. ID mô tả
@@ -807,6 +746,6 @@ không lặp lại chuỗi ID dài. JSON response biểu diễn ID số dưới 
 string để không mất precision trên JavaScript.
 
 Output extract được dựng trong staging rồi thay atomic. Rerun giữ snapshot trước
-tại `<output>.previous`. Markdown exporter chỉ thay các projection do tool quản
-lý và từ chối ghi đè output không có manifest hợp lệ. Decode strict; lỗi
+tại `<output>.previous`, và từ chối ghi đè thư mục output không có manifest hợp
+lệ. Decode strict; lỗi
 encoding tạo issue, file lỗi không được parse.

@@ -18,13 +18,7 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
-from codemap.storage import (  # noqa: F401  (re-exported for business_routes and older imports)
-    GRAPH_KNOWLEDGE_SCHEMA,
-    SERVING_DATABASE_NAME,
-    GraphNotReady,
-    _has_table,
-    open_web,
-)
+from codemap.storage import GRAPH_KNOWLEDGE_SCHEMA, GraphNotReady, open_web
 from code_tree_exporter.contract.vocabulary import FLOW_STEP_EDGES, READ_EDGES, WRITE_EDGES
 from codemap.flows import data_paths
 from codemap.settings import settings

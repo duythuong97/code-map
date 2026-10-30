@@ -22,7 +22,7 @@ Danh sách pattern nằm trong `corpus_gen/generator.py` (`PATTERNS`), sinh ra
 
 ```bash
 python tools/corpus-gen generate --out /tmp/corpus --size m --git
-python -m code_tree_exporter extract --config /tmp/corpus/config.json          # PYTHONPATH=extractor
+python -m code_tree_exporter extract --config /tmp/corpus/config.json
 python tools/corpus-gen score-extract --corpus /tmp/corpus                     # bài toán A: extractor
 python -m code_tree_exporter verify-oracle --graph /tmp/corpus/out --dependencies /tmp/corpus/truth/all_dependencies.csv
 python tools/corpus-gen baseline --corpus /tmp/corpus                          # bài toán B: graph, không LLM

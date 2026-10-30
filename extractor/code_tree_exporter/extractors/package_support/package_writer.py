@@ -12,17 +12,12 @@ from typing import Iterable
 
 from code_tree_exporter.decoding import read_text_auto
 from code_tree_exporter.contract.graph_contract import (
-    api_operation_id,
     canonical_edge_id,
     canonical_evidence_key,
-    column_id,
-    database_id,
     normalize_http_route,
     normalize_oracle_identifier,
     normalize_repository_path,
-    sql_file_id,
     stable_node_id,
-    table_id,
 )
 
 CSV_HEADERS = {
@@ -130,17 +125,6 @@ def slug(value: str) -> str:
     while "--" in result:
         result = result.replace("--", "-")
     return result or "source"
-
-
-def normalize_api_call_route(raw_route: str) -> str:
-    route = raw_route.strip().strip("'\"")
-    if not route:
-        return "/"
-    method = "GET"
-    if " " in route and route.split(" ", 1)[0].isalpha():
-        method, route = route.split(" ", 1)
-    _, path = normalize_http_route(method, route)
-    return path
 
 
 def api_call_id(source: str, method: str, route: str) -> str:
@@ -261,14 +245,6 @@ class PackageBuilder:
         self.edges.setdefault(edge_id, row)
         return edge_id
 
-    def merge_edge_properties(self, edge_id: str, properties: dict) -> None:
-        row = self.edges.get(edge_id)
-        if not row:
-            return
-        current = json.loads(row["properties_json"])
-        current.update(properties)
-        row["properties_json"] = to_json(current)
-
     def add_evidence(
         self,
         target_type: str,
@@ -336,36 +312,6 @@ class PackageBuilder:
         }
         self.issues.setdefault(issue_id, row)
         return issue_id
-
-    def add_localized_text(
-        self,
-        target_type: str,
-        target_id: str,
-        field_name: str,
-        locale: str,
-        value: str,
-        *,
-        source_kind: str = "EXTRACTED",
-        review_status: str = "PENDING",
-        author_name: str | None = None,
-        created_at: str = "",
-        updated_at: str = "",
-    ) -> tuple[str, str, str]:
-        row = {
-            "target_type": target_type,
-            "target_id": target_id,
-            "field_name": field_name,
-            "locale": locale,
-            "value": value,
-            "source_kind": source_kind,
-            "review_status": review_status,
-            "author_name": author_name or self.extractor_name,
-            "created_at": created_at,
-            "updated_at": updated_at,
-        }
-        key = (target_id, field_name, locale)
-        self.localized_texts.setdefault(key, row)
-        return key
 
     def write(self, output: Path) -> None:
         output.mkdir(parents=True, exist_ok=True)
@@ -533,26 +479,3 @@ def line_text(text: str, line: int) -> str:
     return ""
 
 
-def load_authoritative_ids(input_root: Path) -> set[str]:
-    ids: set[str] = set()
-    table_path = input_root / "tables.csv"
-    if table_path.exists():
-        with io.StringIO(read_text_auto(table_path), newline="") as handle:
-            for row in csv.DictReader(handle):
-                ids.add(table_id(row["database"], row["table_code"]))
-                configured = str(row.get("columns_file") or "").strip()
-                child = (
-                    input_root / configured
-                    if configured
-                    else input_root / "tables" / f"{row['table_code']}.csv"
-                )
-                if child.exists():
-                    with io.StringIO(read_text_auto(child), newline="") as column_handle:
-                        ids.update(column_id(row["database"], row["table_code"], item["column_code"]) for item in csv.DictReader(column_handle))
-    jobs_path = input_root / "jobnet.csv"
-    if jobs_path.exists():
-        with io.StringIO(read_text_auto(jobs_path), newline="") as handle:
-            for row in csv.DictReader(handle):
-                ids.add(stable_node_id("job-network", "batch-system", row["jobnet_id"]))
-                ids.add(stable_node_id("job", "batch-system", row["jobnet_id"], row["job_id"]))
-    return ids

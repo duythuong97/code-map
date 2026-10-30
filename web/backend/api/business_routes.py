@@ -11,7 +11,8 @@ from urllib.parse import unquote
 from flask import jsonify, request
 
 from codemap import business
-from web.backend.api.graph_routes import SERVING_DATABASE_NAME, bp, connection, error, graph_output, knowledge_db
+from codemap.storage import SERVING_DATABASE_NAME
+from web.backend.api.graph_routes import bp, connection, error, graph_output, knowledge_db
 
 MAX_EDIT_BYTES = 256 * 1024
 MAX_IMPORT_BYTES = 4 * 1024 * 1024

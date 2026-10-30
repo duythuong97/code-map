@@ -78,16 +78,3 @@ def flow_edge(edge_type: str, target_type: str) -> bool:
     return edge_type in FLOW_DATA_EDGES or follows(edge_type, target_type)
 
 
-def edge_category(edge_type: str) -> str:
-    """read / write / call / business / structure / other, for either vocabulary."""
-    if edge_type in ANY_WRITE_EDGES:
-        return "write"
-    if edge_type in ANY_READ_EDGES:
-        return "read"
-    if edge_type in CALL_EDGES or edge_type == "HANDLES_API":
-        return "call"
-    if edge_type in BUSINESS_EDGES or edge_type == "INVOKES":
-        return "business"
-    if edge_type in STRUCTURE_EDGES:
-        return "structure"
-    return "other"

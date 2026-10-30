@@ -7,7 +7,7 @@ facts (with file:line evidence) to the agent. Every row here is derived from a
 the web app and the MCP server can never disagree about what the graph holds;
 the index only adds small integer ids, search terms and declaration lines.
 
-``testdata/rag-token-vectors.json`` pins what ``tokens`` returns.
+``testdata/search-token-vectors.json`` pins what ``tokens`` returns.
 """
 from __future__ import annotations
 

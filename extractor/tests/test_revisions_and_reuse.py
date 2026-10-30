@@ -5,18 +5,16 @@ import json
 import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.checkout import CheckoutError, checkout_at, parse_at  # noqa: E402
-from code_tree_exporter.pipeline import _typescript_path, configured_sources, run_pipeline  # noqa: E402
-from code_tree_exporter.stale import stale_report, summary_line  # noqa: E402
+from code_tree_exporter.checkout import CheckoutError, checkout_at, parse_at
+from code_tree_exporter.pipeline import _typescript_path, configured_sources, run_pipeline
+from code_tree_exporter.stale import stale_report, summary_line
 
 SQL_V1 = "UPDATE APP.ORDERS SET STATUS = 'X' WHERE ID = 1;\n"
 SQL_V2 = "UPDATE APP.ORDERS SET STATUS = 'X' WHERE ID = 1;\nDELETE FROM APP.ORDER_LINE WHERE ID = 1;\n"
@@ -58,7 +56,7 @@ class RevisionTests(unittest.TestCase):
                     "root": str(self.root),
                     "output": str(self.output),
                     "lowPriority": False,
-                    "ragExport": False,
+                    "servingExport": False,
                     "sources": [
                         {"name": "ops", "type": "sql-files", "folders": ["ops"], "database": "DB1", "schema": "APP"}
                     ],

@@ -9,8 +9,8 @@ unplanned, and planned items the change never touched are listed too. With the
 knowledge database, the business rules, flow documents and owners affected by
 the change are named so the right people review it.
 
-    code-tree-exporter diff --base out-base --head out-head --plan docs/changes/ORD-12/impact.yaml \\
-        --knowledge-db data/knowledge.sqlite --format markdown
+    python -m code_tree_exporter diff --base out-base --head out-head --plan docs/changes/ORD-12/impact.yaml \\
+        --knowledge-db var/knowledge.sqlite --format markdown
 """
 from __future__ import annotations
 

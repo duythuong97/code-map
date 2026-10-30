@@ -126,8 +126,3 @@ def settings() -> dict[str, Any]:
     return load_settings()
 
 
-def absolute_path(value: str | Path, name: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        raise ValueError(f"{name} must be an absolute path: {path}")
-    return path.resolve()

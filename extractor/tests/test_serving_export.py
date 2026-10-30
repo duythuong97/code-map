@@ -2,23 +2,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from code_tree_exporter.search_index import compact, tokens
-from code_tree_exporter.serving import write_serving_database  # noqa: E402
+from code_tree_exporter.serving import write_serving_database
 
-sys.path.insert(0, str(PROJECT_ROOT.parent))
-from testdata.engine_graph import business_inputs, engine_graph  # noqa: E402
+from testdata.engine_graph import business_inputs, engine_graph
 
 class TokenTests(unittest.TestCase):
     def test_shared_vectors_match_the_extension(self) -> None:
-        vectors = json.loads((PROJECT_ROOT.parent / "testdata" / "rag-token-vectors.json").read_text(encoding="utf-8"))
+        vectors = json.loads((PROJECT_ROOT.parent / "testdata" / "search-token-vectors.json").read_text(encoding="utf-8"))
         for vector in vectors:
             with self.subTest(text=vector["text"]):
                 self.assertEqual(tokens(vector["text"]), vector["tokens"])

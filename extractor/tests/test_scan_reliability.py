@@ -10,9 +10,8 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.pipeline import (  # noqa: E402
+from code_tree_exporter.pipeline import (
     _resolved_limits,
     _selected_files,
     _typescript_path,

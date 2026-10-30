@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import re
 import shutil
 import sqlite3
 import sys
@@ -12,7 +11,6 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Iterable
 
 csv.field_size_limit(sys.maxsize)
 
@@ -333,11 +331,6 @@ class GraphPackage:
                             _merge_duplicate_row(row, second)
                         getattr(self, name)[key] = row
 
-    def resolve_routine_references(self) -> None:
-        from .linker import link_routines
-
-        link_routines(self)
-
     def add_source(self, record: SourceRecord) -> None:
         canonical_path = normalize_repository_path(record.relative_path)
         record = SourceRecord(**{**record.__dict__, "relative_path": canonical_path})
@@ -513,9 +506,6 @@ class GraphPackage:
         config_path: str,
         extractor_version: str = "3.0.0",
         output_mode: str = "flat",
-        combined_projection: bool | None = None,
-        knowledge_chunking: dict[str, object] | None = None,
-        max_tree_lines: int = 20_000,
         max_evidence_snippet_chars: int = 500,
         max_issues_per_type_per_file: int = 20,
         graph_index: str = "slim",
@@ -528,19 +518,8 @@ class GraphPackage:
             raise ValueError("max_evidence_snippet_chars must be positive")
         if max_issues_per_type_per_file < 1:
             raise ValueError("max_issues_per_type_per_file must be positive")
-        if max_tree_lines < 10:
-            raise ValueError("max_tree_lines must be at least 10")
         output.mkdir(parents=True, exist_ok=True)
         generated_at = _utc_now()
-        markdown_options = {
-            "combinedProjection": (
-                output_mode == "flat"
-                if combined_projection is None
-                else combined_projection
-            ),
-            "knowledgeChunking": knowledge_chunking or {},
-            "maxTreeLines": max_tree_lines,
-        }
         self.deduplicate()
 
         # Apply output bounds before compacting so synthesized issue rows also
@@ -582,7 +561,6 @@ class GraphPackage:
             comment_packages=partition["comment_packages"],
             issue_packages=issue_packages,
             output_mode=output_mode,
-            markdown_options=markdown_options,
         )
         root_manifest = {
             "contractVersion": "2.0",
@@ -928,7 +906,6 @@ def _write_sqlite_database(
     comment_packages: dict[str, str],
     issue_packages: dict[str, str],
     output_mode: str,
-    markdown_options: dict[str, object],
 ) -> None:
     if path.exists():
         path.unlink()
@@ -1056,7 +1033,6 @@ def _write_sqlite_database(
                 ("source_name", json.dumps(source_name)),
                 ("identity", json.dumps("deterministic-63-bit")),
                 ("output_mode", json.dumps(output_mode)),
-                ("markdown_options", json.dumps(markdown_options)),
                 (
                     "source_descriptors",
                     json.dumps(graph.source_descriptors, ensure_ascii=False),
@@ -2033,503 +2009,6 @@ def _write_memory_summaries(
     return list(cards)
 
 
-def write_knowledge_markdown(
-    graph: GraphPackage,
-    output: Path,
-    *,
-    generated_at: str | None = None,
-    chunking: dict[str, object] | None = None,
-) -> dict[str, list[str]]:
-    """Write the RAG Markdown projection for an already extracted graph."""
-    return _write_knowledge(
-        graph,
-        output,
-        generated_at=generated_at or _utc_now(),
-        chunking=chunking or {},
-    )
-
-
-def _write_knowledge(
-    graph: GraphPackage,
-    output: Path,
-    *,
-    generated_at: str,
-    chunking: dict[str, object],
-) -> dict[str, list[str]]:
-    knowledge_dir = output / "knowledge"
-    knowledge_dir.mkdir(parents=True, exist_ok=True)
-    outgoing, incoming, evidence_by_target, issues_by_node = _graph_indexes(graph)
-    topics: dict[str, list[dict[str, object]]] = {
-        "APIs": [],
-        "Flows": [],
-        "Databases": [],
-        "Jobs": [],
-        "CrossSystem": [],
-    }
-
-    for node_id, node in sorted(graph.nodes.items()):
-        node_type = node.get("node_type", "")
-        if node_type == "API_OPERATION":
-            db_paths = _shortest_paths_to_types(
-                graph,
-                node_id,
-                _DB_NODE_TYPES,
-                outgoing_index=outgoing,
-            )
-            callers = [
-                edge.get("source_node_id", "")
-                for edge in incoming.get(node_id, ())
-                if edge.get("edge_type") == "CALLS_API"
-            ]
-            related = {
-                edge.get("target_node_id", "")
-                for edge in outgoing.get(node_id, ())
-            } | set(callers) | {path[0] for path in db_paths}
-            edge_ids = {
-                edge["edge_id"] for edge in outgoing.get(node_id, ())
-            } | {
-                edge["edge_id"] for edge in incoming.get(node_id, ())
-            } | {
-                edge_id for _, _, path_edges in db_paths for edge_id in path_edges
-            }
-            related_issues = {
-                issue_id
-                for related_id in {
-                    node_id,
-                    *callers,
-                    *(
-                        path_node
-                        for _, path_nodes, _ in db_paths
-                        for path_node in path_nodes
-                    ),
-                }
-                for issue_id in issues_by_node.get(related_id, ())
-            }
-            topics["APIs"].append(
-                _knowledge_card(
-                    graph,
-                    node_id=node_id,
-                    heading=_api_heading(node),
-                    related_node_ids=related,
-                    edge_ids=edge_ids,
-                    evidence_by_target=evidence_by_target,
-                    issue_ids=related_issues,
-                    narrative=_api_narrative(graph, node_id, callers, db_paths),
-                )
-            )
-        elif node_type in _UI_NODE_TYPES:
-            api_paths = _shortest_paths_to_types(
-                graph,
-                node_id,
-                frozenset({"API_OPERATION"}),
-                max_depth=6,
-                outgoing_index=outgoing,
-            )
-            db_paths = _shortest_paths_to_types(
-                graph,
-                node_id,
-                _DB_NODE_TYPES,
-                outgoing_index=outgoing,
-            )
-            related = {path[0] for path in [*api_paths, *db_paths]}
-            edge_ids = {
-                edge_id
-                for _, _, path_edges in [*api_paths, *db_paths]
-                for edge_id in path_edges
-            }
-            related_issues = {
-                issue_id
-                for related_id in {
-                    node_id,
-                    *(
-                        path_node
-                        for _, path_nodes, _ in [*api_paths, *db_paths]
-                        for path_node in path_nodes
-                    ),
-                }
-                for issue_id in issues_by_node.get(related_id, ())
-            }
-            topics["Flows"].append(
-                _knowledge_card(
-                    graph,
-                    node_id=node_id,
-                    heading=_display_name(node, node_id),
-                    related_node_ids=related,
-                    edge_ids=edge_ids,
-                    evidence_by_target=evidence_by_target,
-                    issue_ids=related_issues,
-                    narrative=_flow_narrative(graph, api_paths, db_paths),
-                )
-            )
-        elif _is_database_node(node):
-            reader_edges = [
-                edge
-                for edge in incoming.get(node_id, ())
-                if edge.get("edge_type") in _READ_EDGE_TYPES
-            ]
-            writer_edges = [
-                edge
-                for edge in incoming.get(node_id, ())
-                if edge.get("edge_type") in _WRITE_EDGE_TYPES
-            ]
-            related = {
-                edge.get("source_node_id", "")
-                for edge in [*reader_edges, *writer_edges]
-            }
-            related_issues = {
-                issue_id
-                for related_id in {node_id, *related}
-                for issue_id in issues_by_node.get(related_id, ())
-            }
-            topics["Databases"].append(
-                _knowledge_card(
-                    graph,
-                    node_id=node_id,
-                    heading=_display_name(node, node_id),
-                    related_node_ids=related,
-                    edge_ids={
-                        edge["edge_id"] for edge in [*reader_edges, *writer_edges]
-                    },
-                    evidence_by_target=evidence_by_target,
-                    issue_ids=related_issues,
-                    narrative=_database_narrative(
-                        graph, reader_edges, writer_edges
-                    ),
-                )
-            )
-        elif node_type in _JOB_NODE_TYPES:
-            db_paths = _shortest_paths_to_types(
-                graph,
-                node_id,
-                _DB_NODE_TYPES,
-                outgoing_index=outgoing,
-            )
-            related = {path[0] for path in db_paths}
-            edge_ids = {
-                edge_id
-                for _, _, path_edges in db_paths
-                for edge_id in path_edges
-            }
-            related_issues = {
-                issue_id
-                for related_id in {
-                    node_id,
-                    *(
-                        path_node
-                        for _, path_nodes, _ in db_paths
-                        for path_node in path_nodes
-                    ),
-                }
-                for issue_id in issues_by_node.get(related_id, ())
-            }
-            topics["Jobs"].append(
-                _knowledge_card(
-                    graph,
-                    node_id=node_id,
-                    heading=_display_name(node, node_id),
-                    related_node_ids=related,
-                    edge_ids=edge_ids,
-                    evidence_by_target=evidence_by_target,
-                    issue_ids=related_issues,
-                    narrative=_job_narrative(graph, db_paths),
-                )
-            )
-
-    for edge_id, edge in sorted(graph.edges.items()):
-        source_id = edge.get("source_node_id", "")
-        target_id = edge.get("target_node_id", "")
-        source = graph.nodes.get(source_id)
-        target = graph.nodes.get(target_id)
-        if not source or not target:
-            continue
-        source_label = _node_source_label(source)
-        target_label = _node_source_label(target)
-        if source_label == target_label and target.get("node_type") not in {
-            "UNRESOLVED_REFERENCE",
-            "EXTERNAL_DATABASE_OBJECT",
-        }:
-            continue
-        heading = (
-            f"{_display_name(source, source_id)} → "
-            f"{_display_name(target, target_id)}"
-        )
-        topics["CrossSystem"].append(
-            _knowledge_card(
-                graph,
-                node_id=source_id,
-                heading=heading,
-                related_node_ids={target_id},
-                edge_ids={edge_id},
-                evidence_by_target=evidence_by_target,
-                issue_ids={
-                    *issues_by_node.get(source_id, ()),
-                    *issues_by_node.get(target_id, ()),
-                },
-                narrative=(
-                    f"`{source.get('qualified_name', source_id)}` "
-                    f"{edge.get('edge_type', '').lower().replace('_', ' ')} "
-                    f"`{target.get('qualified_name', target_id)}`."
-                ),
-                reference_node_ids={source_id, target_id},
-            )
-        )
-
-    enabled = chunking.get("enabled", True) is not False
-    max_bytes = _coerce_positive_int(
-        chunking.get("maxMarkdownBytes"), 1024 * 1024, minimum=1024
-    )
-    split_by = {
-        str(value)
-        for value in (
-            chunking.get("splitBy", [])
-            if isinstance(chunking.get("splitBy", []), list)
-            else []
-        )
-    }
-    references: dict[str, list[str]] = defaultdict(list)
-    descriptors: list[dict[str, object]] = []
-    for topic, cards in topics.items():
-        written, topic_refs = _write_topic_chunks(
-            knowledge_dir,
-            topic,
-            cards,
-            enabled=enabled,
-            max_bytes=max_bytes,
-            split_by=split_by,
-        )
-        descriptors.extend(written)
-        for node_id, values in topic_refs.items():
-            references[node_id].extend(values)
-    manifest = {
-        "version": "1.0",
-        "generatedAt": generated_at,
-        "chunking": {
-            "enabled": enabled,
-            "maxMarkdownBytes": max_bytes,
-            "splitBy": sorted(split_by),
-        },
-        "files": descriptors,
-    }
-    (knowledge_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return {
-        node_id: sorted(set(values)) for node_id, values in references.items()
-    }
-
-
-def _knowledge_card(
-    graph: GraphPackage,
-    *,
-    node_id: str,
-    heading: str,
-    related_node_ids: Iterable[str],
-    edge_ids: Iterable[str],
-    evidence_by_target: dict[str, list[dict[str, str]]],
-    issue_ids: Iterable[str],
-    narrative: str,
-    reference_node_ids: Iterable[str] | None = None,
-) -> dict[str, object]:
-    node = graph.nodes[node_id]
-    related = sorted({item for item in related_node_ids if item})[:50]
-    edges = sorted(set(edge_ids))[:100]
-    evidence = {
-        row["evidence_id"] for row in evidence_by_target.get(node_id, ())
-    }
-    for edge_id in edges:
-        evidence.update(
-            row["evidence_id"] for row in evidence_by_target.get(edge_id, ())
-        )
-    issues = sorted(set(issue_ids))[:50]
-    metadata_lines = [
-        f"node_id: {json.dumps(node_id, ensure_ascii=False)}",
-        f"source: {json.dumps(_node_source_label(node), ensure_ascii=False)}",
-        f"kind: {json.dumps(node.get('node_type', ''), ensure_ascii=False)}",
-        *_yaml_list("related_nodes", related),
-        *_yaml_list("edge_ids", edges),
-        *_yaml_list("evidence_ids", sorted(evidence)[:100]),
-        *_yaml_list("issues", issues),
-    ]
-    safe_heading = " ".join(str(heading).replace("\n", " ").split()) or node_id
-    text = (
-        f"## {safe_heading}\n\n```yaml\n"
-        + "\n".join(metadata_lines)
-        + f"\n```\n\n{narrative.strip()}\n\n"
-    )
-    return {
-        "text": text,
-        "source": _node_source_label(node),
-        "nodeType": node.get("node_type", ""),
-        "anchor": _markdown_anchor(safe_heading),
-        "nodeIds": sorted(
-            set(reference_node_ids or {node_id})
-        ),
-    }
-
-
-def _yaml_list(name: str, values: Iterable[str]) -> list[str]:
-    items = list(values)
-    if not items:
-        return [f"{name}: []"]
-    return [f"{name}:", *(f"  - {json.dumps(item, ensure_ascii=False)}" for item in items)]
-
-
-def _write_topic_chunks(
-    output: Path,
-    topic: str,
-    cards: list[dict[str, object]],
-    *,
-    enabled: bool,
-    max_bytes: int,
-    split_by: set[str],
-) -> tuple[list[dict[str, object]], dict[str, list[str]]]:
-    grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for card in cards:
-        key = str(card.get("source") or "global") if "source" in split_by else ""
-        grouped[key].append(card)
-    if not grouped:
-        grouped[""] = []
-    descriptors: list[dict[str, object]] = []
-    references: dict[str, list[str]] = defaultdict(list)
-    for group, values in sorted(grouped.items()):
-        values.sort(
-            key=lambda card: (
-                str(card.get("nodeType", "")),
-                str(card.get("anchor", "")),
-            )
-        )
-        header = f"# {topic}\n\n"
-        chunks: list[list[dict[str, object]]] = [[]]
-        current_bytes = len(header.encode("utf-8"))
-        for card in values:
-            card_bytes = len(str(card["text"]).encode("utf-8"))
-            if (
-                enabled
-                and chunks[-1]
-                and current_bytes + card_bytes > max_bytes
-            ):
-                chunks.append([])
-                current_bytes = len(header.encode("utf-8"))
-            chunks[-1].append(card)
-            current_bytes += card_bytes
-        stem = topic if not group else f"{topic}-{_slug(group)}"
-        for index, chunk in enumerate(chunks, 1):
-            filename = (
-                f"{stem}.md"
-                if len(chunks) == 1
-                else f"{stem}-{index:06d}.md"
-            )
-            path = output / filename
-            with path.open("w", encoding="utf-8") as handle:
-                handle.write(header)
-                for card in chunk:
-                    handle.write(str(card["text"]))
-            descriptors.append(
-                {
-                    "path": filename,
-                    "topic": topic,
-                    "source": group or None,
-                    "sections": len(chunk),
-                    "bytes": path.stat().st_size,
-                    "sha256": _file_sha256(path),
-                }
-            )
-            for card in chunk:
-                reference = f"knowledge/{filename}#{card['anchor']}"
-                for node_id in card["nodeIds"]:
-                    references[str(node_id)].append(reference)
-    return descriptors, references
-
-
-def _api_heading(node: dict[str, str]) -> str:
-    properties = _properties(node)
-    method = str(properties.get("method") or "").upper()
-    route = str(properties.get("route") or properties.get("path") or "")
-    if method and route:
-        return f"{method} {route}"
-    return _display_name(node, node.get("node_id", ""))
-
-
-def _api_narrative(
-    graph: GraphPackage,
-    node_id: str,
-    callers: list[str],
-    db_paths: list[tuple[str, list[str], list[str]]],
-) -> str:
-    node = graph.nodes[node_id]
-    lines = [
-        f"API `{node.get('qualified_name', node_id)}` is called by "
-        f"{len(callers)} UI/client node(s) and reaches {len(db_paths)} database object(s)."
-    ]
-    lines.extend(_named_bullets(graph, "Callers", callers))
-    lines.extend(
-        _named_bullets(graph, "Database objects", [item[0] for item in db_paths])
-    )
-    return "\n\n".join(lines)
-
-
-def _flow_narrative(
-    graph: GraphPackage,
-    api_paths: list[tuple[str, list[str], list[str]]],
-    db_paths: list[tuple[str, list[str], list[str]]],
-) -> str:
-    lines = [
-        f"This UI flow reaches {len(api_paths)} API operation(s) and "
-        f"{len(db_paths)} database object(s)."
-    ]
-    lines.extend(
-        _named_bullets(graph, "API operations", [item[0] for item in api_paths])
-    )
-    lines.extend(
-        _named_bullets(graph, "Database objects", [item[0] for item in db_paths])
-    )
-    return "\n\n".join(lines)
-
-
-def _database_narrative(
-    graph: GraphPackage,
-    readers: list[dict[str, str]],
-    writers: list[dict[str, str]],
-) -> str:
-    lines = [
-        f"This database object has {len(readers)} direct reader(s) and "
-        f"{len(writers)} direct writer(s)."
-    ]
-    lines.extend(
-        _named_bullets(
-            graph, "Readers", [edge["source_node_id"] for edge in readers]
-        )
-    )
-    lines.extend(
-        _named_bullets(
-            graph, "Writers", [edge["source_node_id"] for edge in writers]
-        )
-    )
-    return "\n\n".join(lines)
-
-
-def _job_narrative(
-    graph: GraphPackage,
-    db_paths: list[tuple[str, list[str], list[str]]],
-) -> str:
-    lines = [f"This job reaches {len(db_paths)} database object(s)."]
-    lines.extend(
-        _named_bullets(graph, "Database objects", [item[0] for item in db_paths])
-    )
-    return "\n\n".join(lines)
-
-
-def _named_bullets(
-    graph: GraphPackage, label: str, node_ids: Iterable[str]
-) -> list[str]:
-    values = [
-        f"- `{_display_name(graph.nodes.get(node_id, {}), node_id)}` (`{node_id}`)"
-        for node_id in sorted(set(node_ids))[:25]
-    ]
-    return [f"**{label}:**\n" + "\n".join(values)] if values else []
-
-
 def _display_name(node: dict[str, str], fallback: str) -> str:
     return (
         node.get("default_display_name")
@@ -2537,29 +2016,6 @@ def _display_name(node: dict[str, str], fallback: str) -> str:
         or node.get("technical_name")
         or fallback
     )
-
-
-def _markdown_anchor(value: str) -> str:
-    text = value.strip().lower()
-    text = re.sub(r"[^\w\s\-{}./]+", "", text, flags=re.UNICODE)
-    return re.sub(r"[\s/]+", "-", text).strip("-") or "section"
-
-
-def _slug(value: str) -> str:
-    result = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return result or "global"
-
-
-def _coerce_positive_int(value: object, default: int, *, minimum: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return default
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
-        return default
-    return result if result >= minimum else default
 
 
 def _content_hash(

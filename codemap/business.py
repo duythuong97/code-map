@@ -575,10 +575,6 @@ def skeleton(index: GraphIndex, flow_id: str, entry: str | None, name: str = "")
     return empty
 
 
-def flow_entry(flow_id: str) -> str | None:
-    return flow_id[5:] if flow_id.startswith("flow:") else None
-
-
 def load_flow(db: sqlite3.Connection, index: GraphIndex, tree: dict[str, Any], flow_id: str) -> dict[str, Any]:
     item = find_item(tree, flow_id)
     if not item or item["kind"] != "flow":

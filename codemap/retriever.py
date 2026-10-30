@@ -1,4 +1,4 @@
-"""Graph RAG retrieval over the ``search_*`` tables of ``codemap.sqlite``.
+"""Retrieval (keyword + graph expansion) over the ``search_*`` tables of ``codemap.sqlite``.
 
 Find seed nodes for a question (business dictionary + name index), walk the
 graph a few hops and render the facts as numbered lines ([C1] concepts, [N1]
@@ -11,7 +11,7 @@ import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from code_tree_exporter.search_index import compact, tokens
 
@@ -268,22 +268,6 @@ class Retriever:
         ids = [node_id for node_id, _ in sorted(scores.items(), key=lambda item: -item[1])[:limit]]
         by_id = {node.id: node for node in self.nodes(ids)}
         return [by_id[node_id] for node_id in ids if node_id in by_id]
-
-    def nodes_by_stable_id(self, stable_ids: Iterable[str]) -> list[GraphNode]:
-        values = list(dict.fromkeys(stable_ids))
-        if not values:
-            return []
-        found = {
-            node.stable_id: node
-            for node in (
-                _node(row)
-                for row in self.db.execute(
-                    f"SELECT id, stable_id, type, name, qualified_name, file, line, names, doc FROM search_nodes WHERE stable_id IN ({_marks(values)})",
-                    values,
-                )
-            )
-        }
-        return [found[value] for value in values if value in found]
 
     # ------------------------------------------------------------------ walk
 

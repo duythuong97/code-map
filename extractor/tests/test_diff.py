@@ -3,18 +3,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.cli import main  # noqa: E402
-from code_tree_exporter.diff import affected_knowledge, compare_with_plan, graph_diff, load_plan, to_markdown  # noqa: E402
-from code_tree_exporter.pipeline import run_pipeline  # noqa: E402
+from code_tree_exporter.cli import main
+from code_tree_exporter.diff import affected_knowledge, compare_with_plan, graph_diff, load_plan, to_markdown
+from code_tree_exporter.pipeline import run_pipeline
 
 BASE_SQL = """CREATE OR REPLACE PROCEDURE CANCEL_ORDER(p_id IN NUMBER) IS
 BEGIN

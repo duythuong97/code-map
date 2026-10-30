@@ -11,7 +11,6 @@ Run:
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import time
@@ -22,7 +21,7 @@ from web.backend.api import graph_routes
 from web.backend.api import business_routes  # noqa: F401  (registers /business routes on the graph blueprint)
 from web.backend.api import knowledge_routes  # noqa: F401  (rules, decisions, questions, review queue)
 from web.backend.api import mcp_http as http_transport
-from codemap.settings import absolute_path, project_path, settings
+from codemap.settings import project_path, settings
 from web.backend.logging_config import configure_backend_logging
 
 APP_CONFIG = settings()
@@ -182,18 +181,3 @@ def app_config_js():
 def web_assets(path: str):
     return send_from_directory(WEB_DIST / "assets", path)
 
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--graph-output", help="Extract output folder (contains codemap.sqlite)")
-    parser.add_argument("--host", default=APP_CONFIG["host"])
-    parser.add_argument("--port", type=int, default=int(APP_CONFIG["port"]))
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    if args.graph_output:
-        GRAPH_OUTPUT = absolute_path(args.graph_output, "--graph-output")
-    logger.info("starting backend dev server host=%s port=%s prefix=%s graph_output=%s", args.host, args.port, URL_PREFIX, GRAPH_OUTPUT)
-    app.run(host=args.host, port=args.port, debug=False)

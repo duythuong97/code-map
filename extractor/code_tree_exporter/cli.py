@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(errors="backslashreplace")
     arguments = list(argv if argv is not None else sys.argv[1:])
     parser = argparse.ArgumentParser(
-        prog="code-tree-exporter",
+        prog="python -m code_tree_exporter",
         description=(
             "Extract configured source units into a SQLite graph package."
         )
@@ -99,15 +99,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     validate_parser.add_argument("--config", help="Default: $CODE_MAP_CONFIG.")
 
-    rag_parser = commands.add_parser(
+    serving_parser = commands.add_parser(
         "serving-export",
-        aliases=["rag-export"],
         description="Write codemap.sqlite (read by the web app and the MCP server) from graph.sqlite.",
     )
-    rag_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
-    rag_parser.add_argument("--input-data", help="Folder with semantic-dictionary.csv, tables.csv, jobnet.csv ...")
-    rag_parser.add_argument("--source-root", help="Folder the evidence paths are relative to.")
-    rag_parser.add_argument("--out", help="Default: codemap.sqlite next to graph.sqlite.")
+    serving_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
+    serving_parser.add_argument("--input-data", help="Folder with semantic-dictionary.csv, tables.csv, jobnet.csv ...")
+    serving_parser.add_argument("--source-root", help="Folder the evidence paths are relative to.")
+    serving_parser.add_argument("--out", help="Default: codemap.sqlite next to graph.sqlite.")
 
     catalog_parser = commands.add_parser(
         "catalog", description="Inspect and validate incoming catalog files."
@@ -121,12 +120,6 @@ def main(argv: list[str] | None = None) -> int:
     inspect_parser.add_argument("path", help="CSV file to inspect.")
     inspect_parser.add_argument("--encoding", default="auto")
 
-    # Keep the V2 invocation (`code-tree-exporter --config ...`) working.
-    if arguments and arguments[0].startswith("-") and arguments[0] not in {
-        "-h",
-        "--help",
-    }:
-        arguments.insert(0, "extract")
     args = parser.parse_args(arguments)
     if args.command in {"extract", "validate", "init"}:
         args.config = _config_path(args.config)
@@ -139,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
-        if args.command in {"serving-export", "rag-export"}:
+        if args.command == "serving-export":
             from .serving import DATABASE_NAME, write_serving_database
             from .sqlite_graph import resolve_database_path
 

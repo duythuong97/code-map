@@ -61,8 +61,8 @@ def _route(text: str) -> str:
 
 
 class GraphIndex:
-    def __init__(self, rag_path: Path) -> None:
-        with closing(sqlite3.connect(f"{rag_path.resolve().as_uri()}?mode=ro", uri=True)) as db:
+    def __init__(self, serving_path: Path) -> None:
+        with closing(sqlite3.connect(f"{serving_path.resolve().as_uri()}?mode=ro", uri=True)) as db:
             self.nodes = {
                 node_id: {"id": node_id, "stable": stable, "type": node_type, "name": name or "", "qualified": qualified or "",
                           "file": file}

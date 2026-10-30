@@ -46,7 +46,7 @@ merge ─▶ linker.RESOLVERS (theo thứ tự) ─▶ hierarchy ─▶ graph.sq
 
 **Hai file output, mỗi file có một lý do riêng:**
 - `graph.sqlite` là dữ liệu gốc, đầy đủ và nặng (`semantic_tree` có thể vài MB
-  mỗi node). diff, stale, export Markdown và incremental đọc file này.
+  mỗi node). diff, stale và incremental đọc file này.
 - `codemap.sqlite` là bản đọc duy nhất cho web và MCP. Chỉ mục tìm kiếm của
   MCP được dựng từ chính các bảng `graph_*` trong cùng file, nên hai bên luôn
   thấy cùng node và cùng tên edge. `extractor/tests/test_serving_export.py`

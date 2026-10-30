@@ -145,16 +145,6 @@ def link_gateway(graph: GraphPackage) -> None:
             )
 
 
-def link_db(graph: GraphPackage) -> None:
-    """Compatibility entry point for resolving all deferred database references."""
-    resolve_deferred_references(graph, include_routines=False)
-
-
-def link_routines(graph: GraphPackage) -> None:
-    """Compatibility entry point for resolving deferred routine references."""
-    resolve_deferred_references(graph, include_database=False)
-
-
 def resolve_deferred_references(
     graph: GraphPackage,
     *,

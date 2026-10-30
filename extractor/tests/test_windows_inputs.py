@@ -4,21 +4,18 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT.parent))
 
-from code_tree_exporter import graph_package  # noqa: E402
-from code_tree_exporter.decoding import read_text_auto  # noqa: E402
-from code_tree_exporter.env_loader import expand_env_json  # noqa: E402
-from code_tree_exporter.serving import write_serving_database  # noqa: E402
-from testdata.engine_graph import business_inputs, engine_graph  # noqa: E402
+from code_tree_exporter import graph_package
+from code_tree_exporter.decoding import read_text_auto
+from code_tree_exporter.env_loader import expand_env_json
+from code_tree_exporter.serving import write_serving_database
+from testdata.engine_graph import business_inputs, engine_graph
 
 
 class WindowsInputTests(unittest.TestCase):

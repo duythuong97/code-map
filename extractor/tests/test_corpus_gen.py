@@ -17,14 +17,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = PROJECT_ROOT.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(REPOSITORY / "tools" / "corpus-gen"))
 
-from corpus_gen.generator import generate  # noqa: E402
-from corpus_gen.score import graph_impact, load_yaml, score_extract, score_impact  # noqa: E402
+from corpus_gen.generator import generate
+from corpus_gen.score import graph_impact, load_yaml, score_extract, score_impact
 
-from code_tree_exporter.pipeline import _typescript_path, run_pipeline  # noqa: E402
-from code_tree_exporter.verify import sample_edges, score_sample, verify_oracle, write_sample  # noqa: E402
+from code_tree_exporter.pipeline import _typescript_path, run_pipeline
+from code_tree_exporter.verify import sample_edges, score_sample, verify_oracle, write_sample
 
 PORTABLE = {"web", "db", "ops"}
 

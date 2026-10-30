@@ -4,16 +4,14 @@ from __future__ import annotations
 import dataclasses
 import os
 import shutil
-import sys
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.extractors.package_support import dotnet_sql  # noqa: E402
-from code_tree_exporter.extractors.package_support import semantic_tree_v3  # noqa: E402
-from code_tree_exporter.extractors.package_support.oracle_parser import (  # noqa: E402
+from code_tree_exporter.extractors.package_support import dotnet_sql
+from code_tree_exporter.extractors.package_support import semantic_tree_v3
+from code_tree_exporter.extractors.package_support.oracle_parser import (
     OraclePlsqlParser,
     RemoteOraclePlsqlParser,
 )

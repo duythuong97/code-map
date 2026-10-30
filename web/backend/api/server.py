@@ -1,9 +1,4 @@
-"""Production entrypoint for the Code Map Flask app.
-
-PM2 should run this file instead of embedding Python bootstrap code in
-``ecosystem.config.js``.  Keeping the startup logic in Python makes it work
-consistently on macOS, Linux, and Windows.
-"""
+"""``codemap serve``: the web app and the HTTP MCP endpoint on waitress (PM2 runs the same command)."""
 from __future__ import annotations
 
 import argparse

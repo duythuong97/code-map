@@ -11,11 +11,10 @@ from pathlib import Path
 from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.revisions import source_revisions  # noqa: E402
-from code_tree_exporter.stale import _revision_changes  # noqa: E402
-from code_tree_exporter.vcs import SvnRepository, repository_at  # noqa: E402
+from code_tree_exporter.revisions import source_revisions
+from code_tree_exporter.stale import _revision_changes
+from code_tree_exporter.vcs import SvnRepository, repository_at
 
 # Answers the few svn commands vcs.py runs, for a working copy at $FAKE_SVN_ROOT checked out at r42.
 FAKE_SVN = textwrap.dedent(

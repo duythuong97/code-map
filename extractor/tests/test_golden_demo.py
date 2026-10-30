@@ -12,17 +12,15 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = PROJECT_ROOT.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from code_tree_exporter.pipeline import _typescript_path, run_pipeline  # noqa: E402
-from code_tree_exporter.snapshot import graph_snapshot, snapshot_difference, write_snapshot  # noqa: E402
+from code_tree_exporter.pipeline import _typescript_path, run_pipeline
+from code_tree_exporter.snapshot import graph_snapshot, snapshot_difference, write_snapshot
 
 GOLDEN = REPOSITORY / "testdata" / "golden"
 EXAMPLES = REPOSITORY / "examples"
@@ -47,7 +45,7 @@ class GoldenDemoTests(unittest.TestCase):
                     "catalog": {"folder": str(EXAMPLES / "catalog"), "strict": True},
                     "sources": [source for source in config["sources"] if keep(source)],
                     "incremental": False,
-                    "ragExport": False,
+                    "servingExport": False,
                     "lowPriority": False,
                 }
             )

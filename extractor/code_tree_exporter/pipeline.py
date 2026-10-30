@@ -315,15 +315,6 @@ def run_pipeline(
             source_name=str(config.get("name") or root.name),
             config_path=str(config_path),
             output_mode=output_mode,
-            combined_projection=bool(
-                config.get("combinedProjection", output_mode == "flat")
-            ),
-            knowledge_chunking=(
-                config.get("knowledgeChunking")
-                if isinstance(config.get("knowledgeChunking"), dict)
-                else {}
-            ),
-            max_tree_lines=limits["maxTreeLines"],
             max_evidence_snippet_chars=limits["maxEvidenceSnippetChars"],
             max_issues_per_type_per_file=limits["maxIssuesPerTypePerFile"],
             graph_index=str(config.get("graphIndex", "slim")),
@@ -333,8 +324,8 @@ def run_pipeline(
         del graph
         gc.collect()
         publish_v3(final_staging, catalog=catalog, config=config)
-        # "ragExport": false (older name) or "servingExport": false skips codemap.sqlite.
-        if config.get("servingExport", config.get("ragExport", True)) is not False:
+        # "servingExport": false skips codemap.sqlite.
+        if config.get("servingExport", True) is not False:
             write_serving_database(
                 final_staging / "graph.sqlite",
                 final_staging / SERVING_DATABASE_NAME,
@@ -587,7 +578,6 @@ def _resolved_limits(config: dict) -> dict[str, int]:
         return _positive_int(owner, key, default, minimum=minimum)
 
     result = {
-        "maxTreeLines": value("maxTreeLines", 20_000, 10),
         "maxFileBytes": value("maxFileBytes", 10 * 1024 * 1024, 1024),
         "maxEvidenceSnippetChars": value("maxEvidenceSnippetChars", 500),
         "maxIssuesPerTypePerFile": value("maxIssuesPerTypePerFile", 20),

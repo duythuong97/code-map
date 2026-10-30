@@ -26,8 +26,6 @@ from typing import Any, Iterable
 
 from code_tree_exporter.fingerprints import combined
 
-from codemap.storage import KNOWLEDGE_LAYER_SCHEMA  # noqa: F401  (tables this module uses)
-
 RULE_STATUSES = ("draft", "approved", "needs_review", "retired")
 RULE_SOURCES = ("code", "sme", "doc", "ai")
 DECISION_STATUSES = ("proposed", "accepted", "rejected", "superseded")

@@ -7,7 +7,6 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from codemap import PROJECT_ROOT
 
 from code_tree_exporter.serving import write_serving_database
 from testdata.engine_graph import BIG, business_inputs, engine_graph

@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from code_tree_exporter.init_config import init_config  # noqa: E402
+from code_tree_exporter.init_config import init_config
 
 WEB_PROJECT = '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>'
 EXE_PROJECT = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>'

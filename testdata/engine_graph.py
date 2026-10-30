@@ -32,7 +32,7 @@ CREATE TABLE flows(flow_id INTEGER PRIMARY KEY, stable_id TEXT, flow_type TEXT, 
 CREATE TABLE flow_steps(flow_id INTEGER, step_index INTEGER, node_id INTEGER, incoming_edge_id INTEGER);
 """
 
-# Engine ids are 63-bit hashes; the RAG file must renumber them for JavaScript.
+# Engine ids are 63-bit hashes; codemap.sqlite must renumber them for JavaScript.
 BIG = 7_000_000_000_000_000_000
 
 
