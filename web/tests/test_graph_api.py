@@ -1,20 +1,17 @@
-"""The web API reads the extract output directly (codemap-web.sqlite + graph.sqlite)."""
+"""The web API reads the extract output directly (codemap.sqlite + graph.sqlite)."""
 from __future__ import annotations
 
 import os
 import sqlite3
-import sys
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-os.environ.setdefault("CODE_MAP_PROJECT_ROOT", str(PROJECT_ROOT))
+from codemap import PROJECT_ROOT
 
-from code_tree_exporter.rag_export import write_rag_database  # noqa: E402
-from shared.fixtures.engine_graph import business_inputs, engine_graph  # noqa: E402
+from code_tree_exporter.serving import write_serving_database
+from testdata.engine_graph import business_inputs, engine_graph
 
 API = "/api/graph"
 CANCEL = "method:a:Orders.CancelOrder"
@@ -46,7 +43,7 @@ class GraphApiTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def extract(self) -> None:
-        write_rag_database(self.output / "graph.sqlite", self.output / "codemap-rag.sqlite", input_root=self.inputs)
+        write_serving_database(self.output / "graph.sqlite", self.output / "codemap.sqlite", input_root=self.inputs)
 
     def get(self, path: str):
         response = self.client.get(API + path)
@@ -62,7 +59,7 @@ class GraphApiTests(unittest.TestCase):
         self.assertEqual(items[TABLE]["en"]["name"], "Order Header")
 
     def test_detail_reads_semantic_tree_from_graph_sqlite(self) -> None:
-        with closing(sqlite3.connect(self.output / "codemap-web.sqlite")) as web:
+        with closing(sqlite3.connect(self.output / "codemap.sqlite")) as web:
             stored = web.execute("SELECT properties_json FROM graph_nodes WHERE node_id=?", (CANCEL,)).fetchone()[0]
         self.assertNotIn("semantic_tree", stored)
         detail = self.get(f"/detail?target_id={CANCEL}&target_type=NODE&relations=0&locale=vi")
@@ -114,7 +111,7 @@ class GraphApiTests(unittest.TestCase):
             headers={"X-Code-Map-Token": token},
         )
         self.assertEqual(response.status_code, 201, response.get_json())
-        self.extract()  # a new extract replaces codemap-web.sqlite
+        self.extract()  # a new extract replaces codemap.sqlite
         mapped = self.get(f"/business-semantic-suggestions?target_id={TABLE}&locale=vi")["selected"]
         self.assertEqual([(row["semantic_id"], row["author_name"]) for row in mapped], [("semantic:orders:cancel-order", "an")])
         notes = self.get(f"/knowledge?target_id={TABLE}")
@@ -131,15 +128,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class WindowsConfigTests(unittest.TestCase):
-    def test_backslash_paths_in_env_keep_the_config_valid(self) -> None:
-        from unittest import mock
-
-        from web.backend.config import load_json_config
+class SettingsTests(unittest.TestCase):
+    def test_web_reads_root_and_output_from_the_extractor_config(self) -> None:
+        from codemap.settings import load_settings
 
         with tempfile.TemporaryDirectory() as temporary:
-            config = Path(temporary) / "config.json"
-            config.write_text('{"graph_output": "${CODE_MAP_GRAPH_OUTPUT}"}', encoding="utf-8")
-            path = r"C:\code-map\new\出力"
-            with mock.patch.dict(os.environ, {"CODE_MAP_GRAPH_OUTPUT": path}):
-                self.assertEqual(load_json_config(config)["graph_output"], path)
+            base = Path(temporary)
+            (base / "src").mkdir()
+            config = base / "map" / "code-map.json"
+            config.parent.mkdir()
+            # A BOM (Notepad) and paths relative to the config file.
+            config.write_text(
+                '{"root": "../src", "output": "./out", "web": {"port": 9000, "knowledgeDb": "kb.sqlite"}}',
+                encoding="utf-8-sig",
+            )
+            settings = load_settings(config)
+        self.assertEqual(settings["source_root"], (base / "src").resolve())
+        self.assertEqual(settings["graph_output"], (base / "map" / "out").resolve())
+        self.assertEqual(settings["knowledge_db"], (base / "map" / "kb.sqlite").resolve())
+        self.assertEqual((settings["port"], settings["url_prefix"]), (9000, "/code-map"))
+
+    def test_dotenv_values_are_literal(self) -> None:
+        from unittest import mock
+
+        from code_tree_exporter.env_loader import load_dotenv
+
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ):
+            env = Path(temporary) / ".env"
+            # Notepad's BOM; python-dotenv would turn the quoted \n into a line break.
+            env.write_text('\ufeffMAP_A="C:\\new\\x"\nMAP_B=D:/code-map/code-map.json\n', encoding="utf-8")
+            for name in ("MAP_A", "MAP_B"):
+                os.environ.pop(name, None)
+            load_dotenv(env)
+            self.assertEqual(os.environ["MAP_A"], "C:\\new\\x")
+            self.assertEqual(os.environ["MAP_B"], "D:/code-map/code-map.json")

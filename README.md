@@ -5,14 +5,18 @@ dựng graph cho toàn hệ thống: màn hình → API → code → procedure �
 kèm từ điển nghiệp vụ. AI agent (GitHub Copilot, Claude Code…) đọc graph này qua
 **MCP server**. Ngoài ra có thêm web UI để xem luồng và duyệt tài liệu.
 
-Chi tiết về config, output và các lệnh nằm trong [docs/REFERENCE.md](docs/REFERENCE.md).
+Chi tiết về config, output và các lệnh nằm trong [docs/REFERENCE.md](docs/REFERENCE.md);
+kiến trúc nằm trong [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Mọi việc đi qua một lệnh: `codemap.cmd` trên Windows, `./codemap.sh` trên
+macOS/Linux (`--help` để xem danh sách lệnh).
 
 ## Yêu cầu
 
 - Python 3.10+
 - Node.js 20+ (để quét Angular và build web UI)
 - .NET SDK 9+ (chỉ cần khi quét source .NET)
-- Git
+- Git hoặc Subversion (`svn` command line; trên Windows là "command line client tools" của TortoiseSVN) cho repo cần quét
 
 ## 1. Cài đặt
 
@@ -22,49 +26,71 @@ python3 -m venv .venv
 npm ci --prefix extractor/code_tree_exporter/extractors/angular-extractor
 ```
 
-Trên Windows dùng `py -3.11 -m venv .venv` và `.venv\Scripts\python.exe` thay cho
-`.venv/bin/python`.
+Chạy ở thư mục gốc của repo: `requirements.txt` cài luôn chính repo này ở chế độ
+editable (`pip install -e .`), nên `codemap`, `web` và `code_tree_exporter` import
+được từ bất kỳ đâu, không cần `PYTHONPATH`. Trên Windows dùng `py -3.11 -m venv .venv`
+và `.venv\Scripts\python.exe` thay cho `.venv/bin/python`.
 
 ## 2. Cấu hình
 
-```bash
-cp .env.example .env
+Demo chạy ngay, không cần cấu hình gì. Với hệ thống thật, mọi đường dẫn nằm trong
+**một file config** đặt ngoài repo này. Extractor, web và MCP cùng đọc file đó:
+
+```text
+D:/code-map-prod/
+├── code-map.json     ← tạo bằng codemap.cmd init (dưới đây)
+├── input-data/       ← CSV nghiệp vụ (từ điển, jobnet, ...)
+├── catalog/
+└── output/           ← extract ghi vào đây; web và MCP đọc từ đây
 ```
 
-Sửa 3 đường dẫn tuyệt đối trong `.env`:
+Tạo config bằng cách quét mọi repo trong một thư mục:
 
-| Biến | Ý nghĩa |
-|---|---|
-| `CODE_MAP_PROJECT_ROOT` | thư mục repo này |
-| `CODE_MAP_SOURCE_ROOT` | thư mục chứa source cần quét |
-| `CODE_MAP_GRAPH_OUTPUT` | thư mục output của extract (MCP server và web đọc từ đây) |
+```bash
+codemap.cmd init --root C:/sources --config D:/code-map-prod/code-map.json --database DB1 --schema APP
+# ./codemap.sh init ... trên macOS/Linux; thêm --dry-run để xem trước, không ghi file
+```
 
-Để quét hệ thống của bạn, copy [`examples/demo-config.json`](examples/demo-config.json)
-rồi sửa `root` và danh sách `sources` (mỗi repo một source, kèm `type`: `angular`,
-`dotnet-api`, `dotnet-batch`, `oracle-plsql`, `sql-files`). Các tuỳ chọn khác xem
+Lệnh đi vào từng repo trong `C:/sources` (repo git hoặc working copy SVN; kể cả
+thư mục nhóm chứa nhiều repo) và thêm một source cho mỗi loại code tìm thấy:
+`angular` (`angular.json`, hoặc `.angular-cli.json` của Angular 2–5), `dotnet-api`/`dotnet-batch` (`.csproj` web hoặc Exe; bỏ qua
+thư viện và project test), `oracle-plsql` (`.pkb`, `.pks`, … hoặc `.sql` có
+`CREATE PACKAGE/PROCEDURE/...`), `sql-files` (`.sql` khác, `.ctl`), `api-gateway`
+(template CloudFormation có `AWS::ApiGateway::Method`). Repo không
+có gì để quét thì được liệt kê để bạn biết. Chạy lại khi có repo mới: source đã
+có (và những gì bạn đã sửa trong đó) được giữ nguyên, chỉ thêm repo mới.
+
+Sau đó xem lại `code-map.json`: `database`/`schema` của từng source. Repo không
+cần quét thì xoá source của nó và thêm tên repo vào `ignoreRepositories`, để lần
+`init` sau không thêm lại. Đường dẫn tương đối được tính từ file config. Các tuỳ chọn khác xem
 [docs/REFERENCE.md#config](docs/REFERENCE.md#config).
+
+Rồi trỏ `.env` tới file đó:
+
+```bash
+cp .env.example .env
+# CODE_MAP_CONFIG=D:/code-map-prod/code-map.json   (Windows: dùng / để khỏi escape)
+# CODE_MAP_KNOWLEDGE_TOKEN=...                      (để lưu ghi chú trên web)
+```
 
 ## 3. Extract
 
-Chạy thử với demo có sẵn (output ra `output/demo`; demo có source .NET nên cần .NET SDK):
+Validate rồi extract trong một lệnh, với config trong `CODE_MAP_CONFIG`
+(chưa đặt thì là demo, output ra `var/output/demo`; demo có source .NET nên cần .NET SDK):
 
 ```bash
-.venv/bin/python scripts/run_demo_pipeline.py
+./codemap.sh extract                                # Windows: codemap.cmd extract
+./codemap.sh extract --config path/to/config.json   # config khác
 ```
 
-Với config của bạn:
-
-```bash
-export PYTHONPATH=extractor          # Windows: set PYTHONPATH=extractor
-.venv/bin/python -m code_tree_exporter validate --config path/to/config.json
-.venv/bin/python -m code_tree_exporter extract  --config path/to/config.json
-```
+Các tuỳ chọn khác của `extract` (ví dụ `--at REV`) truyền thẳng vào sau;
+`--skip-validate` bỏ bước validate.
 
 Chạy extract lại mỗi khi code đổi. Source nào không đổi sẽ được dùng lại, nên
 lần sau nhanh hơn nhiều. Để biết graph còn khớp với code hay không:
 
 ```bash
-.venv/bin/python -m code_tree_exporter stale --graph <thư mục output>
+./codemap.sh stale
 ```
 
 ## 4. Bật MCP cho AI agent
@@ -72,15 +98,18 @@ lần sau nhanh hơn nhiều. Để biết graph còn khớp với code hay khô
 Kiểm tra server đọc được output:
 
 ```bash
-.venv/bin/python web/backend/codemap_mcp/__main__.py --graph-output <thư mục output> --self-test
+./codemap.sh mcp --self-test
 ```
+
+Server đọc `output` của config trong `CODE_MAP_CONFIG`; `--config <config>` hoặc
+`--graph-output <thư mục output>` để chọn cái khác.
 
 Lệnh in ra graph extract từ commit nào, còn khớp với code không, và danh sách tool.
 
 ### GitHub Copilot (VS Code, Agent mode)
 
 Thêm vào `.vscode/mcp.json` của workspace (hoặc chạy lệnh **MCP: Add Server** trong
-VS Code), dùng đường dẫn tuyệt đối:
+VS Code), dùng đường dẫn tuyệt đối (bỏ `--config` nếu đã có `CODE_MAP_CONFIG` trong `.env`):
 
 ```json
 {
@@ -88,10 +117,7 @@ VS Code), dùng đường dẫn tuyệt đối:
     "codemap": {
       "type": "stdio",
       "command": "/path/to/code-map/.venv/bin/python",
-      "args": [
-        "/path/to/code-map/web/backend/codemap_mcp/__main__.py",
-        "--graph-output", "/path/to/output"
-      ]
+      "args": ["-m", "codemap", "mcp", "--config", "/path/to/code-map.json"]
     }
   }
 }
@@ -103,14 +129,14 @@ Mở Copilot Chat, chọn **Agent**, rồi bật các tool `codemap_*` trong dan
 ### Claude Code
 
 ```bash
-claude mcp add codemap -- /path/to/code-map/.venv/bin/python \
-  /path/to/code-map/web/backend/codemap_mcp/__main__.py --graph-output /path/to/output
+claude mcp add codemap -- /path/to/code-map/.venv/bin/python -m codemap mcp --config /path/to/code-map.json
 ```
 
 ### Server dùng chung cho team (HTTP)
 
 Web backend (bước 5) phục vụ luôn MCP tại `http://<host>:8000/code-map/mcp`, đọc
-`CODE_MAP_GRAPH_OUTPUT` trong `.env`:
+cùng config với web (`CODE_MAP_CONFIG`). Trên PROD đây là cách nên dùng: client
+không cần biết đường dẫn trên server.
 
 ```json
 { "servers": { "codemap": { "type": "http", "url": "http://<host>:8000/code-map/mcp" } } }
@@ -138,14 +164,19 @@ tĩnh không thấy).
 
 ```bash
 npm ci --prefix web/frontend && npm run build --prefix web/frontend
-.venv/bin/python web/backend/api/server.py
+./codemap.sh serve
 ```
 
-Mở `http://127.0.0.1:8000/code-map/`. Muốn chạy nền thì dùng `pm2 start web/ecosystem.config.js`.
+Mở `http://127.0.0.1:8000/code-map/`. Web đọc config trong `CODE_MAP_CONFIG`
+(hoặc `--config <config>`); host, port, URL prefix đổi trong mục `web` của config
+([docs/REFERENCE.md#cấu-hình-chung](docs/REFERENCE.md#cấu-hình-chung)). Muốn chạy
+nền thì dùng `pm2 start web/ecosystem.config.js`.
 
 ## Chạy test
 
 ```bash
 .venv/bin/python -m unittest discover -s extractor/tests -t extractor
+.venv/bin/python -m unittest discover -s codemap/tests -t .
+.venv/bin/python -m unittest discover -s codemap/mcp/tests -t .
 .venv/bin/python -m unittest discover -s web/tests -t .
 ```

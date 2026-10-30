@@ -26,6 +26,7 @@ export const nodeTypeRank = {
   CONTROLLER: 30,
   SERVICE: 32,
   REPOSITORY: 34,
+  MESSAGE_TOPIC: 38,
   JOB_NETWORK: 40,
   JOB: 42,
   EXECUTABLE: 44,
@@ -69,6 +70,7 @@ export const nodeTypeKinds = {
   JOB: "sequence",
   EXECUTABLE: "code",
   COMMAND_MODE: "code",
+  MESSAGE_TOPIC: "sequence",
   PLSQL_PACKAGE: "file",
   PROCEDURE: "code",
   FUNCTION: "code",
@@ -98,6 +100,7 @@ export const nodeIntent = {
   JOB: "Batch job. Use Overview for executable mapping and Flow for tables touched by the job.",
   EXECUTABLE: "Runtime executable. Use Flow to trace command modes, SQL files, procedures, and table access.",
   COMMAND_MODE: "Executable command mode. Use Relations to understand mode-specific behavior.",
+  MESSAGE_TOPIC: "Message topic or queue (declared in message-flows.csv). Incoming PUBLISHES are its producers, outgoing CONSUMED_BY its consumers.",
   PLSQL_PACKAGE: "PL/SQL package container. Use Relations to inspect procedures/functions and dependencies.",
   PROCEDURE: "Executable database routine. Use Flow and Evidence to confirm calls and table operations.",
   FUNCTION: "Executable database function. Use Flow and Evidence to confirm calls and table operations.",
@@ -169,7 +172,7 @@ export const actorTypeLabels = {
 export function edgeColor(type) {
   if (["READS", "REMOTE_READS"].includes(type)) return "#2563eb";
   if (["WRITES", "INSERTS", "UPDATES", "DELETES", "MERGES"].includes(type)) return "#16a34a";
-  if (["CALLS", "CALLS_API", "STARTS"].includes(type)) return "#f97316";
+  if (["CALLS", "CALLS_API", "STARTS", "ROUTES_TO", "PUBLISHES", "CONSUMED_BY"].includes(type)) return "#f97316";
   if (type === "TRIGGERS") return "#dc2626";
   if (type === "CONTAINS") return "#64748b";
   return "#8b5cf6";

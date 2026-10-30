@@ -21,12 +21,14 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from .contract.vocabulary import ANY_READ_EDGES, ANY_WRITE_EDGES
 from .fingerprints import node_fingerprints
-from .rag_export import compact
+from .search_index import compact
 
 STRUCTURAL = frozenset({"CONTAINS", "BELONGS_TO", "PROJECT_REFERENCE", "USES", "DECLARES", "DEFINES"})
-WRITE_EDGES = frozenset({"WRITES_TO", "INSERTS", "UPDATES", "DELETES", "MERGES", "WRITES", "LOADS_INTO", "WRITES_COLUMN"})
-READ_EDGES = frozenset({"READS_FROM", "READS", "REMOTE_READS", "READS_COLUMN"})
+# graph.sqlite speaks the engine vocabulary; accept both.
+WRITE_EDGES = ANY_WRITE_EDGES
+READ_EDGES = ANY_READ_EDGES
 DATABASE_TYPES = frozenset({
     "TABLE", "VIEW", "MATERIALIZED_VIEW", "COLUMN", "SEQUENCE", "SYNONYM", "PROCEDURE", "FUNCTION", "TRIGGER",
     "PLSQL_PACKAGE", "LOCAL_ROUTINE", "DATABASE", "DATABASE_SCHEMA", "SQL_FILE", "LOADER_CONTROL",
@@ -224,7 +226,7 @@ def compare_with_plan(diff: dict[str, Any], plan: dict[str, Any]) -> dict[str, A
 # --------------------------------------------------------------------------- knowledge (rules, docs, owners)
 
 def affected_knowledge(diff: dict[str, Any], knowledge_db: Path | None, web_db: Path | None = None) -> dict[str, Any]:
-    """Rules and flow documents (knowledge.sqlite) and owners (codemap-web.sqlite of the head) of what changed."""
+    """Rules and flow documents (knowledge.sqlite) and owners (codemap.sqlite of the head) of what changed."""
     changed = set(diff["changed_node_ids"])
     result: dict[str, Any] = {"rules": [], "flows": [], "owners": []}
     if knowledge_db is not None and knowledge_db.is_file():

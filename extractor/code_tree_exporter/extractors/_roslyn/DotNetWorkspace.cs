@@ -151,7 +151,17 @@ public static class DotNetWorkspaceLoader
                     diagnostics.Add($"Failed to read project file {projectPath}: {exception.Message}");
                 }
             }
-            var compilation = await project.GetCompilationAsync() as CSharpCompilation;
+            CSharpCompilation? compilation;
+            try
+            {
+                compilation = await project.GetCompilationAsync() as CSharpCompilation;
+            }
+            catch (Exception exception)
+            {
+                // A broken reference, analyzer or generator in one old project must not stop the others.
+                diagnostics.Add($"Compilation failed for {project.FilePath}: {exception.GetType().Name}: {exception.Message}");
+                continue;
+            }
             if (compilation is null)
             {
                 diagnostics.Add($"Compilation unavailable for {project.FilePath}");
@@ -176,10 +186,19 @@ public static class DotNetWorkspaceLoader
                     continue;
                 documentPaths.Add(path);
                 if (filesByPath.ContainsKey(path)) continue;
-                var syntaxTree = await document.GetSyntaxTreeAsync();
-                if (syntaxTree is null) continue;
-                var compilationTree = treesByPath.GetValueOrDefault(path) ?? syntaxTree;
-                var text = (await document.GetTextAsync()).ToString();
+                // Only a tree of this compilation can get a semantic model from it; a document
+                // the compilation does not hold is parsed again as a loose file below.
+                if (!treesByPath.TryGetValue(path, out var compilationTree)) continue;
+                string text;
+                try
+                {
+                    text = (await document.GetTextAsync()).ToString();
+                }
+                catch (Exception exception)
+                {
+                    diagnostics.Add($"Failed to read {path}: {exception.GetType().Name}: {exception.Message}");
+                    continue;
+                }
                 var sourceFile = new SourceFile(
                     path,
                     ExtractorRuntime.RepositoryPath(Path.GetRelativePath(root, path)),

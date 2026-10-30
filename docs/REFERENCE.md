@@ -2,27 +2,28 @@
 
 Cách cài và chạy nhanh nằm ở [README](../README.md). Tài liệu này mô tả chi tiết config, output, hiệu năng và các lệnh.
 
-Repository gồm hai phần (code-tree đã gộp vào đây):
+Repository gồm ba phần, xếp theo chiều phụ thuộc (kiến trúc chi tiết ở
+[ARCHITECTURE.md](ARCHITECTURE.md)):
 
 - **`extractor/`**: package `code_tree_exporter`. Scan source Angular, .NET
   API/batch, Oracle PL/SQL, SQL file, XML mapper và ghi ra `graph.sqlite` cùng
-  `codemap-rag.sqlite`.
-- **`web/`**: backend Flask (REST cho UI và MCP server cho AI agent) và UI React.
-  Đọc thẳng output của extract và hiển thị flow, lineage, evidence.
+  `codemap.sqlite`.
+- **`codemap/`** (lớp đọc, không Flask): settings, mở database, kho tri thức,
+  tài liệu luồng, retriever. **`codemap/mcp/`**: MCP server cho AI agent.
+- **`web/`**: route Flask (REST cho UI, mount MCP qua HTTP) và UI React.
 
-Thư mục dùng chung: `shared/` (fixture cho test của extractor và web),
-`examples/` (source demo, input-data, catalog, `demo-config.json`) và
-`scripts/`.
+Ngoài ra: `examples/` (source demo, input-data, catalog, `demo-config.json`),
+`testdata/` (fixture cho test), `tools/` và `var/` (output, knowledge db và log
+của demo; Git bỏ qua).
 
 ```text
-source ──extract──▶ output/<run>/ ─┬─ graph.sqlite         (graph đầy đủ của engine)
-                                   ├─ codemap-web.sqlite   ──▶ web (đọc trực tiếp)
-                                   └─ codemap-rag.sqlite   ──▶ MCP server (AI agent)
+source ──extract──▶ <output>/ ─┬─ graph.sqlite     (graph đầy đủ của engine: diff, stale, Markdown, semantic_tree)
+                               └─ codemap.sqlite   (bảng graph_* + chỉ mục search_*) ──▶ web và MCP server
 ```
 
 Không còn bước import. Web mở thẳng thư mục output, ghi chú và gán thuật ngữ do
-người dùng thêm nằm riêng trong `data/knowledge.sqlite` nên lần extract sau
-không xoá mất.
+người dùng thêm nằm riêng trong `knowledge.sqlite` (mặc định `var/knowledge.sqlite`,
+hoặc `web.knowledgeDb` của config) nên lần extract sau không xoá mất.
 
 ## Chạy demo end-to-end
 
@@ -33,29 +34,29 @@ cho Angular và để build UI.
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm ci --prefix extractor/code_tree_exporter/extractors/angular-extractor   # TypeScript 5.9 (7.x has no JS API)
-cp .env.example .env        # sửa CODE_MAP_PROJECT_ROOT, CODE_MAP_SOURCE_ROOT, CODE_MAP_GRAPH_OUTPUT
-.venv/bin/python scripts/run_demo_pipeline.py
+./codemap.sh extract   # không cần .env cho demo; Windows: codemap.cmd extract
 ```
 
 Trên Windows dùng `.venv\Scripts\python.exe`. Script chạy `validate` rồi
-`extract`, ra `output/demo/`. Lần đầu có .NET, các worker được build một lần
+`extract`, ra `var/output/demo/`. Lần đầu có .NET, các worker được build một lần
 (vài phút) rồi dùng lại.
 
 Chạy UI:
 
 ```bash
 npm ci --prefix web/frontend && npm run build --prefix web/frontend
-.venv/bin/python web/backend/api/server.py   # http://127.0.0.1:8000/code-map/
+./codemap.sh serve   # http://127.0.0.1:8000/code-map/
 ```
 
-Web đọc thư mục trong `CODE_MAP_GRAPH_OUTPUT` (file `.env`). Muốn xem một lần
-extract khác thì đổi biến này, hoặc chạy bản dev
+Web đọc `output` của config trong `CODE_MAP_CONFIG` (mặc định là demo). Muốn
+xem config khác thì chạy `codemap serve --config <config>`, hoặc bản dev
 `python web/backend/api/app.py --graph-output <thư mục output>`.
 
-`codemap-web.sqlite` đã chuyển sẵn vocabulary của engine sang vocabulary của UI:
+`codemap.sqlite` dùng tên edge của lớp phục vụ, đổi từ tên của engine đúng một chỗ
+([contract/vocabulary.py](../extractor/code_tree_exporter/contract/vocabulary.py)):
 - `READS_FROM` → `READS`/`REMOTE_READS`
 - `WRITES_TO` → `INSERTS`/`UPDATES`/`DELETES`/`MERGES`
-- `HANDLES_API` → `HANDLED_BY`
+- `HANDLES_API` → `HANDLED_BY`, `INVOKES` (job → command mode) → `CALLS`
 
 File này cũng chứa:
 - path đọc/ghi lấy từ flow của engine;
@@ -123,6 +124,13 @@ Mặc định đã chọn để máy vẫn dùng được trong lúc scan:
 - UI mở rộng tối đa 200 node mỗi lần (chỉnh được tới 1000); `/detail` mà UI gọi
   dùng `relations=0` (chỉ số đếm), danh sách quan hệ lấy qua `/flow`.
 
+Lỗi của Roslyn trên một file C# (thường là `NullReferenceException` với code
+mà semantic model không bind được) không dừng cả source nữa. Phase đó bị bỏ qua
+cho file đó, và lỗi thành issue `EXTRACTOR_ERROR` (tên file, phase, loại
+exception, 8 dòng đầu stack). Project mà MSBuild không tạo được compilation thì
+ghi vào `MSBUILD_WORKSPACE_DIAGNOSTIC`. Đặt `CODE_TREE_STRICT=1` để worker
+ném lỗi ra với stack đầy đủ khi cần debug.
+
 Phần tốn RAM nhất còn lại là Roslyn worker (khoảng 1,6GB cho 1.500 file C#), vì
 nó giữ compilation và semantic model của cả solution. Với solution rất lớn, tách
 thành nhiều source theo nhóm project trong config để mỗi worker nhỏ hơn.
@@ -145,13 +153,17 @@ không đổi stable/numeric ID của graph V2. Config chạy mẫu là
 
 ## Phiên bản, độ tươi và extract lại nhanh
 
-Mỗi lần extract ghi commit của từng source (`git rev-parse HEAD`, branch, có
-sửa chưa commit hay không) vào `manifest.json` (`revisions`), metadata
-`source_revisions` của `graph.sqlite` và bảng `meta` của `codemap-rag.sqlite`.
+Mỗi lần extract ghi revision của từng source vào `manifest.json` (`revisions`),
+metadata `source_revisions` của `graph.sqlite` và bảng `meta` của `codemap.sqlite`:
+`vcs` (`git`, `svn` hoặc `none`), `commit` (hash của git, số revision của SVN),
+branch (SVN: `^/trunk`, `^/branches/...`), có sửa chưa commit hay không. Git và
+SVN đi qua cùng một lớp ([vcs.py](../extractor/code_tree_exporter/vcs.py)); SVN cần
+`svn` trên PATH, câu hỏi về lịch sử (số revision mới, `--at`) hỏi server và trả
+"không rõ" khi không kết nối được.
 Bảng `sources` đã có sẵn sha256 của từng file.
 
 - **Graph còn đúng với code không:**
-  `code-tree-exporter stale --graph output/demo` liệt kê file đã sửa, đã xoá,
+  `codemap stale` liệt kê file đã sửa, đã xoá,
   file mới, số commit mới của từng source và các node khai báo trong file đã
   sửa. Exit code `0` khi graph còn khớp với working tree, `1` khi đã cũ.
   MCP server dùng kết quả này để mở đầu mọi câu trả lời bằng một dòng tình
@@ -162,12 +174,13 @@ Bảng `sources` đã có sẵn sha256 của từng file.
   bằng `cacheDir`), giữ 3 bản gần nhất cho mỗi source. Tắt bằng
   `"incremental": false` hoặc `CODE_TREE_INCREMENTAL=0`.
 - **Extract một commit cũ:** `extract --config <cfg> --at <rev> --output <thư mục>`
-  checkout bằng `git worktree` vào thư mục tạm (working tree không bị đụng tới).
+  checkout bằng `git worktree` (SVN: `svn export` URL của working copy) vào thư mục
+  tạm (working tree không bị đụng tới).
   Có thể chỉ định theo từng source `--at order-api=v1.2 --at order-db=abc123`,
   hoặc theo ngày `--at-date 2026-01-31` (commit cuối trước ngày đó của mỗi repo).
   Dùng cho graph diff của PR (base và head) và cho backtest.
 
-`shared/fixtures/golden/` chứa snapshot graph của `examples/sample-source`
+`testdata/golden/` chứa snapshot graph của `examples/sample-source`
 (`extractor/tests/test_golden_demo.py`). Đổi parser làm đổi graph thì test báo
 từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test với
 `CODE_MAP_UPDATE_GOLDEN=1` rồi review diff trong commit. CI
@@ -180,7 +193,7 @@ từng node/cạnh khác đi; nếu thay đổi là chủ ý, chạy lại test 
 | Đối chiếu với Oracle | `code-tree-exporter verify-oracle --graph <out> --dependencies all_dependencies.csv [--owner APP]` | Precision/recall của phụ thuộc PL/SQL so với `ALL_DEPENDENCIES` (mức package), object chưa được scan |
 | Corpus có đáp án | [`tools/corpus-gen`](../tools/corpus-gen/README.md) | Recall theo từng pattern; điểm mù có được cảnh báo không; phân tích ảnh hưởng (graph không LLM, hoặc `impact.yaml` của agent) |
 | Lấy mẫu cạnh | `code-tree-exporter sample-edges --graph <out> --n 50 --out sample.csv`, điền `verdict`, rồi `score-sample sample.csv` | Precision theo loại cạnh, kèm khoảng tin cậy 95% |
-| Nhật ký MCP | `python -m web.backend.kb usage` hoặc `GET /business/kb-status` | Agent hỏi gì, câu nào không có kết quả |
+| Nhật ký MCP | `codemap kb usage` hoặc `GET /business/kb-status` | Agent hỏi gì, câu nào không có kết quả |
 
 Export `ALL_DEPENDENCIES` (chỉ cần quyền đọc dictionary):
 
@@ -196,7 +209,7 @@ SELECT OWNER, NAME, TYPE, REFERENCED_OWNER, REFERENCED_NAME, REFERENCED_TYPE, RE
 code-tree-exporter extract --config <cfg> --at origin/main --output out-base
 code-tree-exporter extract --config <cfg> --output out-head
 code-tree-exporter diff --base out-base --head out-head \
-    --plan docs/changes/ORD-123/impact.yaml --knowledge-db data/knowledge.sqlite [--format json] [--fail-on-unplanned]
+    --plan docs/changes/ORD-123/impact.yaml --knowledge-db var/knowledge.sqlite [--format json] [--fail-on-unplanned]
 ```
 
 So hai graph theo stable id và chỉ giữ thứ người review cần:
@@ -224,12 +237,10 @@ uncertain:
 ## MCP server cho AI agent (Copilot, Claude Code, Cursor…)
 
 Kênh chính để AI agent dùng Code Map là MCP. Server đọc thư mục output của
-extract (`codemap-rag.sqlite`, `codemap-web.sqlite`, `graph.sqlite`) và
-`knowledge.sqlite` (tài liệu nghiệp vụ đã duyệt). Có hai cách chạy, dùng chung
-một code (`web/backend/codemap_mcp/`):
+extract (`codemap.sqlite`, `graph.sqlite`) và `knowledge.sqlite` (tài liệu
+nghiệp vụ đã duyệt). Có hai cách chạy, dùng chung một code (`codemap/mcp/`):
 
-- **stdio** (máy cá nhân):
-  `python -m web.backend.codemap_mcp --graph-output output/demo [--knowledge-db data/knowledge.sqlite]`
+- **stdio** (máy cá nhân): `codemap mcp [--config <cfg> | --graph-output <out>] [--knowledge-db <db>]`
 - **HTTP** (server chung của team): web backend phục vụ luôn `POST <url_prefix>/mcp`,
   ví dụ `http://host:8000/code-map/mcp`. Tên người gọi lấy từ header
   `X-Code-Map-User`. Tool ghi (đề xuất vào hàng chờ duyệt) chỉ hiện khi gửi
@@ -261,19 +272,20 @@ có thêm `codemap_get_flow_doc`, `codemap_propose_flow_doc`, `codemap_propose_r
 hàng chờ duyệt (`#/review`), không bao giờ ở trạng thái đã duyệt. Mọi lần gọi tool được ghi vào bảng `mcp_calls` của
 `knowledge.sqlite`, kể cả câu hỏi không ra kết quả, để biết KB đang thiếu gì.
 
-## Dữ liệu cho Graph RAG (`codemap-rag.sqlite`)
+## Dữ liệu cho web và MCP (`codemap.sqlite`)
 
-Mỗi lần extract đều ghi thêm `codemap-rag.sqlite` cạnh `graph.sqlite`. File này
-gồm graph đã lược gọn và dữ liệu nghiệp vụ trong `inputData`: từ điển nghiệp vụ,
-tên bảng/cột ja/en, jobnet. Kèm theo là chỉ mục từ khoá. Muốn tắt thì đặt
-`"ragExport": false` trong config. Nếu đã có output thì tạo lại bằng:
+Mỗi lần extract đều ghi `codemap.sqlite` cạnh `graph.sqlite`. File này gồm:
 
-```bash
-PYTHONPATH=extractor python -m code_tree_exporter rag-export --graph output/demo --input-data examples/input-data
-```
+- các bảng `graph_*`: graph đã đổi sang tên của lớp phục vụ, evidence, tên
+  ja/en/vi của bảng/cột, từ điển nghiệp vụ, jobnet, owner, dữ liệu vận hành;
+- chỉ mục `search_*` dựng **từ chính các bảng `graph_*` đó** (cùng node, cùng
+  tên edge, thêm id số nhỏ, từ khoá, dòng khai báo, flow của engine).
 
-MCP server đọc file này. Đo trên nopCommerce (17.585 node, 83.485 cạnh): xuất
-file mất 14 giây, file 47MB (graph gốc 223MB).
+Web và MCP đọc cùng một file nên không thể thấy hai graph khác nhau. Muốn tắt
+thì đặt `"servingExport": false` (tên cũ `ragExport` vẫn nhận). Nếu đã có output
+thì tạo lại bằng `python -m code_tree_exporter serving-export --graph <out> --input-data <input-data>`.
+Output của bản extract cũ (`codemap-web.sqlite`, `codemap-rag.sqlite`) bị từ
+chối kèm hướng dẫn extract lại.
 
 ## V3 bootstrap
 
@@ -291,7 +303,7 @@ Thêm vào config:
 ```json
 {
   "catalog": {
-    "folder": "${CODE_TREE_CATALOG}",
+    "folder": "./catalog",
     "strict": true
   }
 }
@@ -309,11 +321,11 @@ map header nguồn sang schema chuẩn và có thể compile thành `jobnet.csv`
 ```json
 {
   "name": "order-system",
-  "root": "${CODE_MAP_SOURCE_ROOT}",
-  "output": "${CODE_TREE_OUTPUT}",
-  "inputData": "${CODE_MAP_INPUT_DATA}",
+  "root": "../order-system",
+  "output": "./output",
+  "inputData": "./input-data",
   "catalog": {
-    "folder": "${CODE_TREE_CATALOG}",
+    "folder": "./catalog",
     "strict": true
   },
   "sources": [
@@ -332,7 +344,10 @@ map header nguồn sang schema chuẩn và có thể compile thành `jobnet.csv`
 ```
 
 `root`, `output`, `inputData` và `catalog.folder` nhận đường dẫn tuyệt đối hoặc
-tương đối với file config. `inputData` chỉ cần cho file legacy chưa chuyển sang
+tương đối với file config. Chuỗi có thể chứa `${TÊN_BIẾN}` (lấy từ môi trường
+hoặc `.env`) khi đường dẫn khác nhau giữa các máy, ví dụ `"root": "${MY_SYSTEM_ROOT}"`.
+Đường dẫn tương đối không đi qua ổ đĩa khác trên Windows: repo ở `E:` mà config
+ở `D:` thì `root` phải là đường dẫn tuyệt đối. `inputData` chỉ cần cho file legacy chưa chuyển sang
 catalog profile. Mọi input phải nằm ngoài `output` và `output.previous`.
 `folders` là đường dẫn tương đối; `/` được khuyến nghị. Với `.NET`, `folders`
 có thể trỏ tới `.cs`, `.csproj`, `.sln`; pipeline tự stage project/solution
@@ -346,9 +361,8 @@ publish graph mới và output hợp lệ trước đó vẫn được giữ. Ch
 `allowPartialExtraction=true` khi chấp nhận graph thiếu source và các issue đi
 kèm.
 
-Output local nên đặt dưới `.artifacts/code-tree/<tên-lần-chạy>` thay vì tạo các
-thư mục `output-*` ở repository root. `.env.example` đã dùng
-`.artifacts/code-tree/demo`; toàn bộ `.artifacts/` được Git bỏ qua.
+Config của hệ thống thật nên nằm ngoài repo code-map, cùng thư mục với
+`input-data/`, `catalog/` và `output/` của nó (xem [Cấu hình chung](#cấu-hình-chung)).
 
 `outputMode` vẫn được giữ để tương thích config cũ. Graph luôn nằm trong một
 `graph.sqlite`; logical source partition được lưu bằng `package_key` như
@@ -378,7 +392,62 @@ UI action, id service/component khác) nên dùng nó âm thầm sẽ làm rời
 liệu nghiệp vụ. Muốn chấp nhận fallback, đặt `CODE_TREE_ANGULAR_FALLBACK=1`
 (ghi `SEMANTIC_TREE_UNAVAILABLE`).
 
-Sao chép `.env.example` thành `.env` trên mỗi máy rồi sửa path. CLI tự đọc `.env` cạnh file config; nếu không có thì đọc `.env` tại thư mục chạy. Biến đã export trong process có ưu tiên cao hơn `.env`. `.env` bị Git bỏ qua; chỉ `.env.example` được commit để liệt kê cấu hình cần thiết.
+### Cấu hình chung
+
+Extractor, web và MCP đọc **cùng một file config**: `root` (source), `output`
+(kết quả extract, web và MCP đọc từ đây) chỉ viết một lần. Repo code-map chỉ
+chứa tool và demo; config của hệ thống thật đặt ở chỗ khác:
+
+```text
+D:/code-map/                    # repo này; .env: CODE_MAP_CONFIG=D:/code-map-prod/code-map.json
+D:/code-map-prod/code-map.json  # config + input-data/ + catalog/ + output/ của hệ thống thật
+E:/repos/my-system/             # source cần quét ("root": "E:/repos/my-system")
+```
+
+`.env` (copy từ `.env.example`, mọi biến đều tuỳ chọn):
+
+| Biến | Ý nghĩa |
+|---|---|
+| `CODE_MAP_CONFIG` | config dùng khi không truyền `--config` (tương đối thì tính từ repo). Không đặt: demo |
+| `CODE_MAP_KNOWLEDGE_TOKEN` | token cho thao tác ghi (lưu ghi chú trên web, `propose_*` qua HTTP). Trống: không cho ghi |
+| `CODE_TREE_DOTNET`, `CODE_TREE_NODE` | executable không nằm trong `PATH` |
+| `CODE_MAP_BACKEND_LOG_LEVEL`, `CODE_MAP_PM2_NAME` | log level backend (mặc định `INFO`), tên process pm2 (mặc định `code-map`) |
+
+`.env` được đọc ở gốc repo code-map, cạnh file config và ở thư mục đang chạy.
+Giá trị lấy nguyên văn (`C:\new` vẫn là `C:\new`), file có BOM vẫn đọc được, và
+biến đã có trong process (CI, pm2, `set` trên Windows) được ưu tiên hơn `.env`.
+Trên Windows nên viết `/` (`D:/code-map-prod/code-map.json`) để khỏi phải escape
+trong JSON. Các biến cũ (`CODE_MAP_PROJECT_ROOT`, `CODE_MAP_SOURCE_ROOT`,
+`CODE_MAP_GRAPH_OUTPUT`, `CODE_TREE_OUTPUT`, …) không còn dùng; backend in cảnh
+báo nếu `.env` còn giữ chúng.
+
+Mục `web` (tuỳ chọn) trong config đổi giá trị mặc định của web app;
+`knowledgeDb` và `logPath` tương đối thì tính từ file config:
+
+```json
+"web": {
+  "host": "127.0.0.1",
+  "port": 8000,
+  "urlPrefix": "/code-map",
+  "graphApiPrefix": "/api/graph",
+  "maxContentLength": 16777216,
+  "logLevel": "INFO",
+  "knowledgeDb": "<repo>/var/knowledge.sqlite",
+  "logPath": "<repo>/var/logs/backend.log"
+}
+```
+
+`knowledgeDb` chứa tài liệu nghiệp vụ đã duyệt của hệ thống; với hệ thống thật
+nên đặt `"knowledgeDb": "./knowledge.sqlite"` để nó nằm cạnh config.
+
+Tạo hoặc bổ sung config từ các repo trong một thư mục:
+`codemap.cmd init --root C:/sources --config <cfg> [--name <system>] [--database DB1 --schema APP] [--dry-run]`
+(cũng là `python -m code_tree_exporter init`). Quy tắc nhận diện nằm ở đầu
+[init_config.py](../extractor/code_tree_exporter/init_config.py). `xml-sql` và
+`localRoutines` không được tự nhận diện, thêm tay nếu cần.
+
+Chạy với một config bất kỳ: `codemap extract|serve|mcp|stale|kb --config <cfg>`
+(`codemap.cmd` trên Windows, `./codemap.sh` trên macOS/Linux).
 
 `defaultEncoding: "auto"` nhận diện theo thứ tự: BOM, khai báo encoding ở header
 Python/XML/HTML hoặc comment header, UTF-8 strict, UTF-16 heuristic, rồi
@@ -405,20 +474,14 @@ tự replacement nên không âm thầm làm hỏng tiếng Nhật. `encoding` v
 4. **UTF-8 cho Python** (khuyến nghị): biến môi trường hệ thống
    `PYTHONUTF8=1`. Engine đã tự đặt cho các tiến trình con, biến này giúp cả
    các script bạn tự viết đọc ghi UTF-8 thay vì cp932.
-5. **`.env`:** đường dẫn tuyệt đối viết bình thường kiểu Windows, không cần
-   escape:
+5. **`.env`:** chỉ cần trỏ tới config (demo không cần `.env`):
    ```
-   CODE_MAP_PROJECT_ROOT=C:\work\code-map
-   CODE_MAP_SOURCE_ROOT=C:\work\code-map\examples\sample-source
-   CODE_MAP_GRAPH_OUTPUT=C:\work\code-map\output\demo
-   CODE_TREE_OUTPUT=../output/demo
-   CODE_MAP_INPUT_DATA=./input-data
-   CODE_TREE_CATALOG=./catalog
+   CODE_MAP_CONFIG=D:/code-map-prod/code-map.json
+   CODE_MAP_KNOWLEDGE_TOKEN=...
    ```
-   Không ghi dấu `;` cuối dòng, không dùng `...`. Giá trị bắt đầu bằng `./`
-   hoặc `../` được tính từ file config JSON.
-6. **Chạy:** `.venv\Scripts\python scripts\run_demo_pipeline.py`, web chạy bằng
-   `.venv\Scripts\python web\backend\api\server.py` hoặc
+   Không ghi dấu `;` cuối dòng. Xem [Cấu hình chung](#cấu-hình-chung).
+6. **Chạy:** `codemap.cmd extract` (validate rồi extract), web chạy bằng
+   `codemap.cmd serve` hoặc
    `pm2 start web\ecosystem.config.js`. pm2 tự chọn `Scripts\python.exe`.
 
 **Encoding của source:**
@@ -476,7 +539,6 @@ Repository có sẵn `examples/sample-source/`, `examples/input-data/` và catal
 mẫu. Chỉ chạy engine (không import vào UI):
 
 ```text
-cp .env.example .env
 cd extractor
 python3 -m code_tree_exporter validate --config "$PWD/../examples/demo-config.json"
 python3 -m code_tree_exporter extract --config "$PWD/../examples/demo-config.json"
@@ -638,14 +700,17 @@ cho phần còn lại (`POST /api/orders`, `ORDER_HEADER`). Trong YAML có thêm
   lưu fingerprint lúc duyệt; extract sau mà node đổi hành vi hoặc bị xoá thì quy
   tắc chuyển `needs_review` kèm lý do, phần tài liệu vào hàng chờ duyệt. MCP
   server ghi rõ "NEEDS REVIEW" và đưa vào mục Not certain. Chạy kiểm tra ngay sau
-  extract: `python -m web.backend.kb revalidate --graph-output <out>` (exit `1`
+  extract: `codemap kb revalidate` (exit `1`
   khi có quy tắc bị đưa về review).
 - `inputData/owners.csv` (`system,team,owner,contact,notes`) cho biết ai nắm
   system nào; `codemap_impact` ghi owner cạnh từng system.
   `inputData/ops-facts.csv` (`target,kind,value,note`: lịch batch, khối lượng
   dữ liệu, SLA, lock) hiện trong câu trả lời về node đó.
+- `inputData/message-flows.csv` (`topic,kind,producer,consumer,repository,note`)
+  nối code gửi message với code nhận qua topic Kafka/queue. Chi tiết ở
+  [ARCHITECTURE.md](ARCHITECTURE.md#message-queue-kafka-khai-báo-bằng-message-flowscsv).
 
-API (dưới `CODE_MAP_GRAPH_API_PREFIX`, mặc định `/api/graph`):
+API (dưới `web.graphApiPrefix` của config, mặc định `/api/graph`):
 
 | Route | Ý nghĩa |
 |---|---|
@@ -669,36 +734,38 @@ Người duyệt lấy từ header `X-Code-Map-User` nếu có; duyệt quy tắ
 
 Hiệu năng với schema lớn: backend bỏ node `COLUMN` và các cạnh cấu trúc khi
 dựng index (một lần cho mỗi lần extract), cache cây theo thời điểm sửa của
-`codemap-web.sqlite` và `knowledge.sqlite`, chỉ liệt kê 300 entry point chưa
+`codemap.sqlite` và `knowledge.sqlite`, chỉ liệt kê 300 entry point chưa
 gán đầu tiên (phần còn lại tìm bằng ô tìm kiếm); graph chỉ render node đang
 nằm trong khung nhìn.
 
 ## Cấu trúc source
 
 ```text
+codemap.cmd / codemap.sh  # một lệnh: init | validate | extract | serve | mcp | stale | kb
 extractor/
   code_tree_exporter/   # engine: package, contract, extractor runtimes
-    extractors/_sql/    # CodeTree.Sql: ANTLR PL/SQL trên .NET
-    extractors/sql-service/  # service JSON-lines cho extractor Python
-    rag_export.py       # codemap-rag.sqlite (VS Code) + codemap-web.sqlite (web)
-    serving_tables.py   # các bảng graph_* của web
+    contract/           # graph_contract (id, node/edge type), vocabulary (nhóm edge, đổi tên engine → phục vụ)
+    extractors/         # một plugin cho mỗi loại source (package CSV, csv-contract.md)
+    linker.py           # RESOLVERS: các bước nối giữa các source, chạy theo thứ tự
+    vcs.py              # git / svn / none
+    serving.py          # codemap.sqlite = serving_tables.py (graph_*) + search_index.py (search_*)
   tests/                # python -m unittest discover -s extractor/tests -t extractor
-  pyproject.toml, requirements.txt
+codemap/                # lớp đọc dùng chung, không Flask (python -m unittest discover -s codemap/tests -t .)
+  settings.py storage.py knowledge.py business.py retriever.py workspace.py kb.py cli.py
+codemap/mcp/            # MCP server: tools, prompts, stdio (python -m unittest discover -s codemap/mcp/tests -t .)
 web/
-  backend/api/          # Flask API (python -m unittest discover -s web/tests -t .)
-  backend/codemap_mcp/  # MCP server (stdio: python -m web.backend.codemap_mcp; HTTP: <prefix>/mcp)
-  backend/knowledge.py  # quy tắc, quyết định, câu hỏi, kiểm tra lại khi code đổi (python -m web.backend.kb)
+  backend/api/          # Flask: route, mcp_http.py (MCP qua HTTP) (python -m unittest discover -s web/tests -t .)
   frontend/             # React UI (src/business: tài liệu nghiệp vụ và trang node; src/code-flow: node graph, panel chi tiết)
-  configs/, ecosystem.config.js (pm2), requirements.txt
+  ecosystem.config.js (pm2), requirements.txt
 tools/corpus-gen/       # corpus có đáp án + chấm điểm extract và phân tích ảnh hưởng
-docs/REFERENCE.md       # tài liệu này
-shared/fixtures/        # dữ liệu kiểm thử dùng chung: token vectors, graph mẫu, golden snapshot
+docs/                   # REFERENCE.md (tài liệu này), ARCHITECTURE.md
+testdata/               # dữ liệu kiểm thử dùng chung: token vectors, graph mẫu, golden snapshot
 examples/
   sample-source/        # source demo
   input-data/           # CSV nghiệp vụ (từ điển, jobnet, tên JA/EN của bảng, ...)
   catalog/              # catalog demo cho engine
   demo-config.json
-scripts/                # run_demo_pipeline.py
+var/                    # (Git bỏ qua) output, knowledge.sqlite và log của demo
 requirements.txt        # gộp extractor + web cho một virtualenv
 ```
 

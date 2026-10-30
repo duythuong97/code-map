@@ -5,7 +5,6 @@ import json
 import os
 import re
 import sqlite3
-import sys
 import tempfile
 import unittest
 from contextlib import closing
@@ -13,11 +12,10 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
+from codemap import PROJECT_ROOT
 
-from code_tree_exporter.rag_export import write_rag_database  # noqa: E402
-from shared.fixtures.engine_graph import BIG, ENGINE_SCHEMA, business_inputs  # noqa: E402
+from code_tree_exporter.serving import write_serving_database
+from testdata.engine_graph import BIG, ENGINE_SCHEMA, business_inputs
 
 API = "/api/graph/business"
 SCREEN = "screen:web:orders/new"
@@ -99,7 +97,7 @@ class BusinessApiTests(unittest.TestCase):
         inputs = base / "input-data"
         business_graph(self.output / "graph.sqlite")
         business_inputs(inputs)
-        write_rag_database(self.output / "graph.sqlite", self.output / "codemap-rag.sqlite", input_root=inputs)
+        write_serving_database(self.output / "graph.sqlite", self.output / "codemap.sqlite", input_root=inputs)
         import web.backend.api.app as serving
 
         self.serving = serving
@@ -292,7 +290,7 @@ class BusinessApiTests(unittest.TestCase):
 
     def test_people_edits_survive_the_next_extract(self) -> None:
         self.call("patch", f"/items/{FEATURE}", json={"name": "Tạo đơn"})
-        write_rag_database(self.output / "graph.sqlite", self.output / "codemap-rag.sqlite", input_root=None)
+        write_serving_database(self.output / "graph.sqlite", self.output / "codemap.sqlite", input_root=None)
         self.assertEqual(self.tree_item(self.call("get", "/tree"), FEATURE)["name"], "Tạo đơn")
 
     # ---- regressions from the audit
@@ -351,7 +349,7 @@ class BusinessApiTests(unittest.TestCase):
 
     def test_unsaved_flow_import_is_blocked_after_the_graph_changed(self) -> None:
         text = self.reply(lambda flow: None)
-        stamp = self.output / "codemap-web.sqlite"
+        stamp = self.output / "codemap.sqlite"
         os.utime(stamp, ns=(stamp.stat().st_atime_ns, stamp.stat().st_mtime_ns + 5_000_000_000))
         check = self.call("post", f"/features/{FEATURE}/ai-import/check", json={"text": text})
         self.assertFalse(check["ok"])

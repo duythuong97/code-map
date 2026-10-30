@@ -1,6 +1,6 @@
 """Graph API over the extract output.
 
-Reads ``codemap-web.sqlite`` from the configured output folder (read-only)
+Reads ``codemap.sqlite`` from the configured output folder (read-only)
 and keeps what people add (notes, business-term mappings) in a separate
 knowledge database attached as ``kn``. Temporary views give the queries the
 table names they have always used.
@@ -18,26 +18,24 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
-from web.backend.storage import (  # noqa: F401  (re-exported for business_routes and older imports)
+from codemap.storage import (  # noqa: F401  (re-exported for business_routes and older imports)
     GRAPH_KNOWLEDGE_SCHEMA,
-    WEB_DATABASE_NAME,
-    WEB_SCHEMA_VERSION,
+    SERVING_DATABASE_NAME,
     GraphNotReady,
     _has_table,
     open_web,
 )
-from web.runtime_env import project_path, required_absolute_path, required_env
+from code_tree_exporter.contract.vocabulary import FLOW_STEP_EDGES, READ_EDGES, WRITE_EDGES
+from codemap.flows import data_paths
+from codemap.settings import settings
 
-bp = Blueprint("graph_api", __name__, url_prefix=required_env("CODE_MAP_GRAPH_API_PREFIX"))
-SOURCE_ROOT = required_absolute_path("CODE_MAP_SOURCE_ROOT")
+bp = Blueprint("graph_api", __name__, url_prefix=settings()["graph_api_prefix"])
+SOURCE_ROOT = settings()["source_root"]
 SAFE_SOURCE_ROOTS = (SOURCE_ROOT,)
 KNOWLEDGE_STATUSES = {"draft","pending","approved","rejected"}
 KNOWLEDGE_MAX_BYTES = 16_384
 SEMANTIC_MAX_BYTES = 4_096
 FLOW_MODES = {"1","W","R","E"}
-WRITE_TERMINALS = {"INSERTS","UPDATES","DELETES","MERGES","WRITES"}
-READ_TERMINALS = {"READS","REMOTE_READS"}
-FLOW_INTERMEDIATE = {"CALLS_API","STARTS","CALLS","HANDLED_BY","RESOLVES_TO","TRIGGERS"}
 
 KNOWLEDGE_SCHEMA = GRAPH_KNOWLEDGE_SCHEMA
 
@@ -46,19 +44,19 @@ def graph_output() -> Path:
     try:
         return Path(current_app.config["CODE_MAP_GRAPH_OUTPUT"])
     except (RuntimeError, KeyError):
-        return project_path("output", "demo")
+        return settings()["graph_output"]
 
 
 def knowledge_db() -> Path:
     try:
         return Path(current_app.config["CODE_MAP_KNOWLEDGE_DB"])
     except (RuntimeError, KeyError):
-        return project_path("data", "knowledge.sqlite")
+        return settings()["knowledge_db"]
 
 
 @contextmanager
 def connection():
-    """codemap-web.sqlite (read-only, per request so a new extract can replace it) + knowledge db."""
+    """codemap.sqlite (read-only, per request so a new extract can replace it) + knowledge db."""
     with open_web(graph_output(), knowledge_db()) as db:
         yield db
 
@@ -67,7 +65,7 @@ def connection():
 def graph_not_ready(exc: GraphNotReady):
     return error(
         "graph_not_ready",
-        exc.message or "No extract output found. Run the extract (python -m code_tree_exporter extract) and point CODE_MAP_GRAPH_OUTPUT at its output folder.",
+        exc.message or "No extract output found. Run the extract (codemap extract) for the config the server reads (CODE_MAP_CONFIG).",
         503,
     )
 
@@ -115,11 +113,11 @@ def _enrich_path_facts(db, paths):
     edges={row["edge_id"]:dict(row) for row in _rows_by_ids(db,"graph_edges","edge_id",edge_ids)}
     for path in paths:
         path_edges=[edges[edge_id] for edge_id in path.get("edge_path",[]) if edge_id in edges]
-        terminals=[edge for edge in path_edges if edge["edge_type"] in READ_TERMINALS | WRITE_TERMINALS]
+        terminals=[edge for edge in path_edges if edge["edge_type"] in READ_EDGES | WRITE_EDGES]
         terminal=terminals[-1] if terminals else None
         intermediates=[]
         for edge in path_edges:
-            if edge["edge_type"] not in FLOW_INTERMEDIATE:
+            if edge["edge_type"] not in FLOW_STEP_EDGES:
                 continue
             properties=_json(edge.get("properties_json"),{})
             intermediates.append({
@@ -297,10 +295,6 @@ def _wr_edge_visible(edge, semantic):
         return False
     return _edge_visible(edge, semantic)
 
-def _wr_allowed_edge(edge_type, mode):
-    terminals = WRITE_TERMINALS if mode == "W" else READ_TERMINALS
-    return edge_type in terminals or edge_type in FLOW_INTERMEDIATE
-
 def _semantic_project(nodes, edges, root_node_id, semantic):
     if semantic == "TECHNICAL":
         return nodes, edges
@@ -310,53 +304,10 @@ def _semantic_project(nodes, edges, root_node_id, semantic):
     projected_edges=[edge for edge in edges if edge["source_node_id"] in allowed and edge["target_node_id"] in allowed]
     return projected_nodes, projected_edges
 
-def _walk_read_write(db, node_id, mode, direction, limit, semantic):
-    terminals = WRITE_TERMINALS if mode == "W" else READ_TERMINALS
-    pending=[(node_id,[],False,frozenset({node_id}))]; visited=set(); node_ids={node_id}; edges_by_id={}; selected_paths=[]; truncated=False
-    reverse = direction == "in"
-    def add_path(path):
-        nonlocal truncated
-        path_node_ids={endpoint for edge in path for endpoint in (edge["source_node_id"],edge["target_node_id"])} | {node_id}
-        if len(node_ids | path_node_ids) > limit:
-            truncated=True
-            return
-        node_ids.update(path_node_ids)
-        for edge in path:
-            edges_by_id[edge["edge_id"]]=edge
-        selected_paths.append([edge["edge_id"] for edge in (reversed(path) if reverse else path)])
-    while pending and len(node_ids) <= limit:
-        current,path,seen_terminal,path_seen=pending.pop(0)
-        state=(current,seen_terminal,path_seen)
-        if state in visited:
-            continue
-        visited.add(state)
-        if reverse:
-            rows=db.execute("SELECT * FROM graph_edges WHERE target_node_id=? ORDER BY edge_id",(current,)).fetchall()
-        else:
-            rows=db.execute("SELECT * FROM graph_edges WHERE source_node_id=? ORDER BY edge_id",(current,)).fetchall()
-        for row in rows:
-            if not _wr_allowed_edge(row["edge_type"], mode) or not _wr_edge_visible(row, semantic):
-                continue
-            item=dict(row); next_node=row["source_node_id"] if reverse else row["target_node_id"]
-            if next_node in path_seen:
-                continue
-            next_path=path+[item]
-            is_terminal=item["edge_type"] in terminals
-            if is_terminal or seen_terminal:
-                add_path(next_path)
-            if (item["edge_type"] in FLOW_INTERMEDIATE or reverse and is_terminal) and len(next_path) < 64:
-                pending.append((next_node,next_path,seen_terminal or is_terminal,path_seen | {next_node}))
-    return node_ids, edges_by_id, selected_paths, truncated or bool(pending)
-
 def _read_write_flow(db, node_id, mode, direction, limit, semantic):
-    directions=["in","out"] if direction == "both" else [direction]
-    node_ids={node_id}; edges_by_id={}; paths=[]; truncated=False
-    for item_direction in directions:
-        walk_nodes, walk_edges, walk_paths, walk_truncated = _walk_read_write(db,node_id,mode,item_direction,limit,semantic)
-        if len(node_ids | walk_nodes) > limit:
-            truncated=True
-            continue
-        node_ids.update(walk_nodes); edges_by_id.update(walk_edges); paths.extend(walk_paths); truncated = truncated or walk_truncated
+    # The same walk the MCP server and the business documents use (codemap/flows.py).
+    walk=data_paths(db,node_id,mode,direction,limit,visible=lambda edge: _wr_edge_visible(edge, semantic))
+    node_ids=walk.node_ids; edges_by_id=walk.edges; paths=walk.paths; truncated=walk.truncated
     nodes=[_flow_node(row) for row in db.execute(f"SELECT * FROM graph_nodes WHERE node_id IN ({','.join('?' * len(node_ids))})", sorted(node_ids))]
     edges=[edges_by_id[key] for key in sorted(edges_by_id)]
     nodes, edges = _semantic_project(nodes, edges, node_id, semantic)
@@ -833,7 +784,7 @@ def knowledge():
     """GET is public read-only; POST requires header-token auth, never cookies."""
     with connection() as db:
         if request.method == "POST":
-            token=required_env("CODE_MAP_KNOWLEDGE_TOKEN")
+            token=os.environ.get("CODE_MAP_KNOWLEDGE_TOKEN","")
             supplied=request.headers.get("X-Code-Map-Token","")
             if not token or not hmac.compare_digest(supplied,token): return error("forbidden","Knowledge token required",403)
             if not request.is_json or request.content_length is None or request.content_length>KNOWLEDGE_MAX_BYTES: return error("invalid_knowledge","Bounded JSON body required",415)

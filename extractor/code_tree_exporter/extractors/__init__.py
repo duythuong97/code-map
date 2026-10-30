@@ -90,6 +90,9 @@ _SPECS = {
     "xml-sql": ExtractorSpec(
         "xml-sql", _ROOT.parent / "xml_sql" / "runner.py", (".xml",)
     ),
+    "api-gateway": ExtractorSpec(
+        "api-gateway", _ROOT.parent / "api_gateway" / "runner.py", (".yml", ".yaml", ".json", ".template")
+    ),
 }
 
 

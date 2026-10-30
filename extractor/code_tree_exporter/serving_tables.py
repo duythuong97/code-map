@@ -1,12 +1,12 @@
-"""The ``graph_*`` tables the web app queries, written to ``codemap-web.sqlite``.
+"""The ``graph_*`` tables of ``codemap.sqlite``: what the web app queries and the search index is built from.
 
 The web app reads the extract output directly (no import step). It keeps the
 vocabulary it was built on:
 
 * node and edge ids are stable string ids;
-* engine edges are mapped to the UI vocabulary (``READS_FROM`` →
-  ``READS``/``REMOTE_READS``, ``WRITES_TO`` → ``INSERTS``/``UPDATES``/...,
-  ``HANDLES_API`` → ``HANDLED_BY``);
+* engine edges get their serving names (``contract/vocabulary.py``:
+  ``READS_FROM`` → ``READS``/``REMOTE_READS``, ``WRITES_TO`` →
+  ``INSERTS``/``UPDATES``/..., ``HANDLES_API`` → ``HANDLED_BY``);
 * complete engine flows become ``graph_paths`` rows plus ``DATA_FLOW`` edges
   (actor → table);
 * table/column names from ``inputData`` become ``graph_localization`` rows.
@@ -30,12 +30,12 @@ from pathlib import Path
 from .decoding import read_text_auto
 
 from .contract.graph_contract import canonical_edge_id
+from .contract.vocabulary import READ_EDGES, WRITE_EDGES, serving_edge_type
 
 SOURCE_PREFIX = "code-tree:"
-READ_TERMINALS = frozenset({"READS", "REMOTE_READS"})
-WRITE_TERMINALS = frozenset({"INSERTS", "UPDATES", "DELETES", "MERGES", "WRITES"})
-_WRITE_OPERATIONS = {"INSERT": "INSERTS", "UPDATE": "UPDATES", "DELETE": "DELETES", "MERGE": "MERGES"}
-_REMOTE_TARGET_TYPES = frozenset({"EXTERNAL_DATABASE_OBJECT", "DATABASE_LINK"})
+# graph_paths keep a flow whose last edge reads or writes.
+READ_TERMINALS = READ_EDGES
+WRITE_TERMINALS = WRITE_EDGES
 _HEAVY_PROPERTIES = ("semantic_tree",)
 
 SCHEMA = """
@@ -81,48 +81,38 @@ CREATE INDEX graph_localization_value ON graph_localization(value);
 """
 
 
-def ui_edge_type(edge_type: str, raw_operation: str, target_type: str) -> str:
-    if edge_type == "READS_FROM":
-        return "REMOTE_READS" if target_type in _REMOTE_TARGET_TYPES else "READS"
-    if edge_type == "WRITES_TO":
-        return _WRITE_OPERATIONS.get(raw_operation.upper(), "WRITES")
-    if edge_type == "HANDLES_API":
-        return "HANDLED_BY"
-    return edge_type
-
-
-def write_serving_tables(graph: sqlite3.Connection, rag: sqlite3.Connection, input_root: Path | None) -> dict[int, str]:
+def write_serving_tables(graph: sqlite3.Connection, db: sqlite3.Connection, input_root: Path | None) -> dict[int, str]:
     """Write the graph_* tables; returns engine node id -> stable id."""
-    rag.executescript(SCHEMA)
+    db.executescript(SCHEMA)
     created = str(_metadata(graph).get("generated_at") or _now())
-    _sources(graph, rag, created)
-    node_ids, node_types = _nodes(graph, rag)
-    edge_ids = _edges(graph, rag, node_ids, node_types)
-    _evidence(graph, rag, node_ids, edge_ids)
-    _issues(graph, rag, node_ids)
-    _flows(graph, rag, node_ids, edge_ids)
-    _localization(rag, input_root)
-    _semantics(rag, input_root)
+    _sources(graph, db, created)
+    node_ids, node_types = _nodes(graph, db)
+    edge_ids = _edges(graph, db, node_ids, node_types)
+    _evidence(graph, db, node_ids, edge_ids)
+    _issues(graph, db, node_ids)
+    _flows(graph, db, node_ids, edge_ids)
+    _localization(db, input_root)
+    _semantics(db, input_root)
     return node_ids
 
 
-def finish_serving_tables(rag: sqlite3.Connection) -> None:
-    rag.executescript(INDEXES)
+def finish_serving_tables(db: sqlite3.Connection) -> None:
+    db.executescript(INDEXES)
 
 
-def add_business_node(rag: sqlite3.Connection, stable_id: str, node_type: str, name: str, properties: dict) -> None:
-    rag.execute(
+def add_business_node(db: sqlite3.Connection, stable_id: str, node_type: str, name: str, properties: dict) -> None:
+    db.execute(
         "INSERT OR IGNORE INTO graph_sources VALUES(?,?,?)", (SOURCE_PREFIX + "business", SOURCE_PREFIX + "business", _now())
     )
-    rag.execute(
+    db.execute(
         "INSERT OR IGNORE INTO graph_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (stable_id, node_type, name, stable_id, name, None, None, None, "MAIN", 1.0,
          json.dumps(properties, ensure_ascii=False, sort_keys=True), SOURCE_PREFIX + "business"),
     )
 
 
-def add_business_edge(rag: sqlite3.Connection, source: str, target: str, edge_type: str, operation: str = "") -> None:
-    rag.execute(
+def add_business_edge(db: sqlite3.Connection, source: str, target: str, edge_type: str, operation: str = "") -> None:
+    db.execute(
         "INSERT OR IGNORE INTO graph_edges VALUES(?,?,?,?,?,?,?,?,?)",
         (canonical_edge_id(source, edge_type, target, operation, "TECHNICAL"), source, target, edge_type,
          "TECHNICAL", operation, 1.0, "{}", SOURCE_PREFIX + "business"),
@@ -137,9 +127,9 @@ def _source_id(package_key: str | None) -> str:
     return SOURCE_PREFIX + (package_key or "global")
 
 
-def _sources(graph: sqlite3.Connection, rag: sqlite3.Connection, created: str) -> None:
+def _sources(graph: sqlite3.Connection, db: sqlite3.Connection, created: str) -> None:
     keys = {row[0] for table in ("nodes", "edges", "evidence", "issues") for row in graph.execute(f"SELECT DISTINCT package_key FROM {table}")}
-    rag.executemany(
+    db.executemany(
         "INSERT OR REPLACE INTO graph_sources VALUES(?,?,?)",
         [(_source_id(key), _source_id(key), created) for key in sorted(keys, key=str)],
     )
@@ -176,7 +166,7 @@ def _restore_references(raw: str | None, node_ids: dict[int, str]) -> str:
     return json.dumps(restored, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if changed else raw
 
 
-def _nodes(graph: sqlite3.Connection, rag: sqlite3.Connection) -> tuple[dict[int, str], dict[str, str]]:
+def _nodes(graph: sqlite3.Connection, db: sqlite3.Connection) -> tuple[dict[int, str], dict[str, str]]:
     node_ids: dict[int, str] = dict(graph.execute("SELECT node_id, stable_id FROM nodes"))
     node_types: dict[str, str] = {}
     rows = []
@@ -186,7 +176,7 @@ def _nodes(graph: sqlite3.Connection, rag: sqlite3.Connection) -> tuple[dict[int
     ):
         node_types[row[1]] = row[2]
         rows.append((*row[1:11], _light_properties(_restore_references(row[11], node_ids)), _source_id(row[12])))
-    rag.executemany("INSERT OR IGNORE INTO graph_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    db.executemany("INSERT OR IGNORE INTO graph_nodes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     return node_ids, node_types
 
 
@@ -200,7 +190,7 @@ def _light_properties(raw: str | None) -> str:
     return json.dumps(properties, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _edges(graph, rag, node_ids: dict[int, str], node_types: dict[str, str]) -> dict[int, str]:
+def _edges(graph, db, node_ids: dict[int, str], node_types: dict[str, str]) -> dict[int, str]:
     edge_ids: dict[int, str] = {}
     identities: dict[tuple, str] = {}
     rows = []
@@ -212,7 +202,7 @@ def _edges(graph, rag, node_ids: dict[int, str], node_types: dict[str, str]) -> 
         if source is None or target is None:
             continue
         raw_operation = row[5] or ""
-        edge_type = ui_edge_type(row[3], raw_operation, node_types.get(target, ""))
+        edge_type = serving_edge_type(row[3], raw_operation, node_types.get(target, ""))
         # DATA_FLOW is rebuilt from flows below; engine data-flow edges stay technical.
         layer = "TECHNICAL" if row[4] == "DATA_FLOW" else row[4]
         identity = (source, target, edge_type, layer, raw_operation)
@@ -230,11 +220,11 @@ def _edges(graph, rag, node_ids: dict[int, str], node_types: dict[str, str]) -> 
             edge_id, source, target, edge_type, layer, raw_operation, row[6],
             json.dumps(properties, ensure_ascii=False, sort_keys=True, separators=(",", ":")), _source_id(row[8]),
         ))
-    rag.executemany("INSERT OR IGNORE INTO graph_edges VALUES(?,?,?,?,?,?,?,?,?)", rows)
+    db.executemany("INSERT OR IGNORE INTO graph_edges VALUES(?,?,?,?,?,?,?,?,?)", rows)
     return edge_ids
 
 
-def _evidence(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) -> None:
+def _evidence(graph, db, node_ids: dict[int, str], edge_ids: dict[int, str]) -> None:
     rows = []
     for row in graph.execute(
         "SELECT stable_id, target_type, target_id, source_path, start_line, end_line, start_column, end_column, "
@@ -245,11 +235,11 @@ def _evidence(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) ->
             continue
         start_line = row[4] if row[4] and row[4] > 0 else None
         rows.append((row[0], row[1], target, row[3], start_line, *row[5:11], row[11] or "", row[12] or "{}", _source_id(row[13])))
-    rag.executemany("INSERT OR IGNORE INTO graph_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    db.executemany("INSERT OR IGNORE INTO graph_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
-def _issues(graph, rag, node_ids: dict[int, str]) -> None:
-    rag.executemany(
+def _issues(graph, db, node_ids: dict[int, str]) -> None:
+    db.executemany(
         "INSERT OR IGNORE INTO graph_issues VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         [
             (row[0], row[1], row[2], node_ids.get(row[3]) if row[3] is not None else None, *row[4:9], _restore_references(row[9], node_ids), _source_id(row[10]))
@@ -261,17 +251,17 @@ def _issues(graph, rag, node_ids: dict[int, str]) -> None:
     )
 
 
-def _flows(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) -> None:
+def _flows(graph, db, node_ids: dict[int, str], edge_ids: dict[int, str]) -> None:
     """graph_paths and actor → table DATA_FLOW edges from the engine's complete flows."""
     steps: dict[int, list[int | None]] = {}
     for flow_id, incoming in graph.execute("SELECT flow_id, incoming_edge_id FROM flow_steps ORDER BY flow_id, step_index"):
         steps.setdefault(flow_id, []).append(incoming)
     edges = {
         row[0]: row
-        for row in rag.execute("SELECT edge_id, source_node_id, target_node_id, edge_type, source_id, raw_operation, properties_json FROM graph_edges")
+        for row in db.execute("SELECT edge_id, source_node_id, target_node_id, edge_type, source_id, raw_operation, properties_json FROM graph_edges")
     }
     evidence_by_edge: dict[str, list[str]] = {}
-    for target_id, evidence_id in rag.execute("SELECT target_id, evidence_id FROM graph_evidence WHERE target_type='EDGE'"):
+    for target_id, evidence_id in db.execute("SELECT target_id, evidence_id FROM graph_evidence WHERE target_type='EDGE'"):
         evidence_by_edge.setdefault(target_id, []).append(evidence_id)
     for flow_id, start, target in graph.execute(
         "SELECT flow_id, start_node_id, target_node_id FROM flows WHERE complete=1 ORDER BY stable_id"
@@ -286,7 +276,7 @@ def _flows(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) -> No
             continue
         evidence = sorted({item for edge in path for item in evidence_by_edge.get(edge, ())})
         path_id = "path:" + hashlib.sha256(f"{actor}|{table}|{operation}|{'|'.join(path)}".encode()).hexdigest()
-        rag.execute(
+        db.execute(
             "INSERT OR IGNORE INTO graph_paths VALUES(?,?,?,?,?,?,?)",
             (path_id, actor, table, operation, json.dumps(path), json.dumps(evidence), terminal[4]),
         )
@@ -299,7 +289,7 @@ def _flows(graph, rag, node_ids: dict[int, str], edge_ids: dict[int, str]) -> No
         terminal_properties = json.loads(terminal[6] or "{}")
         if "semantic" in terminal_properties:
             properties["semantic"] = terminal_properties["semantic"]
-        rag.execute(
+        db.execute(
             "INSERT OR IGNORE INTO graph_edges VALUES(?,?,?,?,?,?,?,?,?)",
             (canonical_edge_id(actor, data_edge_type, table, terminal_operation, "DATA_FLOW"), actor, table,
              data_edge_type, "DATA_FLOW", terminal_operation, 1.0, json.dumps(properties, sort_keys=True), terminal[4]),
@@ -313,11 +303,11 @@ def _rows(root: Path | None, relative: str) -> list[dict[str, str]]:
     return [{key: (value or "").strip() for key, value in row.items() if key} for row in csv.DictReader(io.StringIO(text, newline=""))]
 
 
-def _localization(rag: sqlite3.Connection, input_root: Path | None) -> None:
+def _localization(db: sqlite3.Connection, input_root: Path | None) -> None:
     """ja/en/vi names of tables and columns, matched by table/column code in any database."""
     tables: dict[str, list[str]] = {}
     columns: dict[tuple[str, str], list[str]] = {}
-    for node_id, node_type, name, properties, qualified in rag.execute(
+    for node_id, node_type, name, properties, qualified in db.execute(
         "SELECT node_id, node_type, technical_name, properties_json, qualified_name FROM graph_nodes WHERE node_type IN ('TABLE','COLUMN')"
     ):
         if node_type == "TABLE":
@@ -353,15 +343,15 @@ def _localization(rag: sqlite3.Connection, input_root: Path | None) -> None:
         elif parts[0] == "column" and len(parts) >= 4:
             targets = columns.get((parts[-2].upper(), parts[-1].upper()), [])
         else:
-            targets = [row.get("target_id", "")] if rag.execute(
+            targets = [row.get("target_id", "")] if db.execute(
                 "SELECT 1 FROM graph_nodes WHERE node_id=?", (row.get("target_id", ""),)
             ).fetchone() else []
         add(targets, row.get("locale", ""), row.get("value", ""), row.get("source_kind") or "IMPORTED",
             row.get("review_status") or "approved", row.get("author_name") or "")
-    rag.executemany("INSERT OR REPLACE INTO graph_localization VALUES(?,?,?,?,?,?,?,?,?,?,?)", list(rows.values()))
+    db.executemany("INSERT OR REPLACE INTO graph_localization VALUES(?,?,?,?,?,?,?,?,?,?,?)", list(rows.values()))
 
 
-def _semantics(rag: sqlite3.Connection, input_root: Path | None) -> None:
+def _semantics(db: sqlite3.Connection, input_root: Path | None) -> None:
     now = _now()
     rows = []
     for row in _rows(input_root, "semantic-dictionary.csv"):
@@ -374,7 +364,7 @@ def _semantics(rag: sqlite3.Connection, input_root: Path | None) -> None:
         aliases = [alias.strip() for alias in row.get("aliases", "").split("|") if alias.strip()]
         rows.append((semantic_id, (row.get("locale") or "en").lower(), row.get("domain", ""), row.get("label", ""),
                      row.get("definition", ""), json.dumps(aliases, ensure_ascii=False), status, "IMPORTED", now, now))
-    rag.executemany("INSERT OR REPLACE INTO graph_business_semantics VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
+    db.executemany("INSERT OR REPLACE INTO graph_business_semantics VALUES(?,?,?,?,?,?,?,?,?,?)", rows)
 
 
 def _now() -> str:

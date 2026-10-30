@@ -1,28 +1,30 @@
+const fs = require("fs");
 const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env"), override: true });
 
-function required(name) {
-  if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
-  return process.env[name];
+const projectRoot = path.join(__dirname, "..");
+
+// Only the pm2 process name is read here; the backend loads .env (CODE_MAP_CONFIG, token) itself.
+function pm2Name() {
+  if (process.env.CODE_MAP_PM2_NAME) return process.env.CODE_MAP_PM2_NAME;
+  try {
+    const line = fs.readFileSync(path.join(projectRoot, ".env"), "utf8").match(/^\s*CODE_MAP_PM2_NAME\s*=\s*(.+?)\s*$/m);
+    if (line) return line[1].replace(/^["']|["']$/g, "");
+  } catch {
+    // no .env: use the default name
+  }
+  return "code-map";
 }
-
-function absolute(name) {
-  const value = required(name);
-  if (!path.isAbsolute(value)) throw new Error(`${name} must be an absolute path: ${value}`);
-  return value;
-}
-
-const projectRoot = absolute("CODE_MAP_PROJECT_ROOT");
 
 module.exports = {
   apps: [
     {
-      name: required("CODE_MAP_PM2_NAME"),
+      name: pm2Name(),
       // The virtualenv interpreter: Scripts\python.exe on Windows, bin/python elsewhere.
       script: process.platform === "win32"
         ? path.join(projectRoot, ".venv", "Scripts", "python.exe")
         : path.join(projectRoot, ".venv", "bin", "python"),
-      args: [path.join(projectRoot, "web", "backend", "api", "server.py")],
+      args: ["-m", "codemap", "serve"],
+      cwd: projectRoot,
       interpreter: "none",
       env: { NODE_ENV: "production" },
       autorestart: true,

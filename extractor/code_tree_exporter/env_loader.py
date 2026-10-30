@@ -5,6 +5,8 @@ import os
 import re
 from pathlib import Path
 
+# The code-map checkout's .env (extractor/code_tree_exporter/env_loader.py -> repository root).
+REPOSITORY_ENV = Path(__file__).resolve().parents[2] / ".env"
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -30,7 +32,8 @@ def load_dotenv(*paths: Path) -> None:
     for path in paths:
         if not path.is_file():
             continue
-        for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        # utf-8-sig: Notepad on Windows may save the file with a BOM.
+        for line_number, raw_line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue

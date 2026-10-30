@@ -1,36 +1,15 @@
-"""Which commit each source was extracted from, so a reader knows how old the graph is.
+"""Which revision (git commit or svn revision) each source was extracted from, so a reader knows how old the graph is.
 
 ``source_revisions`` is stored in ``graph.sqlite`` metadata, ``manifest.json``
-(``revisions``) and the meta table of ``codemap-rag.sqlite`` /
-``codemap-web.sqlite``. ``stale.py`` compares it (and the per-file hashes in
+(``revisions``) and the meta table of ``codemap.sqlite``. ``stale.py`` compares it (and the per-file hashes in
 the ``sources`` table) with the working tree.
 """
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 from pathlib import Path
 
-
-def git(directory: Path, *arguments: str, timeout: float = 30) -> str | None:
-    """Output of a git command in ``directory``, or None when git or the repository is missing."""
-    executable = shutil.which("git")
-    if not executable or not directory.exists():
-        return None
-    try:
-        completed = subprocess.run(
-            [executable, "-C", str(directory), *arguments],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return completed.stdout.strip() if completed.returncode == 0 else None
+from .vcs import repository_at
 
 
 def source_directory(root: Path, source: dict) -> Path:
@@ -43,28 +22,28 @@ def source_directory(root: Path, source: dict) -> Path:
 
 
 def source_revisions(root: Path, sources: list[dict]) -> dict[str, dict[str, object]]:
+    """{source: {vcs, repository_root, commit, branch, dirty, dirty_files}}; ``commit`` is the
+    git hash or the svn revision number, ``vcs`` is ``none`` outside version control."""
     result: dict[str, dict[str, object]] = {}
     repositories: dict[str, dict[str, object]] = {}
     for source in sources:
         directory = source_directory(root, source)
-        top = git(directory, "rev-parse", "--show-toplevel")
-        if not top:
+        repository = repository_at(directory)
+        if repository is None:
             result[str(source["name"])] = {"vcs": "none"}
             continue
-        top_path = Path(top).resolve()
-        repository = repositories.get(str(top_path))
-        if repository is None:
-            repository = {
-                "vcs": "git",
-                "repository_root": _display_path(top_path, root),
-                "commit": git(top_path, "rev-parse", "HEAD") or "",
-                "branch": git(top_path, "rev-parse", "--abbrev-ref", "HEAD") or "",
+        recorded = repositories.get(str(repository.root))
+        if recorded is None:
+            recorded = {
+                "vcs": repository.name,
+                "repository_root": _display_path(repository.root, root),
+                "commit": repository.revision(),
+                "branch": repository.branch(),
             }
-            repositories[str(top_path)] = repository
-        pathspecs = [_relative_pathspec(top_path, folder, root) for folder in source.get("folders") or ["."]]
-        status = git(top_path, "status", "--porcelain", "--untracked-files=no", "--", *pathspecs) or ""
-        dirty = [line for line in status.splitlines() if line.strip()]
-        result[str(source["name"])] = {**repository, "dirty": bool(dirty), "dirty_files": len(dirty)}
+            repositories[str(repository.root)] = recorded
+        pathspecs = [_relative_pathspec(repository.root, folder, root) for folder in source.get("folders") or ["."]]
+        dirty = repository.dirty_files(pathspecs)
+        result[str(source["name"])] = {**recorded, "dirty": bool(dirty), "dirty_files": dirty}
     return result
 
 

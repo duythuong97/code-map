@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from web.backend import knowledge
+from codemap import knowledge
 from web.backend.api.business_routes import MAX_EDIT_BYTES, _body, _who
 from web.backend.api.graph_routes import bp, connection, error, graph_output, knowledge_db
-from web.backend.codemap_mcp.workspace import workspace_for
+from codemap.workspace import workspace_for
 
 
 @bp.errorhandler(knowledge.KnowledgeError)

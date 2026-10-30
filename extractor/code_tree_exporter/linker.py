@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
+from typing import Callable
 
 from .contract.graph_contract import canonical_edge_id, normalize_http_route, stable_node_id
 from .graph_package import GraphPackage
@@ -39,42 +40,56 @@ _STALE_REFERENCE_ISSUES = frozenset(
 
 
 def run_linker(graph: GraphPackage) -> None:
-    """Resolve cross-source references after every source package is merged."""
-    link_api(graph)
-    resolve_deferred_references(graph)
-    redirect_catalog_references(graph)
-    materialize_dangling_references(graph)
+    """Resolve cross-source references after every source package is merged (see RESOLVERS)."""
+    for _, resolve in RESOLVERS:
+        resolve(graph)
+
+
+class _OperationIndex:
+    """API operations by (method, case-folded route), its whole parts and every suffix of them."""
+
+    def __init__(self, graph: GraphPackage, *, gateway: bool | None = None) -> None:
+        self.operations: dict[tuple[str, str], list[str]] = defaultdict(list)
+        self.routes: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
+        self.suffixes: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
+        for node_id, node in graph.nodes.items():
+            if node.get("node_type") != "API_OPERATION":
+                continue
+            if gateway is not None and bool(_properties(node).get("gateway")) != gateway:
+                continue
+            signature = _api_match_key(_api_signature(node))
+            if signature is None:
+                continue
+            self.operations[signature].append(node_id)
+            method, route = signature
+            parts = _route_parts(route)
+            self.routes[(method, parts)].add(node_id)
+            for index in range(len(parts)):
+                self.suffixes[(method, parts[index:])].add(node_id)
+
+    def candidates(self, signature: tuple[str, str]) -> tuple[list[str], str]:
+        key = _api_match_key(signature)
+        exact = list(self.operations.get(key, ()))
+        if exact:
+            return exact, "exact"
+        return sorted(_api_suffix_candidates(key, self.routes, self.suffixes)), "unique_suffix"
 
 
 def link_api(graph: GraphPackage) -> None:
-    """Link frontend API calls using exact and pre-indexed suffix matches."""
-    operations: dict[tuple[str, str], list[str]] = defaultdict(list)
-    routes: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
-    suffixes: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
-    for node_id, node in graph.nodes.items():
-        if node.get("node_type") != "API_OPERATION":
-            continue
-        signature = _api_match_key(_api_signature(node))
-        if signature is None:
-            continue
-        operations[signature].append(node_id)
-        method, route = signature
-        parts = _route_parts(route)
-        routes[(method, parts)].add(node_id)
-        for index in range(len(parts)):
-            suffixes[(method, parts[index:])].add(node_id)
+    """Link frontend API calls using exact and pre-indexed suffix matches.
 
+    A call through an API gateway names the gateway's public path, which ends
+    like the backend route but has another prefix: the longest matching suffix
+    wins, so the call links to the gateway route and that one ``ROUTES_TO`` the
+    backend (``link_gateway``)."""
+    index = _OperationIndex(graph)
     for node_id, node in list(graph.nodes.items()):
         if node.get("node_type") not in _API_CALL_TYPES:
             continue
         signature = _api_signature(node)
         if signature is None:
             continue
-        candidates = list(operations.get(_api_match_key(signature), ()))
-        match_kind = "exact"
-        if not candidates:
-            candidates = sorted(_api_suffix_candidates(_api_match_key(signature), routes, suffixes))
-            match_kind = "unique_suffix"
+        candidates, match_kind = index.candidates(signature)
         if len(candidates) == 1:
             _put_edge(
                 graph,
@@ -93,6 +108,40 @@ def link_api(graph: GraphPackage) -> None:
                     "source_node_id": node_id,
                     "candidate_node_ids": sorted(candidates),
                 },
+            )
+
+
+def link_gateway(graph: GraphPackage) -> None:
+    """Link each API gateway route to the backend operation its integration URI names."""
+    backends = _OperationIndex(graph, gateway=False)
+    for node_id, node in sorted(graph.nodes.items()):
+        properties = _properties(node)
+        if node.get("node_type") != "API_OPERATION" or not properties.get("gateway"):
+            continue
+        integration = properties.get("integration")
+        if not isinstance(integration, dict) or not integration.get("path"):
+            continue
+        try:
+            signature = normalize_http_route(str(integration.get("method") or ""), str(integration["path"]))
+        except ValueError:
+            continue
+        candidates, match_kind = backends.candidates(signature)
+        if len(candidates) == 1:
+            _put_edge(
+                graph,
+                node_id,
+                "ROUTES_TO",
+                candidates[0],
+                confidence="1.0" if match_kind == "exact" else "0.8",
+                properties={"match": match_kind, "integration": f"{signature[0]} {signature[1]}"},
+            )
+        else:
+            graph.add_issue(
+                "AMBIGUOUS_API_LINK" if candidates else "GATEWAY_BACKEND_NOT_FOUND",
+                f"Gateway route {node.get('technical_name', node_id)} forwards to {signature[0]} {signature[1]}, "
+                + (f"which matches {len(candidates)} backend operations" if candidates else "which no extracted API declares"),
+                severity="WARNING",
+                properties={"source_node_id": node_id, "candidate_node_ids": candidates},
             )
 
 
@@ -501,12 +550,14 @@ def _api_suffix_candidates(
     routes: dict[tuple[str, tuple[str, ...]], set[str]],
     suffixes: dict[tuple[str, tuple[str, ...]], set[str]],
 ) -> set[str]:
+    """Operations whose route is the longest suffix of ``route``; else those whose route ends with it."""
     method, route = signature
     parts = _route_parts(route)
-    matches = set(suffixes.get((method, parts), ()))
     for index in range(len(parts)):
-        matches.update(routes.get((method, parts[index:]), ()))
-    return matches
+        matches = routes.get((method, parts[index:]))
+        if matches:
+            return set(matches)
+    return set(suffixes.get((method, parts), ()))
 
 
 def _route_parts(route: str) -> tuple[str, ...]:
@@ -713,3 +764,17 @@ def _properties(row: dict[str, str]) -> dict[str, object]:
 
 def _upper(value: object) -> str:
     return str(value or "").strip().upper()
+
+
+# Cross-source linking, in order. Extractors only see one source and leave
+# references they cannot resolve deferred; each step here resolves one kind
+# across all sources. A new kind of link (an API gateway route table, base
+# URLs read from config files) is one more entry, before "api" when the API
+# link depends on it.
+RESOLVERS: list[tuple[str, Callable[[GraphPackage], None]]] = [
+    ("gateway", link_gateway),
+    ("api", link_api),
+    ("deferred", resolve_deferred_references),
+    ("catalog", redirect_catalog_references),
+    ("dangling", materialize_dangling_references),
+]

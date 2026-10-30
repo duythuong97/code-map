@@ -9,7 +9,7 @@ is a regression; ``undetectable`` ones measure blind spots honestly.
 true impact. Each miss is classified: the graph has the dependency (the agent or
 retrieval missed it) or the graph lacks it (the extractor missed it).
 
-Matching works on ``codemap-rag.sqlite`` (graph + jobnet jobs) by technical names.
+Matching works on the ``search_*`` tables of ``codemap.sqlite`` (graph + jobnet jobs) by technical names.
 """
 from __future__ import annotations
 
@@ -67,16 +67,16 @@ class GraphIndex:
                 node_id: {"id": node_id, "stable": stable, "type": node_type, "name": name or "", "qualified": qualified or "",
                           "file": file}
                 for node_id, stable, node_type, name, qualified, file in db.execute(
-                    "SELECT id, stable_id, type, name, qualified_name, file FROM nodes"
+                    "SELECT id, stable_id, type, name, qualified_name, file FROM search_nodes"
                 )
             }
             self.out: dict[int, list[tuple[int, str]]] = defaultdict(list)
             self.into: dict[int, list[tuple[int, str]]] = defaultdict(list)
-            for src, dst, edge_type in db.execute("SELECT src, dst, type FROM edges"):
+            for src, dst, edge_type in db.execute("SELECT src, dst, type FROM search_edges"):
                 self.out[src].append((dst, edge_type))
                 self.into[dst].append((src, edge_type))
             self.issues: dict[int, set[str]] = defaultdict(set)
-            for node_id, issue_type in db.execute("SELECT node_id, type FROM issues WHERE node_id IS NOT NULL"):
+            for node_id, issue_type in db.execute("SELECT node_id, type FROM search_issues WHERE node_id IS NOT NULL"):
                 self.issues[node_id].add(issue_type)
         self.by_type: dict[str, list[int]] = defaultdict(list)
         for node in self.nodes.values():
@@ -178,7 +178,7 @@ def load_truth(corpus: Path) -> list[dict[str, Any]]:
 
 def score_extract(corpus: Path, output: Path, *, only_sources: set[str] | None = None) -> dict[str, Any]:
     """Recall of every truth edge in the extract, by pattern and by expectation."""
-    graph = GraphIndex(output / "codemap-rag.sqlite")
+    graph = GraphIndex(output / "codemap.sqlite")
     rows = []
     for edge in load_truth(corpus):
         if only_sources and not _within(edge, only_sources):
@@ -244,7 +244,7 @@ def answer_items(answer: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def score_impact(scenario: dict[str, Any], answer: list[dict[str, str]], output: Path) -> dict[str, Any]:
-    graph = GraphIndex(output / "codemap-rag.sqlite")
+    graph = GraphIndex(output / "codemap.sqlite")
     truth = [*scenario["truth"]["must_change"], *scenario["truth"].get("affected", [])]
     target_ids = graph.find(scenario["target"]["kind"], scenario["target"]["name"])
     reachable = graph.reach_in(target_ids)
@@ -285,7 +285,7 @@ def score_impact(scenario: dict[str, Any], answer: list[dict[str, str]], output:
 
 def graph_impact(scenario: dict[str, Any], output: Path) -> list[dict[str, str]]:
     """The no-LLM baseline: every node the graph says depends on the target."""
-    graph = GraphIndex(output / "codemap-rag.sqlite")
+    graph = GraphIndex(output / "codemap.sqlite")
     starts = graph.find(scenario["target"]["kind"], scenario["target"]["name"])
     reached = graph.reach_in(starts)
     if scenario.get("direction", "in") != "in" or scenario["target"]["kind"] in {"procedure", "method"}:

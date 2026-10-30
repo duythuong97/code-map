@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
+from .env_loader import REPOSITORY_ENV, load_dotenv
 from .extractors import supported_source_types
 from .pipeline import run_pipeline, validate_pipeline_config
 
@@ -28,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         "extract", description="Run all configured extractors and publish V3 output."
     )
     extract_parser.add_argument(
-        "--config", help="Path to the unified JSON config."
+        "--config", help="Path to the unified JSON config (default: $CODE_MAP_CONFIG)."
     )
     extract_parser.add_argument(
         "--output", help="Write here instead of the config's output (e.g. a base-commit graph)."
@@ -81,20 +83,31 @@ def main(argv: list[str] | None = None) -> int:
     stale_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
     stale_parser.add_argument("--source-root", help="Override the source root recorded at extract time.")
     stale_parser.add_argument("--no-added", action="store_true", help="Skip the scan for new files.")
+    init_parser = commands.add_parser(
+        "init",
+        description="Look into every repository under --root and write (or extend) a config with one "
+        "source per Angular app, .NET API/batch, PL/SQL and SQL folder found.",
+    )
+    init_parser.add_argument("--root", help="Folder holding the repositories, e.g. C:/sources (new config only).")
+    init_parser.add_argument("--config", help="Config to write or extend (default: $CODE_MAP_CONFIG).")
+    init_parser.add_argument("--name", help="System name (default: the root folder's name).")
+    init_parser.add_argument("--database", help="database for the SQL and .NET sources, e.g. DB1.")
+    init_parser.add_argument("--schema", help="schema for the SQL and .NET sources, e.g. APP.")
+    init_parser.add_argument("--dry-run", action="store_true", help="Print what would be added without writing.")
     validate_parser = commands.add_parser(
         "validate", description="Validate V3 config and catalog without extracting."
     )
-    validate_parser.add_argument("--config", required=True)
+    validate_parser.add_argument("--config", help="Default: $CODE_MAP_CONFIG.")
 
     rag_parser = commands.add_parser(
-        "rag-export",
-        description="Write codemap-rag.sqlite (VS Code) and codemap-web.sqlite (web app) from graph.sqlite.",
+        "serving-export",
+        aliases=["rag-export"],
+        description="Write codemap.sqlite (read by the web app and the MCP server) from graph.sqlite.",
     )
     rag_parser.add_argument("--graph", required=True, help="graph.sqlite or the extract output folder.")
     rag_parser.add_argument("--input-data", help="Folder with semantic-dictionary.csv, tables.csv, jobnet.csv ...")
     rag_parser.add_argument("--source-root", help="Folder the evidence paths are relative to.")
-    rag_parser.add_argument("--out", help="VS Code file (default: codemap-rag.sqlite next to graph.sqlite).")
-    rag_parser.add_argument("--web-out", help="Web app file (default: codemap-web.sqlite next to --out).")
+    rag_parser.add_argument("--out", help="Default: codemap.sqlite next to graph.sqlite.")
 
     catalog_parser = commands.add_parser(
         "catalog", description="Inspect and validate incoming catalog files."
@@ -115,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     }:
         arguments.insert(0, "extract")
     args = parser.parse_args(arguments)
+    if args.command in {"extract", "validate", "init"}:
+        args.config = _config_path(args.config)
     try:
         if args.command == "catalog":
             from .v3.catalog import inspect_catalog_file
@@ -124,16 +139,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
-        if args.command == "rag-export":
-            from .rag_export import write_rag_database
+        if args.command in {"serving-export", "rag-export"}:
+            from .serving import DATABASE_NAME, write_serving_database
             from .sqlite_graph import resolve_database_path
 
             graph = resolve_database_path(Path(args.graph))
-            output = Path(args.out) if args.out else graph.with_name("codemap-rag.sqlite")
-            counts = write_rag_database(
+            output = Path(args.out) if args.out else graph.with_name(DATABASE_NAME)
+            counts = write_serving_database(
                 graph,
                 output,
-                web_path=Path(args.web_out) if args.web_out else None,
                 input_root=Path(args.input_data) if args.input_data else None,
                 source_root=Path(args.source_root).resolve() if args.source_root else None,
             )
@@ -149,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             knowledge = affected_knowledge(
                 result,
                 Path(args.knowledge_db) if args.knowledge_db else None,
-                head_graph.with_name("codemap-web.sqlite"),
+                head_graph.with_name("codemap.sqlite"),
             )
             if args.format == "json":
                 text = json.dumps({"diff": result, "plan": plan, "knowledge": knowledge}, ensure_ascii=False, indent=2)
@@ -196,7 +210,24 @@ def main(argv: list[str] | None = None) -> int:
             report["summary"] = summary_line(report)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 0 if report.get("fresh") else 1
+        if args.command == "init":
+            from .init_config import format_report, init_config
+
+            if not args.config:
+                init_parser.error("--config is required (or set CODE_MAP_CONFIG in .env)")
+            report = init_config(
+                Path(args.root) if args.root else None,
+                Path(args.config),
+                name=args.name,
+                database=args.database,
+                schema=args.schema,
+                dry_run=args.dry_run,
+            )
+            print(format_report(report))
+            return 0
         if args.command == "validate":
+            if not args.config:
+                validate_parser.error("--config is required (or set CODE_MAP_CONFIG in .env)")
             result = validate_pipeline_config(Path(args.config))
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["valid"] else 1
@@ -204,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(supported_source_types()))
             return 0
         if not args.config:
-            extract_parser.error("--config is required")
+            extract_parser.error("--config is required (or set CODE_MAP_CONFIG in .env)")
         output_override = Path(args.output) if args.output else None
         if args.at or args.at_date:
             from .checkout import checkout_at, parse_at
@@ -228,6 +259,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(output)
     return 0
+
+def _config_path(value: str | None) -> str | None:
+    """``--config`` as given, else $CODE_MAP_CONFIG (relative to the repository, like the web app)."""
+    if value:
+        return value
+    load_dotenv(REPOSITORY_ENV)
+    configured = os.environ.get("CODE_MAP_CONFIG")
+    if not configured:
+        return None
+    path = Path(configured).expanduser()
+    return str(path if path.is_absolute() else REPOSITORY_ENV.parent / path)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

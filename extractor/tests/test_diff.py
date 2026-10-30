@@ -92,7 +92,7 @@ class DiffTests(unittest.TestCase):
             db.execute("CREATE TABLE biz_rules(rule_id TEXT, title TEXT, status TEXT, node_ids TEXT)")
             db.execute("INSERT INTO biz_rules VALUES('RULE-ORD-001','Hủy đơn giữ dòng đơn','approved',?)", (json.dumps([cancel_id]),))
             db.execute("INSERT INTO biz_rules VALUES('RULE-ORD-002','Khác','approved','[\"x\"]')")
-        knowledge = affected_knowledge(diff, knowledge_db, head / "codemap-web.sqlite")
+        knowledge = affected_knowledge(diff, knowledge_db, head / "codemap.sqlite")
         self.assertEqual([rule["rule_id"] for rule in knowledge["rules"]], ["RULE-ORD-001"])
 
         markdown = to_markdown(diff, plan, knowledge)

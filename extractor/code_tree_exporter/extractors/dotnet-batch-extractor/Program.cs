@@ -69,12 +69,12 @@ var methodLookup = methods
     .ToDictionary(group => group.Key, group => group.OrderBy(method => method.File.RelativePath, StringComparer.Ordinal).ThenBy(method => method.Start).First());
 var invocations = new List<MethodInvocationInfo>();
 foreach (var file in csFiles)
-{
-    var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
-    var visibleClassNames = ExtractorRuntime.CompilationIndex(model.Compilation).VisibleClassNames();
-    invocations.AddRange(ExtractorRuntime.MethodInvocationEdges(file, model, visibleClassNames));
-    invocations.AddRange(TopLevelInvocationEdges(file, model, visibleClassNames));
-}
+    invocations.AddRange(ExtractorRuntime.Guard(file, "calls", () =>
+    {
+        var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
+        var visibleClassNames = ExtractorRuntime.CompilationIndex(model.Compilation).VisibleClassNames();
+        return ExtractorRuntime.MethodInvocationEdges(file, model, visibleClassNames).Concat(TopLevelInvocationEdges(file, model, visibleClassNames));
+    }));
 var commandHandlers = DiscoverCommandHandlers(csFiles, compilationByTree, methodLookup);
 var dataFindings = CollectDataFindings(csFiles, compilationByTree, catalog, folderContexts, defaultDatabase, methodLookup, sqlDialect);
 var executables = DiscoverExecutables(source, scope, repository, defaultDatabase, projects, methods, csFiles, mappings);
@@ -196,27 +196,31 @@ foreach (var executable in executables.OrderBy(exe => exe.Name, StringComparer.O
     if (rootMethods.Count > 0)
     {
         var parameters = rootMethods.Select(method => method.Syntax).OfType<MethodDeclarationSyntax>().FirstOrDefault()?.ParameterList.Parameters;
-        builder.SetNodeProperty(entryId, "semantic_tree", SemanticTreeV3.Operation(
-            "Main",
-            parameters,
-            rootMethods.Select(method => (method.File, method.Syntax)),
-            ResolveSemanticCall));
+        ExtractorRuntime.Guard(rootMethods[0].File, "entry semantic tree", () =>
+            builder.SetNodeProperty(entryId, "semantic_tree", SemanticTreeV3.Operation(
+                "Main",
+                parameters,
+                rootMethods.Select(method => (method.File, method.Syntax)),
+                ResolveSemanticCall)));
     }
     foreach (var handler in handlers)
     {
         var modeId = ExtractorRuntime.StableNodeId("command-mode", executable.Key, ExtractorRuntime.Slug(handler.Mode));
-        builder.SetNodeProperty(modeId, "semantic_tree", SemanticTreeV3.Operation(handler.Mode, null, new[] { handler.Syntax }, handler.File, ResolveSemanticCall));
+        ExtractorRuntime.Guard(handler.File, "command mode semantic tree", () =>
+            builder.SetNodeProperty(modeId, "semantic_tree", SemanticTreeV3.Operation(handler.Mode, null, new[] { handler.Syntax }, handler.File, ResolveSemanticCall)));
     }
     foreach (var key in reachable.Where(key => !roots.Contains(key)).OrderBy(key => key.ClassName, StringComparer.Ordinal).ThenBy(key => key.MemberName, StringComparer.Ordinal))
     {
         if (!methodLookup.TryGetValue(key, out var method)) continue;
         var methodId = NodeForMethod(key, builder, nodeCache, methodLookup, repository, systemKey, executable.Database, folderContexts);
         var parameters = (method.Syntax as MethodDeclarationSyntax)?.ParameterList.Parameters;
-        builder.SetNodeProperty(methodId, "semantic_tree", SemanticTreeV3.Operation(key.MemberName, parameters, new[] { method.Syntax }, method.File, ResolveSemanticCall));
+        ExtractorRuntime.Guard(method.File, "method semantic tree", () =>
+            builder.SetNodeProperty(methodId, "semantic_tree", SemanticTreeV3.Operation(key.MemberName, parameters, new[] { method.Syntax }, method.File, ResolveSemanticCall)));
     }
 }
 
 AddJobEdges(builder, inputRoot, executables, scope);
+ExtractorRuntime.ReportFileFailures(builder);
 builder.Write(output);
 
 static SemanticModel SemanticModelFor(IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilations, SyntaxTree tree)
@@ -364,6 +368,7 @@ static List<MethodDeclarationInfo> DiscoverMethods(List<SourceFile> csFiles, IRe
 {
     var methods = new List<MethodDeclarationInfo>();
     foreach (var file in csFiles)
+    ExtractorRuntime.Guard(file, "methods", () =>
     {
         var rootNode = file.SyntaxTree!.GetRoot();
         var model = SemanticModelFor(compilationByTree, file.SyntaxTree);
@@ -380,7 +385,7 @@ static List<MethodDeclarationInfo> DiscoverMethods(List<SourceFile> csFiles, IRe
                 methods.Add(new MethodDeclarationInfo(key, file, method.SpanStart, isEntry, method));
             }
         }
-    }
+    });
     return methods;
 }
 
@@ -401,6 +406,7 @@ static List<CommandHandlerInfo> DiscoverCommandHandlers(List<SourceFile> csFiles
 {
     var handlers = new List<CommandHandlerInfo>();
     foreach (var file in csFiles)
+    ExtractorRuntime.Guard(file, "command handlers", () =>
     {
         var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
         var classNames = ExtractorRuntime.CompilationIndex(model.Compilation).VisibleClassNames();
@@ -440,7 +446,7 @@ static List<CommandHandlerInfo> DiscoverCommandHandlers(List<SourceFile> csFiles
                     handlers.Add(new CommandHandlerInfo(mode, source, target, file, arm.SpanStart, arm.Expression));
             }
         }
-    }
+    });
     return handlers;
 }
 
@@ -526,9 +532,9 @@ static string EnsureTableReference(PackageBuilder builder, string database, stri
 static List<DataFinding> CollectDataFindings(List<SourceFile> csFiles, IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilationByTree, Catalog catalog, List<FolderContext> folderContexts, string defaultDatabase, IReadOnlyDictionary<MethodKey, MethodDeclarationInfo> methods, string sqlDialect)
 {
     var findings = new List<DataFinding>();
-    foreach (var file in csFiles)
+    foreach (var file in csFiles.Where(file => ShouldAnalyzeEmbeddedSql(file, sqlDialect)))
+    ExtractorRuntime.Guard(file, "embedded SQL", () =>
     {
-        if (!ShouldAnalyzeEmbeddedSql(file, sqlDialect)) continue;
         var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
         var database = DatabaseForPath(file.AbsolutePath, folderContexts, defaultDatabase);
         foreach (var expression in ExtractorRuntime.StringExpressions(file, model))
@@ -585,7 +591,7 @@ static List<DataFinding> CollectDataFindings(List<SourceFile> csFiles, IReadOnly
             foreach (var offset in analysis.DynamicOffsets)
                 findings.Add(new IssueFinding(owner, "DYNAMIC_SQL", "WARNING", "Runtime SQL target cannot be resolved", expression.ExpressionText, file, ExtractorRuntime.LineForOffset(file, expression.Start + offset), database));
         }
-    }
+    });
     return findings;
 }
 
@@ -815,7 +821,7 @@ static MethodKey? ResolveInvocationTarget(InvocationExpressionSyntax invocation,
     if (symbol is not null)
     {
         var target = ResolveInterfaceImplementation(symbol, model.Compilation, knownClasses) ?? symbol;
-        if (symbol.ContainingType.TypeKind == TypeKind.Interface && SymbolEqualityComparer.Default.Equals(target, symbol)) return null;
+        if (symbol.ContainingType is { TypeKind: TypeKind.Interface } && SymbolEqualityComparer.Default.Equals(target, symbol)) return null;
         var typeName = target.ContainingType?.Name ?? string.Empty;
         var known = MatchKnownClass(typeName, knownClasses);
         var reference = target.DeclaringSyntaxReferences.FirstOrDefault();
@@ -851,10 +857,10 @@ static IMethodSymbol? InvocationMethodSymbol(InvocationExpressionSyntax invocati
 
 static IMethodSymbol? ResolveInterfaceImplementation(IMethodSymbol symbol, Compilation compilation, IReadOnlyCollection<string> knownClasses)
 {
-    if (symbol.ContainingType.TypeKind != TypeKind.Interface) return null;
+    if (symbol.ContainingType is not { TypeKind: TypeKind.Interface }) return null;
     var implementations = ExtractorRuntime.CompilationIndex(compilation)
         .InterfaceImplementations(symbol)
-        .Where(implementation => knownClasses.Contains(implementation.ContainingType.Name))
+        .Where(implementation => implementation.ContainingType is not null && knownClasses.Contains(implementation.ContainingType.Name))
         .ToArray();
     return implementations.Length == 1 ? implementations[0] : null;
 }

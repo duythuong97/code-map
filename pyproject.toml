@@ -1,0 +1,21 @@
+# One install for the whole repository: `pip install -r requirements.txt` (which ends with `-e .`).
+# Editable, so the extractor runtimes (.mjs, .cs, built workers) keep running from their folders.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-map"
+version = "3.0.0"
+description = "Code graph of Angular, .NET, PL/SQL and SQL sources for a web UI and AI agents (MCP)"
+requires-python = ">=3.10"
+# Pinned versions live in extractor/requirements.txt and web/requirements.txt.
+dependencies = []
+
+[project.scripts]
+codemap = "codemap.cli:main"
+
+[tool.setuptools.packages.find]
+where = [".", "extractor"]
+include = ["codemap*", "web*", "code_tree_exporter*"]
+exclude = ["*.tests", "*.tests.*"]

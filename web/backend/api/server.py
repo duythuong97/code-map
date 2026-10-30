@@ -6,38 +6,38 @@ consistently on macOS, Linux, and Windows.
 """
 from __future__ import annotations
 
-import os
-import sys
+import argparse
 import logging
+import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from web.runtime_env import project_path
-from web.backend.config import load_app_config
-from web.backend.logging_config import configure_backend_logging
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="codemap serve", description="Serve the web app and the HTTP MCP endpoint.")
+    parser.add_argument("--config", help="Extractor config to serve (default: $CODE_MAP_CONFIG, else the demo).")
+    args = parser.parse_args(argv)
+    if args.config:
+        # Settings are read when the app module is imported.
+        os.environ["CODE_MAP_CONFIG"] = str(Path(args.config).expanduser().resolve())
 
-CONFIG_PATH = project_path("web", "configs", "code-map.config.json")
-APP_CONFIG = load_app_config(CONFIG_PATH)
-
-
-def main() -> None:
     from waitress import serve
-    from web.backend.api.app import app
+
+    from web.backend.api.app import APP_CONFIG, app
+    from web.backend.logging_config import configure_backend_logging
 
     host = APP_CONFIG["host"]
-    port = int(APP_CONFIG["port"])
+    port = APP_CONFIG["port"]
     log_path = configure_backend_logging(APP_CONFIG)
     logging.getLogger("code_map.backend").info(
-        "starting backend server host=%s port=%s prefix=%s graph_output=%s log_path=%s",
+        "starting backend server config=%s host=%s port=%s prefix=%s graph_output=%s log_path=%s",
+        APP_CONFIG["config"],
         host,
         port,
-        APP_CONFIG.get("url_prefix", ""),
-        APP_CONFIG.get("graph_output", ""),
+        APP_CONFIG["url_prefix"],
+        APP_CONFIG["graph_output"],
         log_path or "disabled",
     )
+    print(f"Code Map: http://{host}:{port}{APP_CONFIG['url_prefix']}/  (config {APP_CONFIG['config']})", flush=True)
     serve(app, host=host, port=port)
 
 

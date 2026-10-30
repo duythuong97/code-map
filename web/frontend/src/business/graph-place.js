@@ -43,7 +43,7 @@ export function placeNodes(positions, nodeIds, edges) {
 // Edge kinds the explorer's W/R walks use: intermediate hops, then a write or read of a table.
 const WRITES = new Set(["INSERTS", "UPDATES", "DELETES", "MERGES", "WRITES"]);
 const READS = new Set(["READS", "REMOTE_READS"]);
-const HOPS = new Set(["CALLS_API", "STARTS", "CALLS", "HANDLED_BY", "RESOLVES_TO", "TRIGGERS"]);
+const HOPS = new Set(["CALLS_API", "STARTS", "CALLS", "HANDLED_BY", "RESOLVES_TO", "TRIGGERS", "ROUTES_TO", "PUBLISHES", "CONSUMED_BY"]);
 
 // The flow is a multi-hop walk from its entry, so its edges are what the E/W/R boxes would have shown, not "1".
 // Each default box has a `path` (the flow edges its walk covers) and a `core` (the edges that make it true):

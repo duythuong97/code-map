@@ -14,7 +14,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from .revisions import git
+from .vcs import recorded_repository
 
 MAX_LISTED = 200
 
@@ -125,20 +125,17 @@ def _added_files(root: Path, scopes: dict, known: set[str]) -> list[str]:
 def _revision_changes(root: Path, recorded: dict) -> list[dict[str, object]]:
     result = []
     for source, info in sorted(recorded.items()):
-        if not isinstance(info, dict) or info.get("vcs") != "git":
+        repository = recorded_repository(info, root) if isinstance(info, dict) else None
+        if repository is None:
             result.append({"source": source, "vcs": "none"})
             continue
-        repository = Path(str(info.get("repository_root") or "."))
-        repository = repository if repository.is_absolute() else root / repository
         commit = str(info.get("commit") or "")
-        head = git(repository, "rev-parse", "HEAD") or ""
-        since = None
-        if commit and head and commit != head:
-            count = git(repository, "rev-list", "--count", f"{commit}..{head}")
-            since = int(count) if count and count.isdigit() else None
+        head = repository.revision()
+        since = repository.revisions_since(commit) if commit and head and commit != head else None
         result.append(
             {
                 "source": source,
+                "vcs": repository.name,
                 "commit": commit,
                 "head": head,
                 "branch": info.get("branch", ""),

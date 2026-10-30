@@ -16,7 +16,7 @@ from xml.etree import ElementTree
 from .comments import extract_comments
 from .contract.graph_contract import normalize_repository_path
 from .decoding import SourceDecodingError, decode_source, encoding_for
-from .env_loader import expand_env_json, load_dotenv
+from .env_loader import REPOSITORY_ENV, expand_env_json, load_dotenv
 from .extractors import ExtractorSpec, extractor_spec
 from . import incremental
 from .extractors.dotnet_runner import ensure_worker_built
@@ -27,7 +27,8 @@ from .graph_package import (
     validate_output_directory,
 )
 from .linker import run_linker
-from .rag_export import write_rag_database
+from .messages import link_messages
+from .serving import DATABASE_NAME as SERVING_DATABASE_NAME, write_serving_database
 from .revisions import source_revisions, source_scopes
 from .v3.catalog import prepare_catalog
 from .v3.hierarchy import enrich_hierarchy
@@ -79,7 +80,7 @@ def run_pipeline(
     ``display_root`` is the root recorded for stale checks in that case.
     """
     config_path = config_path.expanduser().resolve()
-    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
+    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env", REPOSITORY_ENV)
     config = _load_config(config_path)
     if root_override is not None:
         config["root"] = str(root_override.resolve())
@@ -303,6 +304,7 @@ def run_pipeline(
                     graph,
                 )
 
+        link_messages(graph, _existing_input_root(config))
         run_linker(graph)
         enrich_hierarchy(graph)
         graph.materialize_structure()
@@ -331,10 +333,11 @@ def run_pipeline(
         del graph
         gc.collect()
         publish_v3(final_staging, catalog=catalog, config=config)
-        if config.get("ragExport", True) is not False:
-            write_rag_database(
+        # "ragExport": false (older name) or "servingExport": false skips codemap.sqlite.
+        if config.get("servingExport", config.get("ragExport", True)) is not False:
+            write_serving_database(
                 final_staging / "graph.sqlite",
-                final_staging / "codemap-rag.sqlite",
+                final_staging / SERVING_DATABASE_NAME,
                 input_root=_existing_input_root(config),
                 source_root=root,
             )
@@ -345,7 +348,7 @@ def run_pipeline(
 def configured_sources(config_path: Path) -> tuple[Path, list[dict]]:
     """The config's root and validated sources (for ``extract --at``)."""
     config_path = config_path.expanduser().resolve()
-    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
+    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env", REPOSITORY_ENV)
     config = _load_config(config_path)
     root = _absolute_directory(config, "root")
     sources = config.get("sources")
@@ -398,7 +401,7 @@ def lower_process_priority() -> None:
 
 def validate_pipeline_config(config_path: Path) -> dict[str, object]:
     config_path = config_path.expanduser().resolve()
-    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env")
+    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env", REPOSITORY_ENV)
     config = _load_config(config_path)
     root = _absolute_directory(config, "root")
     output = _absolute_path(config, "output")
@@ -483,6 +486,13 @@ def _missing_required_runtimes(runtimes: dict[str, dict[str, object]]) -> list[s
         for name, info in runtimes.items()
         if info["required"] and not info["found"]
     ]
+
+
+def load_config(config_path: Path) -> dict:
+    """The config with ``${NAME}`` expanded and its paths made absolute (the web app reads it too)."""
+    config_path = config_path.expanduser().resolve()
+    load_dotenv(config_path.parent / ".env", Path.cwd() / ".env", REPOSITORY_ENV)
+    return _load_config(config_path)
 
 
 def _load_config(path: Path) -> dict:
@@ -1100,6 +1110,11 @@ def _run_extractor(
 
         extract(config)
         return True, issues
+    if spec.config_type == "api-gateway":
+        from .extractors.api_gateway.runner import extract as extract_gateway
+
+        extract_gateway(config)
+        return True, issues
     # Children write UTF-8 and the output is read as UTF-8, whatever the
     # Windows code page is (cp932 on Japanese Windows).
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
@@ -1225,7 +1240,8 @@ def _failure_summary(source_name: str, issues: list[dict[str, object]]) -> str:
     ]
     reason = (reasons[-1] if reasons else "unknown error").strip()
     if len(reason) > 2_000:
-        reason = reason[-2_000:]
+        # A .NET trace names the exception and the throwing frame first, a Python one last: keep both ends.
+        reason = reason[:1_200] + "\n  …\n" + reason[-800:]
     return f"  - {source_name}: {reason}"
 
 

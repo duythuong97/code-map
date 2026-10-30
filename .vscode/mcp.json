@@ -1,11 +1,12 @@
 {
-  // Code Map MCP server for Copilot agent mode, reading the demo extract (scripts/run_demo_pipeline.py).
+  // Code Map MCP server for Copilot agent mode. It reads the output of the config in
+  // CODE_MAP_CONFIG (.env), else the demo extract (./codemap.sh extract).
   // On Windows use ${workspaceFolder}\\.venv\\Scripts\\python.exe. See README "Bật MCP cho AI agent".
   "servers": {
     "codemap": {
       "type": "stdio",
       "command": "${workspaceFolder}/.venv/bin/python",
-      "args": ["${workspaceFolder}/web/backend/codemap_mcp/__main__.py", "--graph-output", "${workspaceFolder}/output/demo"]
+      "args": ["-m", "codemap", "mcp"]
     }
   }
 }

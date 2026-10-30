@@ -72,6 +72,7 @@ var classesByIdentity = new Dictionary<string, (string Name, SourceFile File, Ty
 var classIdentityByDeclaration = new Dictionary<string, string>(StringComparer.Ordinal);
 var classIdentityByMemberDeclaration = new Dictionary<string, string>(StringComparer.Ordinal);
 foreach (var file in csFiles)
+ExtractorRuntime.Guard(file, "classes", () =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
     foreach (var type in ExtractorRuntime.Types(file))
@@ -84,35 +85,35 @@ foreach (var file in csFiles)
         foreach (var member in type.Members)
             classIdentityByMemberDeclaration[DeclarationIdentity(member.SyntaxTree, member.SpanStart)] = identity;
     }
-}
+});
 
 ExtractorRuntime.Phase("classes");
 var endpoints = new List<EndpointInfo>();
 foreach (var file in csFiles)
-{
-    var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
-    endpoints.AddRange(ExtractorRuntime.Endpoints(file, model));
-    endpoints.AddRange(NetFrameworkSupport.ExtractRouteConfig(file, model));
-}
+    endpoints.AddRange(ExtractorRuntime.Guard(file, "endpoints", () =>
+    {
+        var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
+        return ExtractorRuntime.Endpoints(file, model).Concat(NetFrameworkSupport.ExtractRouteConfig(file, model));
+    }));
 var apiOperationIds = BuildApiOperationIds(application, endpoints, projects);
 ExtractorRuntime.Phase("endpoints");
 
 // Binding every call site is the costliest step; files are independent, so
 // bind them in parallel (results keep file order).
-var invocationEdges = ExtractorRuntime.ParallelMap(csFiles, file =>
+var invocationEdges = ExtractorRuntime.ParallelMap(csFiles, file => ExtractorRuntime.Guard(file, "calls", () =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
     var visibleClassNames = ExtractorRuntime.CompilationIndex(model.Compilation).VisibleTypeNames();
     return ExtractorRuntime.InvocationEdges(file, model, visibleClassNames);
-});
+}));
 ExtractorRuntime.Phase("invocations");
 var mapperReferences = FindMapperReferences(csFiles, compilationByTree, projects, mapperQueries);
 
 var dataAccessClasses = mapperReferences.Select(reference => reference.OwnerClass).ToHashSet(StringComparer.Ordinal);
-foreach (var file in csFiles)
+foreach (var file in csFiles.Where(file => ShouldAnalyzeEmbeddedSql(file, sqlDialect)))
+ExtractorRuntime.Guard(file, "data access classes", () =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
-    if (!ShouldAnalyzeEmbeddedSql(file, sqlDialect)) continue;
     foreach (var expression in ExtractorRuntime.StringExpressions(file, model))
     {
         if (string.IsNullOrEmpty(expression.OwnerClassIdentity)) continue;
@@ -126,7 +127,7 @@ foreach (var file in csFiles)
         }
         catch { }
     }
-}
+});
 
 ExtractorRuntime.Phase("mapper/data access");
 var endpointControllerKeys = endpoints.Select(endpoint => endpoint.File is null || string.IsNullOrEmpty(endpoint.ControllerIdentity)
@@ -184,13 +185,14 @@ foreach (var (identity, nodeId) in classNodeIds)
 var methodNodeIdsByDeclaration = new Dictionary<(SyntaxTree Tree, int Start), string>();
 var methodNodeIdsByIdentity = new Dictionary<string, string>(StringComparer.Ordinal);
 foreach (var file in csFiles)
+ExtractorRuntime.Guard(file, "methods", () =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
     foreach (var method in file.SyntaxTree!.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>())
     {
         var methodSymbol = model.GetDeclaredSymbol(method);
         var classIdentity = classIdentityByMemberDeclaration.GetValueOrDefault(DeclarationIdentity(method.SyntaxTree, method.SpanStart), string.Empty);
-        var className = methodSymbol?.ContainingType.Name ?? method.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault()?.Identifier.Text ?? "";
+        var className = methodSymbol?.ContainingType?.Name ?? method.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault()?.Identifier.Text ?? "";
         var classId = classNodeIds.GetValueOrDefault(classIdentity);
         if (string.IsNullOrEmpty(classId)) continue;
         var symbolIdentity = methodSymbol?.GetDocumentationCommentId();
@@ -205,7 +207,7 @@ foreach (var file in csFiles)
         var end = ExtractorRuntime.LineForOffset(file, method.Span.End);
         builder.AddEvidence("NODE", methodId, file.RelativePath, start, end, "DECLARATION", ExtractorRuntime.LineText(file, start));
     }
-}
+});
 
 ExtractorRuntime.Phase("method nodes");
 AddInterfaceImplementationEdges(builder, csFiles, compilationByTree, methodNodeIdsByDeclaration);
@@ -284,10 +286,10 @@ foreach (var invocation in invocationEdges)
 }
 
 ExtractorRuntime.Phase("call edges");
-foreach (var file in csFiles)
+foreach (var file in csFiles.Where(file => ShouldAnalyzeEmbeddedSql(file, sqlDialect)))
+ExtractorRuntime.Guard(file, "embedded SQL", () =>
 {
     var model = SemanticModelFor(compilationByTree, file.SyntaxTree!);
-    if (!ShouldAnalyzeEmbeddedSql(file, sqlDialect)) continue;
     foreach (var expression in ExtractorRuntime.StringExpressions(file, model))
     {
         var ownerId = SourceMethodNodeId(file, expression.Start, methodNodeIdsByDeclaration);
@@ -350,11 +352,12 @@ foreach (var file in csFiles)
         foreach (var offset in analysis.DynamicOffsets)
             builder.AddIssue("DYNAMIC_SQL", "WARNING", "Runtime SQL target cannot be resolved", ownerId, expression.ExpressionText, database, file.RelativePath, ExtractorRuntime.LineForOffset(file, expression.Start + offset));
     }
-}
+});
 
 AttachApiSemanticTrees(builder, endpoints, csFiles, methodNodeIdsByDeclaration, compilationByTree, apiOperationIds);
 AttachMethodSemanticTrees(builder, csFiles, methodNodeIdsByDeclaration, compilationByTree);
 ExtractorRuntime.Phase("sql and semantic trees");
+ExtractorRuntime.ReportFileFailures(builder);
 builder.Write(output);
 ExtractorRuntime.Phase("write package");
 
@@ -374,6 +377,7 @@ static SemanticModel SemanticModelFor(IReadOnlyDictionary<SyntaxTree, CSharpComp
 static void AddInterfaceImplementationEdges(PackageBuilder builder, IEnumerable<SourceFile> files, IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilations, IReadOnlyDictionary<(SyntaxTree Tree, int Start), string> methodNodeIds)
 {
     foreach (var file in files.Where(file => file.SyntaxTree is not null))
+    ExtractorRuntime.Guard(file, "interface implementations", () =>
     {
         var model = SemanticModelFor(compilations, file.SyntaxTree!);
         foreach (var declaration in file.SyntaxTree!.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
@@ -395,13 +399,13 @@ static void AddInterfaceImplementationEdges(PackageBuilder builder, IEnumerable<
                 }
             }
         }
-    }
+    });
 }
 
 static void AddTypeReferenceEdges(PackageBuilder builder, IEnumerable<SourceFile> files, IReadOnlyDictionary<SyntaxTree, CSharpCompilation> compilations, List<ProjectInfo> projects, IReadOnlyDictionary<string, string> classIdentityByDeclaration, IReadOnlyDictionary<string, string> classNodeIds, IReadOnlyDictionary<(SyntaxTree Tree, int Start), string> methodNodeIds)
 {
     // Resolve in parallel (read-only), then add to the builder in file order.
-    var references = ExtractorRuntime.ParallelMap(files.Where(file => file.SyntaxTree is not null).ToList(), file => TypeReferences(file));
+    var references = ExtractorRuntime.ParallelMap(files.Where(file => file.SyntaxTree is not null).ToList(), file => ExtractorRuntime.Guard(file, "type references", () => TypeReferences(file)));
     foreach (var reference in references)
     {
         var edgeId = builder.AddEdge(reference.SourceId, reference.TargetId, "USES", rawOperation: reference.Target, properties: new Dictionary<string, object> { ["reference_kind"] = reference.Kind });
@@ -445,6 +449,7 @@ static List<MapperReference> FindMapperReferences(IEnumerable<SourceFile> files,
     var result = new List<MapperReference>();
     if (knownQueries.Count == 0) return result;
     foreach (var file in files.Where(file => file.SyntaxTree is not null))
+    ExtractorRuntime.Guard(file, "XML mapper references", () =>
     {
         var model = SemanticModelFor(compilations, file.SyntaxTree!);
         foreach (var invocation in file.SyntaxTree!.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -461,7 +466,7 @@ static List<MapperReference> FindMapperReferences(IEnumerable<SourceFile> files,
             var identity = ScopedClassIdentity(TypeIdentity(model.GetDeclaredSymbol(owner)), file, ProjectForFile(file, projects));
             result.Add(new MapperReference(identity, method.SpanStart, queryId, invocation.SpanStart, file));
         }
-    }
+    });
     return result;
 }
 
@@ -539,7 +544,8 @@ static void AttachApiSemanticTrees(
             };
         }
         var operationId = operationIds[EndpointKey(endpoint)];
-        builder.SetNodeProperty(operationId, "semantic_tree", SemanticTreeV3.Operation($"{endpoint.Method} {endpoint.Route}", parameters, new[] { body }, semanticFile, ResolveCall));
+        ExtractorRuntime.Guard(semanticFile, "API semantic tree", () =>
+            builder.SetNodeProperty(operationId, "semantic_tree", SemanticTreeV3.Operation($"{endpoint.Method} {endpoint.Route}", parameters, new[] { body }, semanticFile, ResolveCall)));
     }
 }
 
@@ -568,7 +574,8 @@ static void AttachMethodSemanticTrees(PackageBuilder builder, IEnumerable<Source
         {
             if (!methodNodeIds.TryGetValue((file.SyntaxTree, method.SpanStart), out var methodId)) continue;
             if (method.Body is null && method.ExpressionBody is null) continue;
-            builder.SetNodeProperty(methodId, "semantic_tree", SemanticTreeV3.Operation(method.Identifier.Text, method.ParameterList.Parameters, new SyntaxNode[] { method }, file, ResolveCall));
+            ExtractorRuntime.Guard(file, "method semantic tree", () =>
+                builder.SetNodeProperty(methodId, "semantic_tree", SemanticTreeV3.Operation(method.Identifier.Text, method.ParameterList.Parameters, new SyntaxNode[] { method }, file, ResolveCall)));
         }
     }
 }

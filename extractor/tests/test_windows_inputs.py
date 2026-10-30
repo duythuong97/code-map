@@ -17,8 +17,8 @@ sys.path.insert(0, str(PROJECT_ROOT.parent))
 from code_tree_exporter import graph_package  # noqa: E402
 from code_tree_exporter.decoding import read_text_auto  # noqa: E402
 from code_tree_exporter.env_loader import expand_env_json  # noqa: E402
-from code_tree_exporter.rag_export import write_rag_database  # noqa: E402
-from shared.fixtures.engine_graph import business_inputs, engine_graph  # noqa: E402
+from code_tree_exporter.serving import write_serving_database  # noqa: E402
+from testdata.engine_graph import business_inputs, engine_graph  # noqa: E402
 
 
 class WindowsInputTests(unittest.TestCase):
@@ -41,9 +41,9 @@ class WindowsInputTests(unittest.TestCase):
                 "database,table_code,table_name_ja,table_name_en\r\nORDER_DB,ORDER_HEADER,注文①㈱,Order Header\r\n".encode("cp932")
             )
             self.assertIn("注文①㈱", read_text_auto(base / "input" / "tables.csv"))
-            write_rag_database(base / "graph.sqlite", base / "rag.sqlite", input_root=base / "input")
-            with sqlite3.connect(base / "rag.sqlite") as rag:
-                names = rag.execute("SELECT names FROM nodes WHERE name='ORDER_HEADER'").fetchone()[0]
+            write_serving_database(base / "graph.sqlite", base / "codemap.sqlite", input_root=base / "input")
+            with sqlite3.connect(base / "codemap.sqlite") as db:
+                names = db.execute("SELECT names FROM search_nodes WHERE name='ORDER_HEADER'").fetchone()[0]
             self.assertEqual(names, "ja:注文①㈱; en:Order Header")
 
     def test_output_replacement_retries_while_a_file_is_locked(self) -> None:

@@ -8,54 +8,12 @@ from collections import defaultdict, deque
 from contextlib import closing
 from pathlib import Path
 
+from ..contract.vocabulary import ANY_READ_EDGES, ANY_WRITE_EDGES, flow_edge
 from .catalog import CatalogImportResult
 
 
-_READ_EDGES = frozenset({"READS", "REMOTE_READS", "READS_FROM", "READS_COLUMN"})
-_WRITE_EDGES = frozenset(
-    {
-        "INSERTS",
-        "UPDATES",
-        "DELETES",
-        "MERGES",
-        "WRITES",
-        "WRITES_TO",
-        "WRITES_COLUMN",
-        "LOADS_INTO",
-        "POPULATES",
-    }
-)
-_FLOW_EDGES = frozenset(
-    {
-        "CONTAINS",
-        "CALLS_API",
-        "STARTS",
-        "CALLS",
-        "TRIGGERS",
-        "TRIGGERS_JOB",
-        "HANDLED_BY",
-        "HANDLES_API",
-        "ENTRY_IN",
-        "RESOLVES_TO",
-        "EXECUTES_SQL",
-        "DEFINES_STATEMENT",
-        "INCLUDES_FRAGMENT",
-        "READS",
-        "REMOTE_READS",
-        "READS_FROM",
-        "READS_COLUMN",
-        "INSERTS",
-        "UPDATES",
-        "DELETES",
-        "MERGES",
-        "WRITES",
-        "WRITES_TO",
-        "WRITES_COLUMN",
-        "LOADS_INTO",
-        "POPULATES",
-        "USES_SEQUENCE",
-    }
-)
+_READ_EDGES = ANY_READ_EDGES
+_WRITE_EDGES = ANY_WRITE_EDGES
 _DEFAULT_ENTRY_TYPES = frozenset(
     {
         "SCREEN",
@@ -621,7 +579,9 @@ def _materialize_flows(
     for edge in connection.execute(
         "SELECT edge_id, source_node_id, target_node_id, edge_type, confidence FROM edges"
     ):
-        if str(edge["edge_type"]) in _FLOW_EDGES:
+        target = nodes.get(int(edge["target_node_id"]))
+        # The rule every flow walk shares (contract/vocabulary.py).
+        if target is not None and flow_edge(str(edge["edge_type"]), str(target["node_type"])):
             adjacency[int(edge["source_node_id"])].append(edge)
     for values in adjacency.values():
         values.sort(key=lambda row: (str(row["edge_type"]), int(row["target_node_id"])))

@@ -80,7 +80,7 @@ public sealed class CompilationIndex
 
     public IReadOnlyList<IMethodSymbol> InterfaceImplementations(IMethodSymbol symbol)
     {
-        if (symbol.ContainingType.TypeKind != TypeKind.Interface)
+        if (symbol.ContainingType is not { TypeKind: TypeKind.Interface })
             return Array.Empty<IMethodSymbol>();
         if (_interfaceImplementations.TryGetValue(symbol, out var cached))
             return cached;
@@ -279,6 +279,52 @@ public static class ExtractorRuntime
         var flattened = new List<TResult>();
         foreach (var part in results) flattened.AddRange(part);
         return flattened;
+    }
+
+    static readonly System.Collections.Concurrent.ConcurrentQueue<(string Path, string Phase, Exception Error)> FileFailures = new();
+    static readonly bool StrictFiles = Environment.GetEnvironmentVariable("CODE_TREE_STRICT") == "1";
+
+    /// <summary>Runs one file's share of a phase. A Roslyn or extractor
+    /// exception in that file (often a NullReferenceException on code the
+    /// semantic model cannot bind) is recorded and the run goes on with the
+    /// other files; <see cref="ReportFileFailures"/> turns them into issues.
+    /// CODE_TREE_STRICT=1 rethrows, to debug with the full stack.</summary>
+    public static void Guard(SourceFile file, string phase, Action work)
+    {
+        try { work(); }
+        catch (Exception error) when (!StrictFiles && error is not OutOfMemoryException)
+        {
+            FileFailures.Enqueue((file.RelativePath, phase, error));
+        }
+    }
+
+    public static List<T> Guard<T>(SourceFile file, string phase, Func<IEnumerable<T>> work)
+    {
+        var result = new List<T>();
+        Guard(file, phase, () => result.AddRange(work()));
+        return result;
+    }
+
+    public static void ReportFileFailures(PackageBuilder builder)
+    {
+        foreach (var group in FileFailures.GroupBy(failure => (failure.Path, failure.Phase)).OrderBy(group => group.Key.Path, StringComparer.Ordinal).ThenBy(group => group.Key.Phase, StringComparer.Ordinal))
+        {
+            var error = group.First().Error;
+            var stack = (error.StackTrace ?? string.Empty).Split('\n').Select(line => line.Trim()).Where(line => line.Length > 0).Take(8).ToArray();
+            Console.Error.WriteLine($"[extractor] {group.Key.Path}: {group.Key.Phase} failed: {error.GetType().Name}: {error.Message}\n  {string.Join("\n  ", stack)}");
+            builder.AddIssue(
+                "EXTRACTOR_ERROR",
+                "WARNING",
+                $"{group.Key.Phase} skipped for this file: {error.GetType().Name}: {error.Message}",
+                sourcePath: group.Key.Path,
+                properties: new Dictionary<string, object>
+                {
+                    ["phase"] = group.Key.Phase,
+                    ["exception"] = error.GetType().FullName ?? error.GetType().Name,
+                    ["occurrences"] = group.Count(),
+                    ["stack"] = stack,
+                });
+        }
     }
 
     static readonly System.Diagnostics.Stopwatch PhaseClock = System.Diagnostics.Stopwatch.StartNew();
@@ -813,10 +859,10 @@ public static class ExtractorRuntime
 
     static IReadOnlyList<IMethodSymbol> InterfaceImplementations(IMethodSymbol symbol, Compilation compilation, IReadOnlyCollection<string> knownClasses)
     {
-        if (symbol.ContainingType.TypeKind != TypeKind.Interface) return Array.Empty<IMethodSymbol>();
+        if (symbol.ContainingType is not { TypeKind: TypeKind.Interface }) return Array.Empty<IMethodSymbol>();
         return CompilationIndex(compilation)
             .InterfaceImplementations(symbol)
-            .Where(implementation => knownClasses.Contains(implementation.ContainingType.Name))
+            .Where(implementation => implementation.ContainingType is not null && knownClasses.Contains(implementation.ContainingType.Name))
             .ToArray();
     }
 
@@ -1373,11 +1419,16 @@ public static class SemanticTreeV3
                 ("steps", Effects(arm.Expression, file, resolveCall)))).ToList()),
             ("else_steps", new List<Dictionary<string, object>>()));
 
-    static Dictionary<string, object> Lambda(IEnumerable<ParameterSyntax> parameters, CSharpSyntaxNode body, SyntaxNode source, SourceFile file, Func<InvocationExpressionSyntax, SemanticCallResolution?>? resolveCall)
+    static Dictionary<string, object> Lambda(IEnumerable<ParameterSyntax> parameters, CSharpSyntaxNode? body, SyntaxNode source, SourceFile file, Func<InvocationExpressionSyntax, SemanticCallResolution?>? resolveCall)
         => Fact("callback", "callback", file, source,
             ("parameters", parameters.Select(Parameter).ToList()),
             ("expression", body is ExpressionSyntax expression ? expression.ToString() : string.Empty),
-            ("steps", body is BlockSyntax block ? ProjectBlock(block, file, resolveCall) : new List<Dictionary<string, object>> { ExpressionResult((ExpressionSyntax)body, file, resolveCall, "IMPLICIT_RESULT") }));
+            ("steps", body switch
+            {
+                BlockSyntax block => ProjectBlock(block, file, resolveCall),
+                ExpressionSyntax result => new List<Dictionary<string, object>> { ExpressionResult(result, file, resolveCall, "IMPLICIT_RESULT") },
+                _ => new List<Dictionary<string, object>>(),
+            }));
 
     static Dictionary<string, object> Call(InvocationExpressionSyntax invocation, SourceFile file, Func<InvocationExpressionSyntax, SemanticCallResolution?>? resolveCall, bool forceAwaited = false)
     {

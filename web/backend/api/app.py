@@ -1,6 +1,6 @@
 """Flask web app for the Code Map graph.
 
-The app reads the extract output directly: ``codemap-web.sqlite`` (and
+The app reads the extract output directly: ``codemap.sqlite`` (and
 ``graph.sqlite`` for semantic trees) in the configured ``graph_output``
 folder. Notes and business-term mappings people add are kept in
 ``knowledge_db`` so the next extract does not overwrite them.
@@ -14,28 +14,20 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 import time
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from flask import Flask, g, jsonify, request, send_from_directory
 
-from flask import Flask, g, jsonify, request, send_from_directory  # noqa: E402
+from web.backend.api import graph_routes
+from web.backend.api import business_routes  # noqa: F401  (registers /business routes on the graph blueprint)
+from web.backend.api import knowledge_routes  # noqa: F401  (rules, decisions, questions, review queue)
+from web.backend.api import mcp_http as http_transport
+from codemap.settings import absolute_path, project_path, settings
+from web.backend.logging_config import configure_backend_logging
 
-from web.backend.api import graph_routes  # noqa: E402
-from web.backend.api import business_routes  # noqa: E402,F401  (registers /business routes on the graph blueprint)
-from web.backend.api import knowledge_routes  # noqa: E402,F401  (rules, decisions, questions, review queue)
-from web.backend.codemap_mcp import http_transport  # noqa: E402
-from web.backend.config import absolute_path, load_app_config  # noqa: E402
-from web.backend.logging_config import configure_backend_logging  # noqa: E402
-from web.runtime_env import project_path, required_env  # noqa: E402
-
-APP_CONFIG_PATH = project_path("web", "configs", "code-map.config.json")
-APP_CONFIG = load_app_config(APP_CONFIG_PATH)
-GRAPH_OUTPUT = absolute_path(APP_CONFIG["graph_output"], "graph_output")
-KNOWLEDGE_DB = absolute_path(APP_CONFIG["knowledge_db"], "knowledge_db")
+APP_CONFIG = settings()
+GRAPH_OUTPUT = APP_CONFIG["graph_output"]
+KNOWLEDGE_DB = APP_CONFIG["knowledge_db"]
 WEB_DIST = project_path("web", "frontend", "dist")
 URL_PREFIX = APP_CONFIG["url_prefix"]
 
@@ -44,7 +36,7 @@ BACKEND_LOG_PATH = configure_backend_logging(APP_CONFIG)
 logger = logging.getLogger("code_map.backend")
 if BACKEND_LOG_PATH:
     logger.info("backend file logging configured path=%s", BACKEND_LOG_PATH)
-app.config["MAX_CONTENT_LENGTH"] = int(required_env("CODE_MAP_MAX_CONTENT_LENGTH"))
+app.config["MAX_CONTENT_LENGTH"] = APP_CONFIG["max_content_length"]
 app.config["CODE_MAP_GRAPH_OUTPUT"] = GRAPH_OUTPUT
 app.config["CODE_MAP_KNOWLEDGE_DB"] = KNOWLEDGE_DB
 app.register_blueprint(graph_routes.bp)
@@ -193,7 +185,7 @@ def web_assets(path: str):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--graph-output", help="Extract output folder (contains codemap-web.sqlite)")
+    parser.add_argument("--graph-output", help="Extract output folder (contains codemap.sqlite)")
     parser.add_argument("--host", default=APP_CONFIG["host"])
     parser.add_argument("--port", type=int, default=int(APP_CONFIG["port"]))
     return parser.parse_args()

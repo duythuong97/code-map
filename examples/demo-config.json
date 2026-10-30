@@ -1,10 +1,10 @@
 {
   "name": "code-map-demo",
-  "root": "${CODE_MAP_SOURCE_ROOT}",
-  "output": "${CODE_TREE_OUTPUT}",
-  "inputData": "${CODE_MAP_INPUT_DATA}",
+  "root": "./sample-source",
+  "output": "../var/output/demo",
+  "inputData": "./input-data",
   "catalog": {
-    "folder": "${CODE_TREE_CATALOG}",
+    "folder": "./catalog",
     "strict": true
   },
   "sources": [

@@ -18,7 +18,8 @@ env/
 coverage.xml
 htmlcov/
 
-# Generated graphs and local databases
+# Generated graphs, local databases and logs (the demo keeps all of them in var/)
+var/
 output/
 .artifacts/
 *.db

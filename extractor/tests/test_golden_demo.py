@@ -24,7 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from code_tree_exporter.pipeline import _typescript_path, run_pipeline  # noqa: E402
 from code_tree_exporter.snapshot import graph_snapshot, snapshot_difference, write_snapshot  # noqa: E402
 
-GOLDEN = REPOSITORY / "shared" / "fixtures" / "golden"
+GOLDEN = REPOSITORY / "testdata" / "golden"
 EXAMPLES = REPOSITORY / "examples"
 UPDATE = os.environ.get("CODE_MAP_UPDATE_GOLDEN") == "1"
 
