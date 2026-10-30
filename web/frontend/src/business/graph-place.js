@@ -76,29 +76,49 @@ export function baseIntentEdges(edges) {
     }
     return ids;
   };
-  // Edges on hop-chains from a node that end in a terminal of the given kind (cycles count as dead ends).
-  const pathsOut = (node, terminals, visiting = new Set()) => {
-    if (visiting.has(node)) return [];
-    visiting.add(node);
+  // Nodes with a hop-chain to a terminal of the given kind, found once per kind (a per-node depth-first
+  // walk visits every route, which is exponential when helpers are shared).
+  const reaching = (terminals) => {
+    const found = new Set();
+    const queue = edges.filter((edge) => terminals.has(edge.edge_type)).map((edge) => edge.source_node_id);
+    while (queue.length) {
+      const node = queue.shift();
+      if (found.has(node)) continue;
+      found.add(node);
+      for (const edge of into.get(node) || []) if (HOPS.has(edge.edge_type)) queue.push(edge.source_node_id);
+    }
+    return found;
+  };
+  const reachesWrite = reaching(WRITES);
+  const reachesRead = reaching(READS);
+  // Edges on hop-chains from a node that end in a terminal of the given kind.
+  const pathsOut = (node, terminals, reaches) => {
+    if (!reaches.has(node)) return [];
     const ids = [];
-    for (const edge of out.get(node) || []) {
-      if (terminals.has(edge.edge_type)) ids.push(edge.edge_id);
-      else if (HOPS.has(edge.edge_type)) {
-        const rest = pathsOut(edge.target_node_id, terminals, visiting);
-        if (rest.length) ids.push(edge.edge_id, ...rest);
+    const visited = new Set([node]);
+    const queue = [node];
+    while (queue.length) {
+      for (const edge of out.get(queue.shift()) || []) {
+        if (terminals.has(edge.edge_type)) ids.push(edge.edge_id);
+        else if (HOPS.has(edge.edge_type) && reaches.has(edge.target_node_id)) {
+          ids.push(edge.edge_id);
+          if (!visited.has(edge.target_node_id)) { visited.add(edge.target_node_id); queue.push(edge.target_node_id); }
+        }
       }
     }
-    visiting.delete(node);
     return ids;
   };
-  const hopsInto = (node, visiting = new Set()) => {
-    if (visiting.has(node)) return [];
-    visiting.add(node);
+  const hopsInto = (node) => {
     const ids = [];
-    for (const edge of into.get(node) || []) {
-      if (HOPS.has(edge.edge_type)) ids.push(edge.edge_id, ...hopsInto(edge.source_node_id, visiting));
+    const visited = new Set([node]);
+    const queue = [node];
+    while (queue.length) {
+      for (const edge of into.get(queue.shift()) || []) {
+        if (!HOPS.has(edge.edge_type)) continue;
+        ids.push(edge.edge_id);
+        if (!visited.has(edge.source_node_id)) { visited.add(edge.source_node_id); queue.push(edge.source_node_id); }
+      }
     }
-    visiting.delete(node);
     return ids;
   };
   const owned = new Map();
@@ -109,8 +129,8 @@ export function baseIntentEdges(edges) {
   for (const node of new Set([...out.keys(), ...into.keys()])) {
     put(node, "E", "out", walk(node, out, (edge) => edge.target_node_id), (out.get(node) || []).map((edge) => edge.edge_id));
     put(node, "E", "in", walk(node, into, (edge) => edge.source_node_id), (into.get(node) || []).map((edge) => edge.edge_id));
-    for (const [mode, terminals] of [["W", WRITES], ["R", READS]]) {
-      const forward = pathsOut(node, terminals);
+    for (const [mode, terminals, reaches] of [["W", WRITES, reachesWrite], ["R", READS, reachesRead]]) {
+      const forward = pathsOut(node, terminals, reaches);
       put(node, mode, "out", forward, forward.filter((id) => terminals.has(types.get(id))));
       const writes = (into.get(node) || []).filter((edge) => terminals.has(edge.edge_type));
       put(node, mode, "in", writes.flatMap((edge) => [edge.edge_id, ...hopsInto(edge.source_node_id)]), writes.map((edge) => edge.edge_id));

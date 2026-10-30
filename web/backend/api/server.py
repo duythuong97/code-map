@@ -24,16 +24,17 @@ def main(argv: list[str] | None = None) -> None:
     port = APP_CONFIG["port"]
     log_path = configure_backend_logging(APP_CONFIG)
     logging.getLogger("code_map.backend").info(
-        "starting backend server config=%s host=%s port=%s prefix=%s graph_output=%s log_path=%s",
+        "starting backend server config=%s host=%s port=%s threads=%s prefix=%s graph_output=%s log_path=%s",
         APP_CONFIG["config"],
         host,
         port,
+        APP_CONFIG["threads"],
         APP_CONFIG["url_prefix"],
         APP_CONFIG["graph_output"],
         log_path or "disabled",
     )
     print(f"Code Map: http://{host}:{port}{APP_CONFIG['url_prefix']}/  (config {APP_CONFIG['config']})", flush=True)
-    serve(app, host=host, port=port)
+    serve(app, host=host, port=port, threads=APP_CONFIG["threads"])
 
 
 if __name__ == "__main__":

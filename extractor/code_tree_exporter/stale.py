@@ -8,6 +8,7 @@ commits made since, and the graph nodes declared in changed files, so a reader
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import sqlite3
@@ -17,6 +18,10 @@ from pathlib import Path
 from .vcs import recorded_repository
 
 MAX_LISTED = 200
+# A file last written this long before the extract finished is taken as the one the extract read and is not
+# hashed again; an edit, checkout or update after that gives it a newer time. Reading every file of a large
+# source on each check is what made it slow.
+UNTOUCHED_MARGIN_SECONDS = 24 * 3600
 
 
 def stale_report(graph_path: Path, source_root: Path | None = None, *, check_added: bool = True) -> dict[str, object]:
@@ -51,11 +56,17 @@ def stale_report(graph_path: Path, source_root: Path | None = None, *, check_add
             return result
         changed: list[str] = []
         deleted: list[str] = []
+        untouched_before = _epoch(metadata.get("generated_at")) - UNTOUCHED_MARGIN_SECONDS
         for path, (_, digest) in sorted(recorded.items()):
             file = root / path
+            try:
+                modified = file.stat().st_mtime
+            except OSError:
+                deleted.append(path)
+                continue
             if not file.is_file():
                 deleted.append(path)
-            elif hashlib.sha256(file.read_bytes()).hexdigest() != digest:
+            elif modified >= untouched_before and hashlib.sha256(file.read_bytes()).hexdigest() != digest:
                 changed.append(path)
         added = (
             _added_files(root, metadata.get("source_scopes") or {}, set(recorded) | skipped)
@@ -162,6 +173,14 @@ def _nodes_in_files(graph: sqlite3.Connection, paths: list[str]) -> list[dict[st
             rows.append({"stable_id": stable_id, "type": node_type, "name": name or "", "file": path})
     rows.sort(key=lambda row: (row["file"], row["type"], row["name"]))
     return rows[:MAX_LISTED]
+
+
+def _epoch(value: object) -> float:
+    """Seconds since the epoch of an ISO time ("…Z"); 0 when unknown, so every file is hashed."""
+    try:
+        return _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _json(value: str | None) -> object:

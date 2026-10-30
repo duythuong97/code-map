@@ -7,7 +7,9 @@ attached as ``kn`` with every schema created on first use.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -69,6 +71,27 @@ CREATE TABLE IF NOT EXISTS kn.knowledge_meta(key TEXT PRIMARY KEY,value TEXT NOT
 
 EXTRA_SCHEMAS: list[str] = [MCP_LOG_SCHEMA, KNOWLEDGE_LAYER_SCHEMA]
 
+# Wall-clock seconds one request (web) or tool call (MCP) may spend in codemap.sqlite. Past it the next
+# SQL step fails with "interrupted" instead of holding one of the server's few threads.
+QUERY_SECONDS = float(os.environ.get("CODE_MAP_QUERY_SECONDS", "30"))
+# SQLite steps between two looks at the clock.
+PROGRESS_OPCODES = 10_000
+
+
+def timed_out(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and str(exc) == "interrupted"
+
+
+def set_deadline(db: sqlite3.Connection) -> None:
+    """Interrupt SQL on ``db`` once QUERY_SECONDS have passed from now."""
+    deadline = time.monotonic() + QUERY_SECONDS
+    db.set_progress_handler(lambda: time.monotonic() > deadline, PROGRESS_OPCODES)
+
+
+def clear_deadline(db: sqlite3.Connection) -> None:
+    """No time limit on ``db`` (a load done once per extract, not per request)."""
+    db.set_progress_handler(None, 0)
+
 
 @contextmanager
 def open_knowledge(knowledge: Path) -> Iterator[sqlite3.Connection]:
@@ -106,6 +129,7 @@ def _open_serving(output: Path) -> sqlite3.Connection:
     if not version or version[0] != SERVING_SCHEMA_VERSION:
         db.close()
         raise GraphNotReady(path, f"{path} was written by an older extract; run the extract (or serving-export) again")
+    set_deadline(db)
     return db
 
 

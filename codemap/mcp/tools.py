@@ -23,6 +23,11 @@ from .business_view import business_lines
 from .knowledge_view import uncertain_lines
 
 DETAIL_BUDGET = {"brief": 6000, "normal": 16000, "full": 40000}
+# Share of the budget for the graph facts; the rest is for the sections after them (systems, data, documents).
+GRAPH_SHARE = 0.65
+# Each "Not certain" line, and how many technical names check_terms looks up.
+MAX_NOTE_CHARS = 800
+MAX_NAMES = 60
 ENTRY_TYPES = frozenset({"SCREEN", "UI_ACTION", "API_OPERATION", "JOB", "JOB_NETWORK", "EXECUTABLE", "COMMAND_MODE"})
 DATA_TYPES = frozenset({
     "TABLE", "VIEW", "MATERIALIZED_VIEW", "COLUMN", "SEQUENCE", "SYNONYM", "EXTERNAL_DATABASE_OBJECT", "DATA_FILE",
@@ -101,12 +106,21 @@ def _text(arguments: dict[str, Any], name: str, *, required: bool = True, limit:
     return value
 
 
-def _answer(workspace: Workspace, body: list[str], uncertain: list[str]) -> str:
-    lines = [f"> {workspace.status_line()}", "", *body, "", "## Not certain (verify before relying on it)"]
-    lines.extend(uncertain or ["- No extractor issue on these facts."])
+def _answer(workspace: Workspace, body: list[str], uncertain: list[str], budget: int | None) -> str:
+    """The answer, its body cut at ``budget`` characters so one call cannot flood the agent's context."""
+    text = "\n".join(body)
+    if budget is not None and len(text) > budget:
+        cut = text.rfind("\n", 0, budget)
+        text = text[: cut if cut > 0 else budget] + "\n(… cut at the answer budget: ask with detail=full or a narrower question)"
+    lines = [f"> {workspace.status_line()}", "", text, "", "## Not certain (verify before relying on it)"]
+    lines.extend(_short(line) for line in uncertain or ["- No extractor issue on these facts."])
     lines.append(f"- {BLIND_SPOTS}")
     lines.append("- Anything not listed above is unknown to the graph, not proof that it does not exist.")
     return "\n".join(lines)
+
+
+def _short(line: str) -> str:
+    return line if len(line) <= MAX_NOTE_CHARS else line[: MAX_NOTE_CHARS - 1] + "…"
 
 
 def _uncertain(workspace: Workspace, context: GraphContext) -> list[str]:
@@ -204,10 +218,11 @@ def _systems(retriever: Retriever, context: GraphContext, owners: dict[str, dict
 
 def search(workspace: Workspace, arguments: dict[str, Any]) -> str:
     question = _text(arguments, "question")
+    budget = _detail(arguments)
     with workspace.retriever() as retriever:
-        context = retriever.retrieve(question, mode="ask", max_context_chars=_detail(arguments))
+        context = retriever.retrieve(question, mode="ask", max_context_chars=int(budget * GRAPH_SHARE))
     known = _knowledge(workspace, context)
-    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain)
+    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain, budget)
 
 
 def impact(workspace: Workspace, arguments: dict[str, Any]) -> str:
@@ -245,12 +260,16 @@ def impact(workspace: Workspace, arguments: dict[str, Any]) -> str:
         nodes = retriever.nodes(node_ids)
         by_id = {node.id: node for node in nodes}
         seed_nodes = [by_id[node_id] for node_id in seed_ids if node_id in by_id]
-        context = retriever.render(seed_nodes, nodes, edges, retriever.concepts_for_nodes(seed_ids), budget)
+        context = retriever.render(
+            seed_nodes, nodes, edges, retriever.concepts_for_nodes(seed_ids), int(budget * GRAPH_SHARE)
+        )
         if not seed_ids:
-            return _answer(workspace, ["No graph node matches the target or files."], _uncertain(workspace, context))
+            return _answer(workspace, ["No graph node matches the target or files."], _uncertain(workspace, context), budget)
         known = _knowledge(workspace, context)
         systems = _systems(retriever, context, known.owners)
-    return _answer(workspace, [context.text, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain)
+    return _answer(
+        workspace, [context.text, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain, budget
+    )
 
 
 STRUCTURAL_EDGES = frozenset({"CONTAINS", "BELONGS_TO", "PROJECT_REFERENCE", "USES"})
@@ -279,15 +298,19 @@ def _container_type(retriever: Retriever, node_id: int, known: dict[int, str]) -
 
 def trace_flow(workspace: Workspace, arguments: dict[str, Any]) -> str:
     entry = _text(arguments, "entry")
+    budget = _detail(arguments)
     with workspace.retriever() as retriever:
-        context = retriever.retrieve(entry, mode="flow", max_nodes=60, max_context_chars=_detail(arguments))
+        context = retriever.retrieve(entry, mode="flow", max_nodes=60, max_context_chars=int(budget * GRAPH_SHARE))
         data = _data_lines(retriever, context)
         known = _knowledge(workspace, context)
         systems = _systems(retriever, context, known.owners)
-    return _answer(workspace, [context.text, *data, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain)
+    return _answer(
+        workspace, [context.text, *data, *systems, *known.lines], _uncertain(workspace, context) + known.uncertain, budget
+    )
 
 
 MAX_DATA_LINES = 30
+MAX_VIA = 5
 
 
 def _data_lines(retriever: Retriever, context: GraphContext) -> list[str]:
@@ -313,7 +336,9 @@ def _data_lines(retriever: Retriever, context: GraphContext) -> list[str]:
     for target, edge_type, path in touched[:MAX_DATA_LINES]:
         hops = [retriever.db.execute("SELECT target_node_id FROM graph_edges WHERE edge_id=?", (edge_id,)).fetchone()[0]
                 for edge_id in path[:-1]]
-        via = " → ".join(name(hop) for hop in hops)
+        # A long chain is named by its ends; the [E…] relations above hold the hops.
+        shown = hops if len(hops) <= MAX_VIA else [*hops[:2], None, *hops[-2:]]
+        via = " → ".join("…" if hop is None else name(hop) for hop in shown)
         lines.append(f"- {edge_type} {name(target)}" + (f" via {via}" if via else ""))
     if len(touched) > MAX_DATA_LINES:
         lines.append(f"- … {len(touched) - MAX_DATA_LINES} more")
@@ -328,18 +353,22 @@ def file_context(workspace: Workspace, arguments: dict[str, Any]) -> str:
         if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
             raise ToolError("start_line and end_line must be 1-based integers with start_line <= end_line")
         lines = (start, end)
+    budget = _detail(arguments)
     with workspace.retriever() as retriever:
-        context = retriever.retrieve("", mode="file", file=path, lines=lines, max_context_chars=_detail(arguments))
+        context = retriever.retrieve(
+            "", mode="file", file=path, lines=lines, max_context_chars=int(budget * GRAPH_SHARE)
+        )
     if not context.seeds:
-        return _answer(workspace, [f"The graph declares nothing in {path}."], _uncertain(workspace, context))
+        return _answer(workspace, [f"The graph declares nothing in {path}."], _uncertain(workspace, context), budget)
     known = _knowledge(workspace, context)
-    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain)
+    return _answer(workspace, [context.text, *known.lines], _uncertain(workspace, context) + known.uncertain, budget)
 
 
 def current_behavior(workspace: Workspace, arguments: dict[str, Any]) -> str:
     topic = _text(arguments, "topic")
+    budget = _detail(arguments)
     with workspace.retriever() as retriever:
-        context = retriever.retrieve(topic, mode="ask", max_nodes=50, max_context_chars=_detail(arguments))
+        context = retriever.retrieve(topic, mode="ask", max_nodes=50, max_context_chars=int(budget * GRAPH_SHARE))
     known = _knowledge(workspace, context)
     business = known.lines
     guide = [
@@ -352,7 +381,10 @@ def current_behavior(workspace: Workspace, arguments: dict[str, Any]) -> str:
     ]
     if not business:
         guide.append("- No reviewed business documentation covers these nodes yet: everything here comes from code.")
-    return _answer(workspace, [context.text, *business, *guide], _uncertain(workspace, context) + known.uncertain)
+    # The guide is short and must survive the cut, so it goes before the documents.
+    return _answer(
+        workspace, [context.text, *guide, *business], _uncertain(workspace, context) + known.uncertain, budget
+    )
 
 
 def check_terms(workspace: Workspace, arguments: dict[str, Any]) -> str:
@@ -363,7 +395,8 @@ def check_terms(workspace: Workspace, arguments: dict[str, Any]) -> str:
             if sentence.strip():
                 for concept in retriever.match_concepts(sentence):
                     concepts.setdefault(concept.semantic_id, concept)
-        names = sorted({next(group for group in match.groups() if group) for match in _IDENTIFIER.finditer(text)})
+        found = sorted({next(group for group in match.groups() if group) for match in _IDENTIFIER.finditer(text)})
+        names = found[:MAX_NAMES]
         known, unknown = [], []
         for name in names:
             key = compact(name)
@@ -409,7 +442,9 @@ def check_terms(workspace: Workspace, arguments: dict[str, Any]) -> str:
     uncertain = []
     if unknown:
         uncertain.append(f"- {len(unknown)} technical name(s) are not in the graph.")
-    return _answer(workspace, body, uncertain)
+    if len(found) > len(names):
+        uncertain.append(f"- Only the first {len(names)} of {len(found)} technical names were checked; split the text.")
+    return _answer(workspace, body, uncertain, DETAIL_BUDGET["normal"])
 
 
 def status(workspace: Workspace, arguments: dict[str, Any]) -> str:
@@ -444,7 +479,7 @@ def status(workspace: Workspace, arguments: dict[str, Any]) -> str:
         body.append("## Extraction quality")
         body.extend(f"- {key}: {value}" for key, value in sorted(metrics.items()) if isinstance(value, (int, float, str)))
     body.extend(["", gaps])
-    return _answer(workspace, body, [])
+    return _answer(workspace, body, [], _detail(arguments))
 
 
 _DETAIL_PROPERTY = {

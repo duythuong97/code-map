@@ -18,7 +18,7 @@ from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
 
-from codemap.storage import GRAPH_KNOWLEDGE_SCHEMA, GraphNotReady, open_web
+from codemap.storage import GRAPH_KNOWLEDGE_SCHEMA, QUERY_SECONDS, GraphNotReady, open_web, timed_out
 from code_tree_exporter.contract.vocabulary import FLOW_STEP_EDGES, READ_EDGES, WRITE_EDGES
 from codemap.flows import data_paths
 from codemap.settings import settings
@@ -62,6 +62,14 @@ def graph_not_ready(exc: GraphNotReady):
         exc.message or "No extract output found. Run the extract (codemap extract) for the config the server reads (CODE_MAP_CONFIG).",
         503,
     )
+
+
+@bp.app_errorhandler(sqlite3.OperationalError)
+def query_failed(exc: sqlite3.OperationalError):
+    if timed_out(exc):
+        return error("query_timeout", f"The query took longer than {QUERY_SECONDS:g}s; narrow it (fewer nodes, a more specific name).", 503)
+    current_app.logger.exception("sqlite error")
+    return error("database_error", "Database error", 500)
 
 
 def _semantic_tree(node_id: str) -> object:
@@ -648,14 +656,17 @@ def flow():
         if mode in {"W", "R"}:
             return jsonify(_read_write_flow(db,node_id,mode,direction,limit,semantic))
         pending = [node_id]; visited = set(); edges = []; edge_ids=set(); node_ids={node_id}; truncated=False
+        # A hub (a table read by thousands of routines) is not read whole: the answer holds `limit` nodes at most.
+        per_node = limit * 2
         while pending and len(node_ids) <= limit:
             current = pending.pop(0); visited.add(current)
             if direction == "in":
-                rows = db.execute("SELECT * FROM graph_edges WHERE target_node_id=? ORDER BY edge_id", (current,)).fetchall()
+                rows = db.execute("SELECT * FROM graph_edges WHERE target_node_id=? ORDER BY edge_id LIMIT ?", (current, per_node + 1)).fetchall()
             elif direction == "out":
-                rows = db.execute("SELECT * FROM graph_edges WHERE source_node_id=? ORDER BY edge_id", (current,)).fetchall()
+                rows = db.execute("SELECT * FROM graph_edges WHERE source_node_id=? ORDER BY edge_id LIMIT ?", (current, per_node + 1)).fetchall()
             else:
-                rows = db.execute("SELECT * FROM graph_edges WHERE source_node_id=? OR target_node_id=? ORDER BY edge_id", (current, current)).fetchall()
+                rows = db.execute("SELECT * FROM graph_edges WHERE source_node_id=? OR target_node_id=? ORDER BY edge_id LIMIT ?", (current, current, per_node + 1)).fetchall()
+            if len(rows) > per_node: rows = rows[:per_node]; truncated = True
             for row in rows:
                 item=dict(row); candidate={item["source_node_id"],item["target_node_id"]}
                 if not _edge_visible(item, semantic): continue

@@ -4,7 +4,7 @@ The extractor config already says where the source (``root``) and the extract
 output (``output``) are; the web app and the MCP server use the same values,
 so a path is written once. An optional ``web`` section overrides the defaults:
 
-    "web": {"host": "0.0.0.0", "port": 8000, "urlPrefix": "/code-map",
+    "web": {"host": "0.0.0.0", "port": 8000, "urlPrefix": "/code-map", "threads": 8,
             "knowledgeDb": "./knowledge.sqlite", "logPath": "./logs/backend.log"}
 
 Relative ``knowledgeDb`` and ``logPath`` resolve against the config file.
@@ -83,6 +83,8 @@ WEB_DEFAULTS: dict[str, Any] = {
     "graphApiPrefix": "/api/graph",
     "maxContentLength": 16 * 1024 * 1024,
     "logLevel": "INFO",
+    # Requests served at once (web pages and HTTP MCP calls share them); waitress's own default is 4.
+    "threads": 8,
 }
 
 
@@ -112,6 +114,7 @@ def load_settings(path: str | Path | None = None) -> dict[str, Any]:
         "knowledge_db": config_relative("knowledgeDb", default_knowledge_db()),
         "host": str(web["host"]),
         "port": int(web["port"]),
+        "threads": max(1, int(web["threads"])),
         "url_prefix": str(web["urlPrefix"]),
         "graph_api_prefix": str(web["graphApiPrefix"]),
         "max_content_length": int(web["maxContentLength"]),

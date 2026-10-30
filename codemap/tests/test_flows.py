@@ -73,6 +73,24 @@ class FlowWalkTests(unittest.TestCase):
         self.assertIn("screen", starts)
         self.assertNotIn("job", starts)  # the job only reads ORDERS
 
+    def test_shared_helpers_are_walked_once(self) -> None:
+        # 12 layers of 3 methods, each calling all of the next layer: 3**12 routes, 111 edges.
+        layers = [[f"m{layer}_{index}" for index in range(3)] for layer in range(12)]
+        rows = [("batch", entry) for entry in layers[0]]
+        rows += [(source, target) for above, below in zip(layers, layers[1:]) for source in above for target in below]
+        self.db.executemany(
+            "INSERT INTO graph_nodes VALUES(?,?,?,?,?,NULL,NULL,'repo','MAIN',1.0,'{}','s')",
+            [("batch", "EXECUTABLE_ENTRY_POINT", "batch", "batch", "batch")]
+            + [(node_id, "METHOD", node_id, node_id, node_id) for layer in layers for node_id in layer],
+        )
+        edges = [(f"{source}-CALLS-{target}", source, target, "CALLS") for source, target in rows]
+        edges += [(f"{method}-READS-orders", method, "orders", "READS") for method in layers[-1]]
+        self.db.executemany("INSERT INTO graph_edges VALUES(?,?,?,?,'TECHNICAL','',1.0,'{}','s')", edges)
+        walk = data_paths(self.db, "batch", "R", "out")
+        self.assertEqual(set(walk.edges), {edge[0] for edge in edges})
+        self.assertEqual(len(walk.paths), 3)  # the shortest route to each read
+        self.assertEqual(self.touched("batch"), {("orders", "READS")})
+
     def test_business_documents_reach_the_same_data(self) -> None:
         index = GraphIndex(self.db)
         for entry in ("screen", "job", "project"):

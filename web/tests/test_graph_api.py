@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest import mock
 
 from codemap import PROJECT_ROOT
 
@@ -122,6 +123,12 @@ class GraphApiTests(unittest.TestCase):
         response = self.client.get(f"{API}/search?q=x")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json()["error"]["code"], "graph_not_ready")
+
+    def test_slow_query_is_stopped(self) -> None:
+        with mock.patch("codemap.storage.QUERY_SECONDS", 0), mock.patch("codemap.storage.PROGRESS_OPCODES", 1):
+            response = self.client.get(f"{API}/search?q=order")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"]["code"], "query_timeout")
 
 
 if __name__ == "__main__":

@@ -402,6 +402,8 @@ E:/repos/my-system/             # source cần quét ("root": "E:/repos/my-syste
 | `CODE_MAP_KNOWLEDGE_TOKEN` | token cho thao tác ghi (lưu ghi chú trên web, `propose_*` qua HTTP). Trống: không cho ghi |
 | `CODE_TREE_DOTNET`, `CODE_TREE_NODE` | executable không nằm trong `PATH` |
 | `CODE_MAP_BACKEND_LOG_LEVEL`, `CODE_MAP_PM2_NAME` | log level backend (mặc định `INFO`), tên process pm2 (mặc định `code-map`) |
+| `CODE_MAP_QUERY_SECONDS` | số giây tối đa một request web hoặc một lần gọi tool MCP được truy vấn `codemap.sqlite` (mặc định `30`); quá thời gian thì web trả `503 query_timeout`, MCP trả lỗi tool |
+| `CODE_MAP_MCP_STALE_TTL` | số giây giữa hai lần so working tree với bản extract (mặc định `300`); việc so chạy nền, câu trả lời không phải chờ |
 
 `.env` được đọc ở gốc repo code-map, cạnh file config và ở thư mục đang chạy.
 Giá trị lấy nguyên văn (`C:\new` vẫn là `C:\new`), file có BOM vẫn đọc được, và
@@ -422,6 +424,7 @@ Mục `web` (tuỳ chọn) trong config đổi giá trị mặc định của we
   "graphApiPrefix": "/api/graph",
   "maxContentLength": 16777216,
   "logLevel": "INFO",
+  "threads": 8,
   "knowledgeDb": "<repo>/var/knowledge.sqlite",
   "logPath": "<repo>/var/logs/backend.log"
 }
@@ -429,6 +432,7 @@ Mục `web` (tuỳ chọn) trong config đổi giá trị mặc định của we
 
 `knowledgeDb` chứa tài liệu nghiệp vụ đã duyệt của hệ thống; với hệ thống thật
 nên đặt `"knowledgeDb": "./knowledge.sqlite"` để nó nằm cạnh config.
+`threads` là số request xử lý cùng lúc; trang web và MCP qua HTTP dùng chung số này.
 
 Tạo hoặc bổ sung config từ các repo trong một thư mục:
 `codemap.cmd init --root C:/sources --config <cfg> [--name <system>] [--database DB1 --schema APP] [--dry-run]`

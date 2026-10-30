@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from codemap.storage import GraphNotReady
+from codemap.storage import QUERY_SECONDS, GraphNotReady, timed_out
 
 from . import write_tools  # noqa: F401  (registers the get/propose tools in TOOLS)
 from .prompts import PROMPTS, render_prompt
@@ -149,6 +150,15 @@ class McpServer:
                 f"The code map has no extract yet ({exc}). Run the extract and point the server at its output folder.",
                 True,
                 str(exc),
+            )
+        except sqlite3.OperationalError as exc:
+            if not timed_out(exc):
+                raise
+            text, is_error, error = (
+                f"The lookup took longer than {QUERY_SECONDS:g}s and was stopped. Ask about a more specific name "
+                "(exact table, API route or Class.Method) or with detail=brief.",
+                True,
+                "timeout",
             )
         elapsed = (time.perf_counter() - started) * 1000
         self._log(tool.name, arguments, text, error, elapsed, context)

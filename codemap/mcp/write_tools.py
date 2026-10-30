@@ -90,7 +90,8 @@ def get_flow_doc(workspace: Workspace, arguments: dict[str, Any]) -> str:
         yaml.safe_dump({"flow": document["flow"]}, allow_unicode=True, sort_keys=False, width=110).rstrip(),
         "```",
     ]
-    return _answer(workspace, body, [])
+    # Not cut: the agent sends the whole document back.
+    return _answer(workspace, body, [], None)
 
 
 @_errors

@@ -9,13 +9,19 @@ works on any connection to it (row factory or not).
 from __future__ import annotations
 
 import sqlite3
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
 from code_tree_exporter.contract.vocabulary import READ_EDGES, WRITE_EDGES, follows
 
-# A path longer than this is a cycle the per-path check did not catch, not a flow.
+# A route longer than this is not a flow.
 MAX_PATH_EDGES = 64
+# States explored per node of the answer: a walk that finds little data still stops.
+EXPLORE_FACTOR = 20
+MIN_EXPLORE = 5000
+# Edges per node of the answer: past that a graph view is a hairball and the browser stalls.
+EDGES_PER_NODE = 5
 EDGE_COLUMNS = ("edge_id", "source_node_id", "target_node_id", "edge_type", "graph_layer", "raw_operation",
                 "confidence", "properties_json", "source_id")
 DATA_EDGES = READ_EDGES | WRITE_EDGES
@@ -67,6 +73,13 @@ def _technical(edge: dict) -> bool:
 
 
 def _walk(db, node_id: str, terminals: frozenset[str], direction: str, limit: int, visible) -> DataPaths:
+    """Breadth-first over (node, past a read/write) states, each expanded once.
+
+    A shared helper called from many places is walked once, not once per route
+    through it (enumerating routes is exponential in the depth of the call graph).
+    Every edge on some route to the data is kept; ``paths`` holds the shortest
+    route per read/write edge (``out``) or per reader/writer and caller (``in``).
+    """
     reverse = direction == "in"
     types: dict[str, str] = {}
 
@@ -76,28 +89,24 @@ def _walk(db, node_id: str, terminals: frozenset[str], direction: str, limit: in
             types[value] = str(row[0]) if row else ""
         return types[value]
 
-    result = DataPaths(node_ids={node_id})
-    pending: list[tuple[str, list[dict], bool, frozenset[str]]] = [(node_id, [], False, frozenset({node_id}))]
-    visited: set[tuple] = set()
-
-    def add_path(path: list[dict]) -> None:
-        endpoints = {end for edge in path for end in (edge["source_node_id"], edge["target_node_id"])} | {node_id}
-        if len(result.node_ids | endpoints) > limit:
-            result.truncated = True
-            return
-        result.node_ids |= endpoints
-        for edge in path:
-            result.edges[edge["edge_id"]] = edge
-        result.paths.append([edge["edge_id"] for edge in (reversed(path) if reverse else path)])
-
+    start = (node_id, False)
+    # state -> (previous state, edge) of the shortest route to it.
+    parent: dict[tuple[str, bool], tuple[tuple[str, bool], dict] | None] = {start: None}
+    depth = {start: 0}
+    moves: list[tuple[tuple[str, bool], dict, tuple[str, bool]]] = []
+    queue = deque([start])
     column = "target_node_id" if reverse else "source_node_id"
     select = f"SELECT {', '.join(EDGE_COLUMNS)} FROM graph_edges WHERE {column}=? ORDER BY edge_id"
-    while pending and len(result.node_ids) <= limit:
-        current, path, seen_terminal, path_seen = pending.pop(0)
-        state = (current, seen_terminal, path_seen)
-        if state in visited:
+    explore = max(limit * EXPLORE_FACTOR, MIN_EXPLORE)
+    truncated = False
+    while queue:
+        if len(parent) > explore:
+            truncated = True
+            break
+        state = queue.popleft()
+        if depth[state] >= MAX_PATH_EDGES:
             continue
-        visited.add(state)
+        current, seen_terminal = state
         for row in db.execute(select, (current,)).fetchall():
             edge = dict(zip(EDGE_COLUMNS, row))
             is_terminal = edge["edge_type"] in terminals
@@ -106,15 +115,62 @@ def _walk(db, node_id: str, terminals: frozenset[str], direction: str, limit: in
             if not (is_terminal or is_step) or not visible(edge):
                 continue
             following = edge["source_node_id"] if reverse else edge["target_node_id"]
-            if following in path_seen:
+            if following == node_id:
                 continue
-            next_path = [*path, edge]
-            if is_terminal or seen_terminal:
-                add_path(next_path)
+            following_state = (following, seen_terminal or is_terminal)
+            moves.append((state, edge, following_state))
             # Out of an entry the walk ends at the data; into a table it goes on to whoever reached the writer.
-            if (not is_terminal or reverse) and len(next_path) < MAX_PATH_EDGES:
-                pending.append((following, next_path, seen_terminal or is_terminal, path_seen | {following}))
-    result.truncated = result.truncated or bool(pending)
+            if is_terminal and not reverse:
+                continue
+            if following_state not in parent:
+                parent[following_state] = (state, edge)
+                depth[following_state] = depth[state] + 1
+                queue.append(following_state)
+    truncated = truncated or bool(queue)
+
+    # A move counts when it is a read/write, comes after one, or leads to a state that has such a move.
+    useful: set[tuple[str, bool]] = set()
+    into: dict[tuple[str, bool], list[tuple[str, bool]]] = {}
+    for state, edge, following_state in moves:
+        into.setdefault(following_state, []).append(state)
+    pending = [state for state, edge, following_state in moves if following_state[1]]
+    while pending:
+        state = pending.pop()
+        if state in useful:
+            continue
+        useful.add(state)
+        pending.extend(into.get(state, ()))
+
+    def route(state: tuple[str, bool]) -> list[dict]:
+        edges: list[dict] = []
+        while parent[state] is not None:
+            state, edge = parent[state]
+            edges.append(edge)
+        return edges[::-1]
+
+    if reverse:
+        candidates = [route(state) for state in parent if state[1]]
+    else:
+        candidates = [[*route(state), edge] for state, edge, following_state in moves if edge["edge_type"] in terminals]
+    candidates.sort(key=len)
+    result = DataPaths(node_ids={node_id}, truncated=truncated)
+    for path in candidates:
+        endpoints = {end for edge in path for end in (edge["source_node_id"], edge["target_node_id"])}
+        if len(result.node_ids | endpoints) > limit:
+            result.truncated = True
+            continue
+        result.node_ids |= endpoints
+        result.paths.append([edge["edge_id"] for edge in (reversed(path) if reverse else path)])
+    # Then the other routes (a method reached through two services), nearest first, while they fit.
+    for state, edge, following_state in moves:
+        if not (following_state[1] or following_state in useful):
+            continue
+        endpoints = {edge["source_node_id"], edge["target_node_id"]}
+        if len(result.node_ids | endpoints) > limit or len(result.edges) >= limit * EDGES_PER_NODE:
+            result.truncated = True
+            continue
+        result.node_ids |= endpoints
+        result.edges[edge["edge_id"]] = edge
     return result
 
 

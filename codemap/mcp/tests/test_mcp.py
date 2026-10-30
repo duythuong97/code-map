@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import closing
+from unittest import mock
 from pathlib import Path
 
 from codemap import PROJECT_ROOT
@@ -16,6 +17,7 @@ from codemap import PROJECT_ROOT
 from code_tree_exporter.serving import write_serving_database
 from testdata.engine_graph import business_inputs, engine_graph
 from codemap.mcp.server import CallContext, McpServer
+from codemap.mcp.tools import DETAIL_BUDGET, _answer
 from codemap.workspace import Workspace
 
 CANCEL = "method:a:Orders.CancelOrder"
@@ -151,6 +153,20 @@ class McpTests(McpFixture):
         self.assertIn("codemap_current_behavior", got["result"]["messages"][0]["content"]["text"])
         missing = self.server.handle(rpc("prompts/get", {"name": "as-is", "arguments": {}}))
         self.assertEqual(missing["error"]["code"], -32602)
+
+    def test_answer_body_stays_within_the_budget(self) -> None:
+        budget = DETAIL_BUDGET["brief"]
+        text = _answer(self.workspace, ["x" * 90 for _ in range(budget // 30)], ["- " + "y" * 5000], budget)
+        body = text.split("## Not certain")[0]
+        self.assertLess(len(body), budget + 300)
+        self.assertIn("cut at the answer budget", body)
+        self.assertLess(len(text) - len(body), 2000)
+
+    def test_slow_lookup_is_stopped_with_a_tool_error(self) -> None:
+        with mock.patch("codemap.storage.QUERY_SECONDS", 0), mock.patch("codemap.storage.PROGRESS_OPCODES", 1):
+            result = self.call("codemap_search", {"question": "hủy đơn hàng"})
+        self.assertTrue(result["isError"])
+        self.assertIn("took longer than", result["content"][0]["text"])
 
     def test_missing_extract_is_a_tool_error(self) -> None:
         server = McpServer(Workspace(output=self.output / "missing", knowledge=None))

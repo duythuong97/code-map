@@ -26,6 +26,7 @@ import uuid
 import json
 import re
 import sqlite3
+import threading
 from collections import deque
 from contextlib import closing
 from datetime import datetime, timezone
@@ -242,16 +243,30 @@ class GraphIndex:
 _INDEX_CACHE: dict[str, tuple[tuple[int, int], GraphIndex]] = {}
 
 
+_INDEX_LOCK = threading.Lock()
+
+
 def graph_index(db: sqlite3.Connection, web_path: Path) -> GraphIndex:
     stat = web_path.stat()
     key = (stat.st_size, stat.st_mtime_ns)
     cached = _INDEX_CACHE.get(str(web_path))
     if cached and cached[0] == key:
         return cached[1]
-    index = GraphIndex(db)
-    after = web_path.stat()
-    if (after.st_size, after.st_mtime_ns) == key:  # not replaced by an extract while it was read
-        _INDEX_CACHE[str(web_path)] = (key, index)
+    from codemap.storage import clear_deadline, set_deadline  # storage imports this module's schema
+
+    # One load at a time: requests arriving together after an extract wait for it instead of each holding a copy.
+    with _INDEX_LOCK:
+        cached = _INDEX_CACHE.get(str(web_path))
+        if cached and cached[0] == key:
+            return cached[1]
+        # Loaded once per extract, so it is not held to one request's query time.
+        clear_deadline(db)
+        index = GraphIndex(db)
+        set_deadline(db)
+        after = web_path.stat()
+        if (after.st_size, after.st_mtime_ns) == key:  # not replaced by an extract while it was read
+            _INDEX_CACHE.clear()
+            _INDEX_CACHE[str(web_path)] = (key, index)
     return index
 
 

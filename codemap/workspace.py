@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -15,8 +17,12 @@ from codemap.storage import GraphNotReady, open_knowledge, open_search, open_web
 
 from .retriever import Retriever
 
-# Hashing every scanned file is cheap for thousands of files, but not per tool call.
-STALE_TTL_SECONDS = float(os.environ.get("CODE_MAP_MCP_STALE_TTL", "60"))
+# Checking the working tree (file times, hashes of touched files, VCS log) is redone this often, in the
+# background: an answer uses the last result and never waits for the check, except up to
+# STALE_WAIT_SECONDS for the first one.
+STALE_TTL_SECONDS = float(os.environ.get("CODE_MAP_MCP_STALE_TTL", "300"))
+STALE_WAIT_SECONDS = 3.0
+logger = logging.getLogger("code_map.workspace")
 
 
 @dataclass
@@ -25,6 +31,8 @@ class Workspace:
     knowledge: Path | None = None
     source_root: Path | None = None
     _stale: tuple[float, tuple[int, int], dict[str, Any]] | None = field(default=None, repr=False)
+    _checking: threading.Thread | None = field(default=None, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @contextmanager
     def retriever(self) -> Iterator[Retriever]:
@@ -56,11 +64,25 @@ class Workspace:
         return self.output / "graph.sqlite"
 
     def stale(self) -> dict[str, Any]:
-        """Stale report of the graph against the working tree, cached for STALE_TTL_SECONDS."""
+        """Stale report of the graph against the working tree, refreshed in the background every STALE_TTL_SECONDS."""
         stamp = _stamp(self.graph_path)
-        now = time.monotonic()
-        if self._stale and self._stale[1] == stamp and now - self._stale[0] < STALE_TTL_SECONDS:
-            return self._stale[2]
+        with self._lock:
+            cached = self._stale if self._stale and self._stale[1] == stamp else None
+            if cached and time.monotonic() - cached[0] < STALE_TTL_SECONDS:
+                return cached[2]
+            checking = self._checking
+            if checking is None or not checking.is_alive():
+                checking = self._checking = threading.Thread(target=self._check, args=(stamp,), daemon=True)
+                checking.start()
+        if cached:
+            return cached[2]
+        checking.join(STALE_WAIT_SECONDS)
+        with self._lock:
+            if self._stale and self._stale[1] == stamp:
+                return self._stale[2]
+        return {"fresh": None, "reason": "still comparing the working tree with the extract", "revisions": []}
+
+    def _check(self, stamp: tuple[int, int]) -> None:
         if not self.graph_path.is_file():
             report: dict[str, Any] = {"fresh": None, "reason": "graph.sqlite not found", "revisions": []}
         else:
@@ -68,8 +90,11 @@ class Workspace:
                 report = stale_report(self.graph_path, self.source_root)
             except (OSError, sqlite3.Error) as exc:
                 report = {"fresh": None, "reason": str(exc), "revisions": []}
-        self._stale = (now, stamp, report)
-        return report
+            except Exception as exc:  # noqa: BLE001  (a failed check must not stop the next one)
+                logger.exception("stale check failed")
+                report = {"fresh": None, "reason": str(exc), "revisions": []}
+        with self._lock:
+            self._stale = (time.monotonic(), stamp, report)
 
     def status_line(self) -> str:
         return summary_line(self.stale())
